@@ -1,0 +1,7 @@
+{
+  "name": "財務儀表板_4.3_修正",
+  "description": "Professional financial management tool featuring AI-powered OCR, dynamic time-weighted alerting, and multi-level transaction analysis.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
