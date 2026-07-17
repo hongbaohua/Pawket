@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { LayoutDashboard, ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, ShoppingBag, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Receipt, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2 } from 'lucide-react';
+import { LayoutDashboard, ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, ShoppingBag, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Receipt, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import Scanner from './components/Scanner';
 import SplitModal from './components/SplitModal';
@@ -8,9 +8,12 @@ import EditTransactionModal from './components/EditTransactionModal';
 import BatchCorrectionModal from './components/BatchCorrectionModal';
 import GoalModal from './components/GoalModal';
 import CategoryMappingModal from './components/CategoryMappingModal';
+import Auth from './components/Auth';
 import { Transaction, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, SavingsGoal, STANDARD_CATEGORIES, PenaltyConfig } from './types';
 import { generateTimeWeightedAlerts, getDateRange, findSimilarTransactions, calculateGoalMetrics } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
+import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
+import type { Session } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
 
 const HighlightText: React.FC<{ text: string; highlight: string }> = ({ text, highlight }) => {
@@ -33,6 +36,22 @@ const HighlightText: React.FC<{ text: string; highlight: string }> = ({ text, hi
 };
 
 const App: React.FC = () => {
+  // 登入狀態：先確認有沒有 Supabase session，沒有就顯示登入畫面，擋在主畫面前面。
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) { setAuthLoading(false); return; }
+    supabase.auth.getSession()
+      .then(({ data }) => setSession(data.session))
+      .catch(() => setSession(null))
+      .finally(() => setAuthLoading(false));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
   const [view, setView] = useState<'dashboard' | 'scanner' | 'transactions'>('dashboard');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>(INITIAL_BUDGETS);
@@ -352,6 +371,23 @@ const App: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  if (!isSupabaseConfigured) {
+    return (
+      <div className="min-h-screen bg-[#FFFBF5] flex items-center justify-center p-6">
+        <div className="max-w-md text-center bg-white rounded-[40px] shadow-xl border border-orange-50 p-10">
+          <h1 className="text-xl font-extrabold text-slate-700 mb-3">尚未設定 Supabase</h1>
+          <p className="text-slate-400 font-medium">請在 .env.local 填入 VITE_SUPABASE_URL 與 VITE_SUPABASE_ANON_KEY，然後重新啟動 (npm run dev)。</p>
+        </div>
+      </div>
+    );
+  }
+  if (authLoading) {
+    return <div className="min-h-screen bg-[#FFFBF5] flex items-center justify-center text-slate-300 font-bold">載入中...</div>;
+  }
+  if (!session) {
+    return <Auth />;
+  }
+
   return (
     <div className="min-h-screen bg-[#FFFBF5] text-slate-600 font-sans flex selection:bg-amber-100 selection:text-amber-800 relative">
       <aside className="w-20 lg:w-72 bg-white flex flex-col fixed h-full z-20 no-print transition-all shadow-[8px_0_30px_rgba(0,0,0,0.02)] rounded-r-[40px] my-0 lg:my-4 lg:ml-4 lg:h-[calc(100vh-32px)] border-r border-orange-50">
@@ -365,6 +401,9 @@ const App: React.FC = () => {
           <button onClick={() => setView('transactions')} className={`w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'transactions' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><List className={`w-6 h-6 ${view === 'transactions' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">罐罐明細本</span></button>
           <button onClick={() => setIsGoalModalOpen(true)} className="w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-indigo-50 hover:text-indigo-500"><Target className="w-6 h-6" /><span className="hidden lg:block">設定夢想目標</span></button>
         </nav>
+        <div className="px-4">
+          <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold text-slate-300 hover:bg-rose-50 hover:text-rose-400"><LogOut className="w-6 h-6" /><span className="hidden lg:block">登出</span></button>
+        </div>
         <div className="p-6 mt-auto">
            {primaryGoal && <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-5 rounded-3xl border border-indigo-100 hidden lg:block relative overflow-hidden group hover:shadow-md cursor-pointer" onClick={() => setIsGoalModalOpen(true)}><div className="flex items-center gap-2 text-indigo-500 mb-3"><Target className="w-4 h-4" /><span className="text-xs font-bold uppercase tracking-wider">目標進行中</span></div><p className="font-bold text-slate-700 truncate">{primaryGoal.name}</p><div className="w-full bg-white h-2 rounded-full overflow-hidden border border-indigo-100 mt-2"><div className="bg-indigo-400 h-full rounded-full transition-all duration-1000" style={{ width: `${sidebarGoalMetrics?.weightedPercent || 0}%` }}></div></div><p className="text-[10px] text-indigo-400 mt-1 text-right font-bold">{sidebarGoalMetrics?.weightedPercent.toFixed(1)}%</p></div>}
         </div>

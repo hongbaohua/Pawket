@@ -1,5 +1,5 @@
 {
-  "name": "財務儀表板_4.3_修正",
+  "name": "pawket",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,14 +10,15 @@
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
-    "react": "^19.2.0",
-    "uuid": "^13.0.0",
+    "@supabase/supabase-js": "^2.110.7",
     "date-fns": "^4.1.0",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^2.5.1",
+    "lucide-react": "^0.554.0",
+    "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "recharts": "^3.4.1",
-    "lucide-react": "^0.554.0",
-    "html2canvas": "^1.4.1",
-    "jspdf": "^2.5.1"
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
