@@ -2,38 +2,10 @@
 export type TransactionType = 'income' | 'expense';
 export type SourceType = 'BANK_CARD' | 'CASH_MANUAL';
 
-export enum L1Category {
-  FIXED = 'Fixed',
-  VARIABLE = 'Variable',
-  INVESTMENT = 'Investment',
-  INCOME = 'Income'
-}
-
-export const CATEGORY_LABELS: Record<L1Category, string> = {
-  [L1Category.FIXED]: '固定支出',
-  [L1Category.VARIABLE]: '變動支出',
-  [L1Category.INVESTMENT]: '投資儲蓄',
-  [L1Category.INCOME]: '收入帳戶'
-};
-
-// NEW: Standard Classification Library for Smart Selectors
-export const STANDARD_CATEGORIES: Record<L1Category, string[]> = {
-  [L1Category.VARIABLE]: [
-    '餐飲食品', '交通通勤', '生活日用', '休閒娛樂', 
-    '服飾美妝', '醫療保健', '學習進修', '社交人情', '寵物花費', 
-    '銀行手續費', '轉帳', '網路購物', '其他雜項'
-  ],
-  [L1Category.FIXED]: [
-    '居住房租', '水電瓦斯', '電信網路', '保險費用', 
-    '稅務規費', '訂閱服務', '孝親費用', '教育學費'
-  ],
-  [L1Category.INVESTMENT]: [
-    '緊急預備金', '股票投資', '定期定額', '加密貨幣', '儲蓄險', '活簿存款'
-  ],
-  [L1Category.INCOME]: [
-    '薪資收入', '獎金紅利', '兼職收入', '投資配息', '活簿存款', '退款', '提款', '其他', '轉帳'
-  ]
-};
+// L1Category / CATEGORY_LABELS / STANDARD_CATEGORIES 已搬到 config/categories.ts，
+// 想新增/修改分類選項請去那個檔案編輯。這裡保留 import + re-export，讓其他檔案的 import 路徑不用改。
+import { L1Category, CATEGORY_LABELS, STANDARD_CATEGORIES } from './config/categories';
+export { L1Category, CATEGORY_LABELS, STANDARD_CATEGORIES };
 
 export interface CategoryHierarchy {
   l1: L1Category;

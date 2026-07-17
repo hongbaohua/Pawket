@@ -10,13 +10,8 @@ import GoalModal from './components/GoalModal';
 import CategoryMappingModal from './components/CategoryMappingModal';
 import { Transaction, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, SavingsGoal, STANDARD_CATEGORIES, PenaltyConfig } from './types';
 import { generateTimeWeightedAlerts, getDateRange, findSimilarTransactions, calculateGoalMetrics } from './services/logicService';
+import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { v4 as uuidv4 } from 'uuid';
-
-const INITIAL_BUDGETS: Budget[] = [
-  { l1: L1Category.FIXED, amount: 2000 },
-  { l1: L1Category.VARIABLE, amount: 1200 },
-  { l1: L1Category.INVESTMENT, amount: 800 },
-];
 
 const HighlightText: React.FC<{ text: string; highlight: string }> = ({ text, highlight }) => {
     if (!highlight.trim() || !text) return <>{text}</>;
@@ -51,11 +46,7 @@ const App: React.FC = () => {
       end: new Date()
   });
 
-  const [penaltyConfig, setPenaltyConfig] = useState<PenaltyConfig>({
-      enabled: false,
-      ratio: 0.5,
-      targetCategory: '休閒娛樂'
-  });
+  const [penaltyConfig, setPenaltyConfig] = useState<PenaltyConfig>(DEFAULT_PENALTY_CONFIG);
 
   const [goals, setGoals] = useState<SavingsGoal[]>([]);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);

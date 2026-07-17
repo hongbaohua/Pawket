@@ -7,6 +7,7 @@ import { addMonths, format, startOfMonth, endOfMonth, startOfDay, endOfDay, isVa
 import { analyzeFinancialHealth, calculateOpportunityCost, getSeasonalTrends, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, calculateGoalMetrics, calculateProjectedPenalty, calculateRunway, calculateTaxEstimation, calculateGapProjection, GoalMetrics, getDateRange } from '../services/logicService';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { DTI_CAUTION_THRESHOLD, DTI_CRITICAL_THRESHOLD, RUNWAY_WARNING_DAYS } from '../config/financialRules';
 
 interface DashboardProps {
   alerts: Alert[];
@@ -199,7 +200,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     } catch (err) { console.error(err); alert("匯出失敗。"); } finally { setIsExporting(false); }
   };
 
-  const isCritical = alerts.some(a => a.level === 'critical'), isDtiHigh = healthMetrics.dtiRatio > 35, isPenaltyActive = penaltyData.isOverspent, isCaution = (!isCritical && alerts.length > 0) || (healthMetrics.dtiRatio > 30 && healthMetrics.dtiRatio <= 35) || isPenaltyActive;
+  const isCritical = alerts.some(a => a.level === 'critical'), isDtiHigh = healthMetrics.dtiRatio > DTI_CRITICAL_THRESHOLD, isPenaltyActive = penaltyData.isOverspent, isCaution = (!isCritical && alerts.length > 0) || (healthMetrics.dtiRatio > DTI_CAUTION_THRESHOLD && healthMetrics.dtiRatio <= DTI_CRITICAL_THRESHOLD) || isPenaltyActive;
   let meowneyStatus: 'safe' | 'caution' | 'alert' = (timeScope === 'all') ? 'safe' : (isCritical || isDtiHigh || isPenaltyActive) ? 'alert' : isCaution ? 'caution' : 'safe';
 
   const [showSettings, setShowSettings] = useState(false), [tempCycleDay, setTempCycleDay] = useState(cycleStartDay), [tempPenaltyConfig, setTempPenaltyConfig] = useState(penaltyConfig), [showDatePicker, setShowDatePicker] = useState(false), [pickerYear, setPickerYear] = useState(currentDate.getFullYear());
@@ -483,7 +484,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <div className="flex items-start justify-between">
                    <div>
                       <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2"><Zap className={`w-4 h-4 ${isDtiHigh ? 'text-rose-500' : 'text-amber-400'}`} />償債比率 (DTI)</h3>
-                      <div className="mt-2 flex items-baseline gap-2"><span className={`text-4xl font-extrabold ${isDtiHigh ? 'text-rose-600' : healthMetrics.dtiRatio > 30 ? 'text-amber-500' : 'text-emerald-500'}`}>{healthMetrics.dtiRatio.toFixed(1)}%</span></div>
+                      <div className="mt-2 flex items-baseline gap-2"><span className={`text-4xl font-extrabold ${isDtiHigh ? 'text-rose-600' : healthMetrics.dtiRatio > DTI_CAUTION_THRESHOLD ? 'text-amber-500' : 'text-emerald-500'}`}>{healthMetrics.dtiRatio.toFixed(1)}%</span></div>
                    </div>
                    {isDtiHigh && <div className="p-2 bg-rose-200 text-rose-600 rounded-full animate-bounce"><AlertTriangle className="w-6 h-6" /></div>}
                 </div>
@@ -576,9 +577,9 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       {/* SECTION 6: Forecasting */}
       <div data-pdf-section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className={`p-6 rounded-[30px] border shadow-sm flex items-center gap-6 ${runwayData.daysRemaining < 90 ? 'bg-rose-50 border-rose-100' : 'bg-white border-emerald-50'}`}>
-              <div className={`p-4 rounded-full ${runwayData.daysRemaining < 90 ? 'bg-rose-200 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}><Hourglass className="w-8 h-8" /></div>
-              <div><h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">現金緩衝耗盡預警</h4><div className="flex items-baseline gap-2"><span className={`text-2xl font-black ${runwayData.daysRemaining < 90 ? 'text-rose-600' : 'text-slate-700'}`}>{runwayData.daysRemaining > 3650 ? '> 10 年' : `${runwayData.daysRemaining} 天`}</span></div></div>
+          <div className={`p-6 rounded-[30px] border shadow-sm flex items-center gap-6 ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-50 border-rose-100' : 'bg-white border-emerald-50'}`}>
+              <div className={`p-4 rounded-full ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-200 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}><Hourglass className="w-8 h-8" /></div>
+              <div><h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">現金緩衝耗盡預警</h4><div className="flex items-baseline gap-2"><span className={`text-2xl font-black ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'text-rose-600' : 'text-slate-700'}`}>{runwayData.daysRemaining > 3650 ? '> 10 年' : `${runwayData.daysRemaining} 天`}</span></div></div>
           </div>
           <div className="p-6 bg-white rounded-[30px] border border-blue-50 shadow-sm flex items-center gap-6">
               <div className="p-4 bg-blue-50 text-blue-500 rounded-full"><Landmark className="w-8 h-8" /></div>

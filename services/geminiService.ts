@@ -2,6 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Transaction, L1Category, TransactionType, STANDARD_CATEGORIES } from "../types";
 import { v4 as uuidv4 } from 'uuid';
+import { GEMINI_MODEL, OCR_MAX_RETRIES, OCR_VERIFY_CONFIDENCE_THRESHOLD, OCR_DEFAULT_CONFIDENCE } from '../config/aiSettings';
 
 // Construct dynamic category list for prompt
 const CATEGORY_GUIDE = Object.entries(STANDARD_CATEGORIES)
@@ -67,14 +68,13 @@ export const analyzeStatementImage = async (base64Image: string): Promise<Transa
   const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
   const cleanBase64 = base64Image.replace(/^data:.*?;base64,/, '');
 
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = OCR_MAX_RETRIES;
   let lastError: any;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      // Fix: Use recommended model 'gemini-3-flash-preview' for extraction tasks
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: GEMINI_MODEL,
         contents: {
           parts: [
             { inlineData: { mimeType: mimeType, data: cleanBase64 } },
@@ -127,8 +127,8 @@ export const analyzeStatementImage = async (base64Image: string): Promise<Transa
           l2: item.l2_category || '其他雜項', // Default fallback
           l3: item.l3_category || ''
         },
-        confidence: item.confidence || 0.8,
-        isVerified: (item.confidence || 0) >= 0.85,
+        confidence: item.confidence || OCR_DEFAULT_CONFIDENCE,
+        isVerified: (item.confidence || 0) >= OCR_VERIFY_CONFIDENCE_THRESHOLD,
         isSplit: false
       }));
 

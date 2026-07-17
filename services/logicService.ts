@@ -1,6 +1,16 @@
 
 import { Transaction, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, SavingsGoal, PenaltyConfig } from '../types';
 import { format, getDaysInMonth, getDate, startOfMonth, endOfMonth, addMonths, subMonths, differenceInDays, isAfter, isBefore, startOfDay, endOfDay, parseISO, startOfYear, getMonth, getYear, isSameMonth, differenceInMonths, subDays, addDays } from 'date-fns';
+import {
+  ALERT_K_FACTOR, ALERT_CRITICAL_THRESHOLD_PERCENT,
+  OPPORTUNITY_COST_ANNUAL_RETURN, OPPORTUNITY_COST_YEARS,
+  RUNWAY_ANALYSIS_WINDOW_DAYS,
+  ANOMALY_MIN_HISTORY_COUNT, ANOMALY_AMOUNT_MULTIPLIER, ANOMALY_MIN_AMOUNT,
+  FREQUENCY_HISTORY_MONTHS, FREQUENCY_MULTIPLIER, FREQUENCY_MIN_COUNT,
+  CASH_DUPLICATE_CHECK_DAYS, CASH_WITHDRAWAL_KEYWORDS,
+  TAX_DEDUCTIBLE_KEYWORDS,
+  GOAL_CASHFLOW_ANALYSIS_DAYS,
+} from '../config/financialRules';
 
 // Precision helper to avoid floating point errors
 const toCents = (val: number) => Math.round(val * 100);
@@ -76,7 +86,7 @@ export const generateTimeWeightedAlerts = (
   budgets: Budget[],
   periodStart: Date,
   periodEnd: Date,
-  kFactor: number = 1.15
+  kFactor: number = ALERT_K_FACTOR
 ): Alert[] => {
   const alerts: Alert[] = [];
   const now = new Date();
@@ -124,7 +134,7 @@ export const generateTimeWeightedAlerts = (
 
     if (currentDailyRate > threshold) {
       const excessRate = ((currentDailyRate - threshold) / threshold) * 100;
-      const isCritical = excessRate > 20;
+      const isCritical = excessRate > ALERT_CRITICAL_THRESHOLD_PERCENT;
       
       alerts.push({
         id: `alert-${budget.l1}-${Date.now()}`,
@@ -225,10 +235,10 @@ export const analyzeFinancialHealth = (transactions: Transaction[]) => {
 };
 
 export const calculateOpportunityCost = (variableSpending: number): number => {
-  const r = 0.07; 
-  const n = 10;   
+  const r = OPPORTUNITY_COST_ANNUAL_RETURN;
+  const n = OPPORTUNITY_COST_YEARS;
   const futureValue = variableSpending * Math.pow((1 + r), n);
-  return futureValue - variableSpending; 
+  return futureValue - variableSpending;
 };
 
 export const getSeasonalTrends = (allTransactions: Transaction[]) => {
@@ -294,9 +304,9 @@ export const analyzeL3Anomalies = (
       const key = `${t.category.l2}-${t.category.l3}`;
       const history = historyMap[key];
 
-      if (history && history.count > 2) {
+      if (history && history.count > ANOMALY_MIN_HISTORY_COUNT) {
           const avg = history.sum / history.count;
-          if (t.amount > avg * 1.5 && t.amount > 50) {
+          if (t.amount > avg * ANOMALY_AMOUNT_MULTIPLIER && t.amount > ANOMALY_MIN_AMOUNT) {
               anomalies.push({
                   ...t,
                   avgAmount: avg,
@@ -330,8 +340,8 @@ export const analyzeL2Frequency = (
       }
   });
 
-  const historyCounts: Record<string, Record<string, number>> = {}; 
-  const startAnalysisDate = subMonths(startOfMonth(currentDateAnchor), 3);
+  const historyCounts: Record<string, Record<string, number>> = {};
+  const startAnalysisDate = subMonths(startOfMonth(currentDateAnchor), FREQUENCY_HISTORY_MONTHS);
   const endAnalysisDate = endOfMonth(subMonths(currentDateAnchor, 1)); 
 
   allTransactions.forEach(t => {
@@ -353,10 +363,10 @@ export const analyzeL2Frequency = (
       if (history) {
           const months = Object.keys(history).length;
           const totalHistory = Object.values(history).reduce((a, b) => a + b, 0);
-          avg = months > 0 ? totalHistory / 3 : 0; 
+          avg = months > 0 ? totalHistory / FREQUENCY_HISTORY_MONTHS : 0;
       }
-      
-      if (avg > 0 && current > avg * 1.2 && current > 3) {
+
+      if (avg > 0 && current > avg * FREQUENCY_MULTIPLIER && current > FREQUENCY_MIN_COUNT) {
           alerts.push({
               l2,
               currentCount: current,
@@ -451,14 +461,15 @@ export const calculateGoalMetrics = (goal: SavingsGoal, allTransactions: Transac
     const remainingAmount = Math.max(targetAmount - currentProgress, 0);
     const isOverdue = isAfter(currentDate, targetDate);
     const rms = isOverdue ? remainingAmount : (remainingAmount / monthsRemaining);
-    const ninetyDaysAgo = subDays(currentDate, 90);
+    const cashflowWindowStart = subDays(currentDate, GOAL_CASHFLOW_ANALYSIS_DAYS);
     const recentTxs = allTransactions.filter(t => {
         const d = parseISO(t.date);
-        return isAfter(d, ninetyDaysAgo) && isBefore(d, currentDate);
+        return isAfter(d, cashflowWindowStart) && isBefore(d, currentDate);
     });
-    const totalIncome90 = recentTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
-    const totalExpense90 = recentTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + t.amount, 0);
-    const anc = Math.max((totalIncome90 - totalExpense90) / 3, 0);
+    const totalIncomeWindow = recentTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
+    const totalExpenseWindow = recentTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + t.amount, 0);
+    // 把窗口內的淨現金流換算成「平均每月」（窗口天數 ÷ 30 天/月）
+    const anc = Math.max((totalIncomeWindow - totalExpenseWindow) / (GOAL_CASHFLOW_ANALYSIS_DAYS / 30), 0);
     // smartProgress = actual amount saved (no confusing "excess capacity" addition)
     const smartProgress = currentProgress;
 
@@ -500,10 +511,10 @@ export const calculateGoalMetrics = (goal: SavingsGoal, allTransactions: Transac
 };
 
 export const calculateGapProjection = (gap: number) => {
-    const r = 0.07; 
-    const n = 10;
+    const r = OPPORTUNITY_COST_ANNUAL_RETURN;
+    const n = OPPORTUNITY_COST_YEARS;
     const futureValue = gap * Math.pow((1 + r), n);
-    return futureValue; 
+    return futureValue;
 };
 
 export const applyHistoricalCategory = (newTx: Transaction, history: Transaction[]): Transaction => {
@@ -529,14 +540,13 @@ export const applyHistoricalCategory = (newTx: Transaction, history: Transaction
 
 export const checkCashDuplicate = (newCashTx: Transaction, history: Transaction[]): boolean => {
     const txDate = parseISO(newCashTx.date);
-    const checkStart = subDays(txDate, 7);
-    const checkEnd = addMonths(txDate, 0); 
-    const withdrawalKeywords = ['atm', 'withdrawal', '提款', '領錢', 'cash'];
+    const checkStart = subDays(txDate, CASH_DUPLICATE_CHECK_DAYS);
+    const checkEnd = addMonths(txDate, 0);
     const potentialMatches = history.filter(t => {
          const tDate = parseISO(t.date);
          if (isBefore(tDate, checkStart) || isAfter(tDate, checkEnd)) return false;
          const name = t.merchant.toLowerCase();
-         const isWithdrawal = withdrawalKeywords.some(k => name.includes(k));
+         const isWithdrawal = CASH_WITHDRAWAL_KEYWORDS.some(k => name.includes(k));
          return isWithdrawal;
     });
     return potentialMatches.length > 0;
@@ -547,20 +557,20 @@ export const calculateRunway = (allTransactions: Transaction[]) => {
     const totalExpense = allTransactions.filter(t => t.type === 'expense').reduce((a, t) => a + t.amount, 0);
     const currentBalance = Math.max(totalIncome - totalExpense, 0);
     const now = new Date();
-    const ninetyDaysAgo = subDays(now, 90);
+    const windowStart = subDays(now, RUNWAY_ANALYSIS_WINDOW_DAYS);
     const recentVariableExpenses = allTransactions
         .filter(t => {
             const d = parseISO(t.date);
-            return t.type === 'expense' 
-                && t.category.l1 === L1Category.VARIABLE 
-                && isAfter(d, ninetyDaysAgo) 
+            return t.type === 'expense'
+                && t.category.l1 === L1Category.VARIABLE
+                && isAfter(d, windowStart)
                 && isBefore(d, now);
         })
         .reduce((sum, t) => sum + t.amount, 0);
-    const firstTxDate = allTransactions.length > 0 
-        ? allTransactions.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0].date 
+    const firstTxDate = allTransactions.length > 0
+        ? allTransactions.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0].date
         : now.toISOString();
-    const actualDays = Math.min(90, differenceInDays(now, parseISO(firstTxDate)) + 1);
+    const actualDays = Math.min(RUNWAY_ANALYSIS_WINDOW_DAYS, differenceInDays(now, parseISO(firstTxDate)) + 1);
     const daysDivisor = Math.max(actualDays, 1);
     const dailyBurnRate = recentVariableExpenses / daysDivisor;
     let daysRemaining = 9999;
@@ -576,16 +586,12 @@ export const calculateRunway = (allTransactions: Transaction[]) => {
 
 export const calculateTaxEstimation = (allTransactions: Transaction[]) => {
     const currentYear = new Date().getFullYear();
-    const taxKeywords = ['醫療', '診所', '掛號', '醫院', 'medical', 'clinic', 'hospital', 
-                         '保險', '壽險', 'insurance', 
-                         '捐款', '公益', 'donation', 'charity', 
-                         '學費', 'education', 'tuition'];
     const deductibleTxs = allTransactions.filter(t => {
         const tDate = parseISO(t.date);
         if (getYear(tDate) !== currentYear) return false;
         if (t.type !== 'expense') return false;
         const combinedText = (t.merchant + t.category.l2 + t.category.l3).toLowerCase();
-        return taxKeywords.some(k => combinedText.includes(k));
+        return TAX_DEDUCTIBLE_KEYWORDS.some(k => combinedText.includes(k));
     });
     const totalDeductible = deductibleTxs.reduce((sum, t) => sum + t.amount, 0);
     return { year: currentYear, totalDeductible, count: deductibleTxs.length };
