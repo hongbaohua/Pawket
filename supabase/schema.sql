@@ -15,8 +15,9 @@ create table if not exists accounts (
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,                    -- 你自訂的顯示名稱，如「中國信託簽帳卡」
   institution text,                      -- 自由文字，如「中國信託」「中華郵政」，非固定清單
-  type text not null check (type in ('bank_debit', 'bank_credit', 'cash', 'e_wallet', 'stored_value')),
-  linked_account_id uuid references accounts(id) on delete set null, -- 例如 LINE Pay Money 的儲值來源帳戶
+  type text not null check (type in ('cash', 'bank_debit', 'bank_credit', 'e_wallet', 'stored_value')),
+  -- 沒有「固定連結來源帳戶」欄位：電子支付錢包(LINE Pay Money/全支付/悠遊付)實際上能綁多家銀行/多張卡儲值，
+  -- 不是固定綁一個來源，儲值/加值一律用 transactions.type='transfer' 記錄，可以每次選不同來源帳戶。
   posting_delay_min int,                 -- 對帳用：預期入帳延遲最短天數
   posting_delay_max int,                 -- 對帳用：預期入帳延遲最長天數
   currency text not null default 'TWD',

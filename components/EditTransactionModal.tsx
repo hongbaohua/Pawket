@@ -1,28 +1,30 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, SourceType } from '../types';
-import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, Check, CreditCard, Coins, Trash2, AlertCircle } from 'lucide-react';
+import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account } from '../types';
+import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, Check, Trash2, AlertCircle, Wallet } from 'lucide-react';
 
 interface EditTransactionModalProps {
   transaction: Transaction;
   allTransactions: Transaction[];
+  accounts?: Account[];
   customCategoryHistory?: Record<string, string[]>;
   onTagAction?: (action: 'rename' | 'delete', l1: L1Category, oldName: string, newName?: string) => void;
   onClose: () => void;
   onSave: (updatedTransaction: Transaction) => void;
 }
 
-const EditTransactionModal: React.FC<EditTransactionModalProps> = ({ 
-    transaction, 
-    allTransactions, 
-    customCategoryHistory = {}, 
+const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
+    transaction,
+    allTransactions,
+    accounts = [],
+    customCategoryHistory = {},
     onTagAction,
-    onClose, 
-    onSave 
+    onClose,
+    onSave
 }) => {
   const [merchant, setMerchant] = useState(transaction.merchant);
   const [type, setType] = useState<TransactionType>(transaction.type);
-  const [sourceType, setSourceType] = useState<SourceType>(transaction.source_type || 'BANK_CARD');
+  const [accountId, setAccountId] = useState<string>(transaction.accountId || accounts.find(a => !a.isArchived)?.id || '');
   const [amount, setAmount] = useState(transaction.amount);
   const [date, setDate] = useState(transaction.date);
   const [l1, setL1] = useState<L1Category>(transaction.category.l1);
@@ -177,7 +179,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
       amount: parseFloat(amount.toString()), // ensure number
       merchant,
       type,
-      source_type: sourceType,
+      accountId: accountId || undefined,
       category: {
         l1,
         l2,
@@ -233,21 +235,21 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                 </button>
               </div>
 
-              {/* Source Selector */}
-              <div className="flex gap-2">
-                 <button 
-                   onClick={() => setSourceType('BANK_CARD')}
-                   className={`flex-1 py-2 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-2 ${sourceType === 'BANK_CARD' ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-slate-100 text-slate-400'}`}
-                 >
-                    <CreditCard className="w-3 h-3" /> 金融卡/帳戶
-                 </button>
-                 <button 
-                   onClick={() => setSourceType('CASH_MANUAL')}
-                   className={`flex-1 py-2 rounded-xl text-xs font-bold border transition flex items-center justify-center gap-2 ${sourceType === 'CASH_MANUAL' ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-white border-slate-100 text-slate-400'}`}
-                 >
-                    <Coins className="w-3 h-3" /> 現金
-                 </button>
-              </div>
+              {/* Account Selector：取代舊的「金融卡/帳戶 vs 現金」二選一 */}
+              {accounts.length > 0 && (
+                <div className="relative">
+                  <Wallet className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 pointer-events-none" />
+                  <select
+                    value={accountId}
+                    onChange={e => setAccountId(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-100 text-slate-600 outline-none focus:border-amber-300"
+                  >
+                    {accounts.filter(a => !a.isArchived).map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
           </div>
 
           {/* Date & Amount Row */}

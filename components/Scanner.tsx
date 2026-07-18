@@ -99,10 +99,7 @@ const Scanner: React.FC<ScannerProps> = ({ onTransactionsAdded, history }) => {
       const analysisPromises = previews.map(img => analyzeStatementImage(img));
       const resultsArray = await Promise.all(analysisPromises);
       const combinedResults = resultsArray.flat();
-      const smartResults = combinedResults.map(tx => {
-          const withSource = { ...tx, source_type: 'BANK_CARD' as const };
-          return applyHistoricalCategory(withSource, history);
-      });
+      const smartResults = combinedResults.map(tx => applyHistoricalCategory(tx, history));
       setDraftTransactions(prev => [...prev, ...smartResults]);
       setPreviews([]); 
     } catch (error) {
@@ -160,7 +157,7 @@ const Scanner: React.FC<ScannerProps> = ({ onTransactionsAdded, history }) => {
 
   const checkDuplicateEffect = () => {
       if (!newTxData.date || !newTxData.amount) return;
-      const dummyTx = { id: 'temp', date: newTxData.date, merchant: newTxData.merchant || 'Cash', amount: parseFloat(newTxData.amount), type: newTxData.type, category: { l1: L1Category.VARIABLE, l2: '', l3: '' }, source_type: 'CASH_MANUAL' as const, originalText: '', confidence: 1, isVerified: true, isSplit: false };
+      const dummyTx = { id: 'temp', date: newTxData.date, merchant: newTxData.merchant || 'Cash', amount: parseFloat(newTxData.amount), type: newTxData.type, category: { l1: L1Category.VARIABLE, l2: '', l3: '' }, originalText: '', confidence: 1, isVerified: true, isSplit: false };
       const hasDupe = checkCashDuplicate(dummyTx, history); setCashDupeWarning(hasDupe);
   };
 
@@ -168,7 +165,7 @@ const Scanner: React.FC<ScannerProps> = ({ onTransactionsAdded, history }) => {
       const amountVal = parseFloat(newTxData.amount);
       if (!newTxData.date || !newTxData.merchant || isNaN(amountVal)) { alert("請確認資料正確！"); return; }
       const l1 = newTxData.type === 'income' ? L1Category.INCOME : L1Category.VARIABLE;
-      const newTx: Transaction = { id: uuidv4(), date: newTxData.date, merchant: newTxData.merchant, originalText: "Manual Entry (Cash)", amount: Math.abs(amountVal), type: newTxData.type, source_type: 'CASH_MANUAL', category: { l1: l1, l2: STANDARD_CATEGORIES[l1][0], l3: "" }, confidence: 1.0, isVerified: true, isSplit: false };
+      const newTx: Transaction = { id: uuidv4(), date: newTxData.date, merchant: newTxData.merchant, originalText: "Manual Entry (Cash)", amount: Math.abs(amountVal), type: newTxData.type, category: { l1: l1, l2: STANDARD_CATEGORIES[l1][0], l3: "" }, confidence: 1.0, isVerified: true, isSplit: false };
       const smartTx = applyHistoricalCategory(newTx, history);
       setDraftTransactions(prev => [...prev, smartTx]); setIsAddModalOpen(false);
   };

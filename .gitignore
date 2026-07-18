@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# 真實財務資料——含實際交易金額/日期/商家/親友名字，不進版本控制
+匯入_中信對帳_775筆.json
+data-import/final_records.json
+data-import/pending_transfers.json
+data-import/final_summary.txt
+data-import/__pycache__/
+supabase/seed_merchant_aliases.sql
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
