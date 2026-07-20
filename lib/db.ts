@@ -3,7 +3,7 @@
 // 轉成資料表用的欄位格式（snake_case、攤平），反之亦然。
 
 import { supabase } from './supabaseClient';
-import { Transaction, Account, AccountType, L1Category } from '../types';
+import { Transaction, Account, AccountType, L1Category, Discount } from '../types';
 
 // ── 帳戶 ──
 
@@ -81,7 +81,10 @@ interface TransactionRow {
   to_account_id: string | null;
   date: string;
   merchant: string;
+  note: string | null;
   original_text: string | null;
+  gross_amount: number;
+  discounts: Discount[] | null;
   net_amount: number;
   type: 'income' | 'expense' | 'transfer';
   l1: L1Category | null;
@@ -97,8 +100,11 @@ const rowToTransaction = (row: TransactionRow): Transaction => ({
   id: row.id,
   date: row.date,
   merchant: row.merchant,
+  note: row.note || undefined,
   originalText: row.original_text || '',
   amount: Number(row.net_amount),
+  grossAmount: row.gross_amount != null ? Number(row.gross_amount) : undefined,
+  discounts: row.discounts && row.discounts.length > 0 ? row.discounts : undefined,
   type: row.type,
   accountId: row.account_id || undefined,
   fromAccountId: row.from_account_id || undefined,
@@ -122,9 +128,10 @@ const transactionToRow = (userId: string, tx: Transaction) => ({
   to_account_id: tx.toAccountId || null,
   date: tx.date,
   merchant: tx.merchant,
+  note: tx.note || null,
   original_text: tx.originalText,
-  gross_amount: tx.amount,
-  discounts: [],
+  gross_amount: tx.grossAmount ?? tx.amount,
+  discounts: tx.discounts ?? [],
   net_amount: tx.amount,
   type: tx.type,
   l1: tx.category.l1,

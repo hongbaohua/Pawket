@@ -32,12 +32,21 @@ export interface Account {
   isArchived: boolean;
 }
 
+// 一筆折扣明細，例如 { label: 'LINE POINT', amount: 40 }
+export interface Discount {
+  label: string;
+  amount: number;
+}
+
 export interface Transaction {
   id: string;
   date: string; // ISO Date string YYYY-MM-DD
-  merchant: string;
+  merchant: string; // 商家名稱
+  note?: string; // 備註/品項細節，跟商家名稱分開存（例如商家填「潮玩城」，備註填「名偵探柯南盲盒×2」）
   originalText: string; // Raw OCR text for audit
-  amount: number;
+  amount: number; // 實付金額（所有財務計算都用這個欄位，等於 grossAmount 扣掉 discounts 加總）
+  grossAmount?: number; // 原始金額（折扣前）。沒有折扣時可以不填，視同等於 amount
+  discounts?: Discount[]; // 折扣明細（選填），例如 [{label:'LINE POINT', amount:40}, {label:'會員折扣', amount:10}]
   type: TransactionType; // New field for Income/Expense
   accountId?: string; // 屬於哪個帳戶（選填，之後逐步補齊舊資料時可以留空）——取代舊的 source_type
   fromAccountId?: string; // 僅 type === 'transfer' 使用：資金來源帳戶

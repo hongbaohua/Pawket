@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account } from '../types';
-import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, Check, Trash2, AlertCircle, Wallet } from 'lucide-react';
+import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account, Discount } from '../types';
+import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote } from 'lucide-react';
 
 interface EditTransactionModalProps {
   transaction: Transaction;
@@ -23,6 +23,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     onSave
 }) => {
   const [merchant, setMerchant] = useState(transaction.merchant);
+  const [note, setNote] = useState(transaction.note || '');
   const [type, setType] = useState<TransactionType>(transaction.type);
   const [accountId, setAccountId] = useState<string>(transaction.accountId || accounts.find(a => !a.isArchived)?.id || '');
   const [amount, setAmount] = useState(transaction.amount);
@@ -30,6 +31,24 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   const [l1, setL1] = useState<L1Category>(transaction.category.l1);
   const [l2, setL2] = useState(transaction.category.l2);
   const [l3, setL3] = useState(transaction.category.l3);
+
+  // 金額拆分（原始金額／折扣明細／實付金額）：預設收合，展開後實付金額改成自動計算
+  const [showBreakdown, setShowBreakdown] = useState(!!transaction.discounts && transaction.discounts.length > 0);
+  const [grossAmount, setGrossAmount] = useState<number>(transaction.grossAmount ?? transaction.amount);
+  const [discounts, setDiscounts] = useState<Discount[]>(transaction.discounts || []);
+
+  // 展開折扣明細時，實付金額自動 = 原始金額 - Σ折扣，並同步回主要的 amount 欄位
+  useEffect(() => {
+    if (!showBreakdown) return;
+    const discountSum = discounts.reduce((sum, d) => sum + (isNaN(d.amount) ? 0 : d.amount), 0);
+    setAmount(parseFloat((grossAmount - discountSum).toFixed(2)));
+  }, [showBreakdown, grossAmount, discounts]);
+
+  const addDiscountRow = () => setDiscounts(prev => [...prev, { label: '', amount: 0 }]);
+  const updateDiscountRow = (idx: number, field: 'label' | 'amount', value: string) => {
+    setDiscounts(prev => prev.map((d, i) => i === idx ? { ...d, [field]: field === 'amount' ? parseFloat(value) || 0 : value } : d));
+  };
+  const removeDiscountRow = (idx: number) => setDiscounts(prev => prev.filter((_, i) => i !== idx));
 
   // Validation State
   const [errors, setErrors] = useState<Record<string, boolean>>({});
@@ -178,8 +197,11 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
       date,
       amount: parseFloat(amount.toString()), // ensure number
       merchant,
+      note: note.trim() || undefined,
       type,
       accountId: accountId || undefined,
+      grossAmount: showBreakdown ? grossAmount : undefined,
+      discounts: showBreakdown ? discounts.filter(d => d.label.trim() || d.amount) : undefined,
       category: {
         l1,
         l2,
@@ -268,16 +290,69 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
              </div>
              <div className="flex-1 space-y-2">
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 ml-1">
-                   金額
+                   實付金額
                 </label>
-                <input 
+                <input
                    ref={amountRef}
                    type="number"
+                   readOnly={showBreakdown}
                    value={amount}
                    onChange={e => setAmount(parseFloat(e.target.value))}
-                   className={`w-full p-4 bg-white border rounded-2xl font-bold text-slate-700 transition outline-none shadow-sm ${errors.amount ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200 focus:border-amber-300 focus:ring-4 focus:ring-amber-50'}`}
+                   className={`w-full p-4 border rounded-2xl font-bold transition outline-none shadow-sm ${showBreakdown ? 'bg-slate-50 text-slate-500' : 'bg-white text-slate-700'} ${errors.amount ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200 focus:border-amber-300 focus:ring-4 focus:ring-amber-50'}`}
                 />
              </div>
+          </div>
+
+          {/* 金額拆分：原始金額／折扣明細 */}
+          <div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!showBreakdown) setGrossAmount(amount);
+                setShowBreakdown(!showBreakdown);
+              }}
+              className="text-xs font-bold text-amber-500 hover:text-amber-600 flex items-center gap-1 ml-1"
+            >
+              <Receipt className="w-3.5 h-3.5" />
+              {showBreakdown ? '收合金額拆分' : '有折扣？填寫原始金額／折扣明細'}
+            </button>
+            {showBreakdown && (
+              <div className="mt-3 p-4 bg-white rounded-2xl border border-slate-100 space-y-3 animate-in slide-in-from-top-2">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">原始金額（折扣前）</label>
+                  <input
+                    type="number"
+                    value={grossAmount}
+                    onChange={e => setGrossAmount(parseFloat(e.target.value) || 0)}
+                    className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:border-amber-300"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase block">折扣明細</label>
+                  {discounts.map((d, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <input
+                        type="text"
+                        value={d.label}
+                        onChange={e => updateDiscountRow(idx, 'label', e.target.value)}
+                        placeholder="例如：LINE POINT"
+                        className="flex-1 p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-amber-300"
+                      />
+                      <input
+                        type="number"
+                        value={d.amount || ''}
+                        onChange={e => updateDiscountRow(idx, 'amount', e.target.value)}
+                        placeholder="0"
+                        className="w-24 p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-amber-300"
+                      />
+                      <button type="button" onClick={() => removeDiscountRow(idx)} className="p-2 text-slate-300 hover:text-rose-400 transition"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={addDiscountRow} className="text-xs font-bold text-slate-400 hover:text-amber-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> 新增折扣項目</button>
+                </div>
+                <p className="text-[11px] text-slate-400">實付金額 = 原始金額 − 折扣總和，自動算好，不用自己減。</p>
+              </div>
+            )}
           </div>
 
           {/* Merchant Field with Autocomplete */}
@@ -299,6 +374,20 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                    <option key={idx} value={name} />
                ))}
             </datalist>
+          </div>
+
+          {/* Note Field：跟商家名稱分開存，記品項細節用 */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 ml-1">
+              <StickyNote className="w-3 h-3" /> 備註（選填）
+            </label>
+            <input
+              type="text"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="例如：名偵探柯南盲盒×2"
+              className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 transition outline-none shadow-sm focus:border-amber-300 focus:ring-4 focus:ring-amber-50"
+            />
           </div>
 
           {/* New Hierarchical Category Selector */}
@@ -400,7 +489,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                     {/* L3 Input (Optional) */}
                     <div>
                         <p className="text-[10px] font-bold mb-2 ml-1 text-slate-300 flex items-center gap-1">
-                            備註 / 細項 (選填)
+                            細項標籤 (選填，例如：飲料、速食)
                         </p>
                         <input
                             type="text"

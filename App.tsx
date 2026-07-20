@@ -22,6 +22,8 @@ import {
 import type { Session } from '@supabase/supabase-js';
 // 一次性資料：中信對帳單匯入時保留下來的25筆待處理轉帳(提款/存款)，見 data-import/README.md
 import pendingCtbcTransfers from './data-import/pending_transfers.json';
+// 一次性資料：回頭修正已匯入775筆資料的商家/備註/折扣格式，見 data-import/parse_discounts.py
+import discountCorrections from './data-import/discount_corrections.json';
 import { v4 as uuidv4 } from 'uuid';
 
 const HighlightText: React.FC<{ text: string; highlight: string }> = ({ text, highlight }) => {
@@ -392,6 +394,39 @@ const App: React.FC = () => {
     }
   };
 
+  // 一次性：回頭修正已匯入775筆資料裡，商家欄位夾帶折扣/描述文字的部分，
+  // 拆成乾淨的商家名稱＋備註＋原始金額／折扣明細。用完這顆按鈕之後會移除，見 data-import/parse_discounts.py。
+  const handleApplyDiscountCorrections = async () => {
+    if (!userId) return;
+    const corrections = discountCorrections as {
+      id: string; merchant: string; note: string | null; grossAmount: number | null; discounts: { label: string; amount: number }[] | null;
+    }[];
+    const byId = new Map<string, Transaction>(transactions.map(t => [t.id, t]));
+    const updated: Transaction[] = [];
+    for (const c of corrections) {
+      const existing = byId.get(c.id);
+      if (!existing) continue;
+      const merged: Transaction = {
+        ...existing,
+        merchant: c.merchant,
+        note: c.note || undefined,
+        grossAmount: c.grossAmount ?? undefined,
+        discounts: c.discounts && c.discounts.length > 0 ? c.discounts : undefined,
+      };
+      updated.push(merged);
+    }
+    if (updated.length === 0) { alert('找不到符合的交易，可能還沒匯入775筆資料，或已經套用過了。'); return; }
+    const updatedIds = new Set(updated.map(u => u.id));
+    setTransactions(prev => prev.map(t => updatedIds.has(t.id) ? updated.find(u => u.id === t.id)! : t));
+    try {
+      await upsertTransactions(userId, updated);
+      alert(`已更新 ${updated.length} 筆交易的商家/備註/折扣格式！`);
+    } catch (err) {
+      console.error('套用折扣修正失敗', err);
+      alert('更新失敗，請檢查主控台錯誤訊息。');
+    }
+  };
+
   const handleTagAction = (action: 'rename' | 'delete', l1: L1Category, oldName: string, newName?: string) => {
       const affectedIds = transactions.filter(t => t.category.l1 === l1 && t.category.l2 === oldName).map(t => t.id);
       let updated: Transaction[] = [];
@@ -579,6 +614,7 @@ const App: React.FC = () => {
                  <button onClick={handleAddTransaction} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-emerald-400 hover:bg-emerald-500 rounded-2xl transition active:scale-95 shadow-md shadow-emerald-100"><Plus className="w-4 h-4" />新增交易</button>
                  <button onClick={() => setTransferModalState({ open: true })} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-sky-400 hover:bg-sky-500 rounded-2xl transition active:scale-95 shadow-md shadow-sky-100"><Repeat className="w-4 h-4" />轉帳</button>
                  <button onClick={handleImportPendingCtbcTransfers} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-indigo-400 hover:bg-indigo-500 rounded-2xl transition active:scale-95 shadow-md shadow-indigo-100" title="一次性：補匯入中信對帳單分析出的25筆轉帳"><Repeat className="w-4 h-4" />補匯入轉帳(一次性)</button>
+                 <button onClick={handleApplyDiscountCorrections} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-purple-400 hover:bg-purple-500 rounded-2xl transition active:scale-95 shadow-md shadow-purple-100" title="一次性：把已匯入775筆資料的商家欄位拆成商家/備註/折扣格式"><Receipt className="w-4 h-4" />修正折扣格式(一次性)</button>
                  <div className="h-full w-px bg-slate-200 mx-2 hidden sm:block"></div>
                  <button onClick={() => importInputRef.current?.click()} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95"><Upload className="w-4 h-4" />匯入</button>
                  <input type="file" ref={importInputRef} onChange={handleImport} className="hidden" accept="application/json" />
@@ -620,7 +656,13 @@ const App: React.FC = () => {
                       return (
                         <tr key={t.id} className={`transition group ${t.type === 'income' ? 'bg-emerald-50/20' : 'hover:bg-orange-50/30'}`}>
                           <td className="p-6">{t.date}</td>
-                          <td className="p-6 font-bold">{t.merchant}</td>
+                          <td className="p-6 font-bold">
+                            {t.merchant}
+                            {t.note && <span className="block text-xs font-normal text-slate-400 mt-0.5">{t.note}</span>}
+                            {t.discounts && t.discounts.length > 0 && (
+                              <span className="block text-[11px] font-normal text-amber-500 mt-0.5">原始${t.grossAmount} － 折扣${t.discounts.reduce((s, d) => s + d.amount, 0)}</span>
+                            )}
+                          </td>
                           <td className="p-6"><span className="px-2 py-1 bg-slate-100 rounded text-xs">{CATEGORY_LABELS[t.category.l1]} &bull; {t.category.l2}</span></td>
                           <td className={`p-6 text-right font-bold ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-700'}`}>{t.type === 'income' ? '+' : '-'}${t.amount}</td>
                           <td className="p-6 text-center no-print">

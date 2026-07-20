@@ -112,6 +112,10 @@ const SplitModal: React.FC<SplitModalProps> = ({ transaction, allTransactions, o
         amount: finalAmount,
         // The main item ALWAYS uses the original merchant name from the anchor transaction
         merchant: index === 0 ? (isEditingSplit ? (allTransactions.find(t => t.id === commonParentId)?.merchant || transaction.merchant) : transaction.merchant) : (s.description || `子項目 ${index}`),
+        // 原始交易的備註/折扣明細是算在「整筆」金額上的，拆開後對單一子項目已經沒有意義，不繼承
+        note: undefined,
+        grossAmount: undefined,
+        discounts: undefined,
         type: s.l1 === L1Category.INCOME ? 'income' : 'expense',
         category: {
           l1: s.l1,
