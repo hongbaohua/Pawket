@@ -65,10 +65,6 @@ export const TAX_DEDUCTIBLE_KEYWORDS = [
   '學費', 'education', 'tuition'
 ];
 
-// ── 10. 夢想目標「每月可負擔能力」估算窗口 ──
-// 用最近幾天的實際收支，反推「平均每月能存多少錢」，來判斷存錢目標是否可行。
-export const GOAL_CASHFLOW_ANALYSIS_DAYS = 90;
-
 // ── 11. 預算罰則系統（Beta）預設值 ──
 // 使用者可在「設定」畫面手動開關/調整，這裡只是預設值。
 export const DEFAULT_PENALTY_CONFIG = {

@@ -38,17 +38,39 @@ export interface Discount {
   amount: number;
 }
 
+// 特殊交易性質標記：代購（幫別人買/別人幫忙買）、工作代墊（先墊付，之後跟公司/主管報帳）。
+// 只做輕量標記＋顯示用，不是完整的分帳/結清計算——那是之後「共同支出/代墊分帳」
+// 功能的範圍，這裡只負責讓這幾筆在畫面上跟一般支出區分開來。
+export interface SpecialTag {
+  type: 'proxy_purchase' | 'work_advance'; // 代購 / 工作代墊
+  counterparty: string; // 代購人是誰／之後要跟誰報帳
+  note?: string; // 額外說明，例如「已打統編」「0313批次」
+}
+
+// 一筆品項，例如 { name: '吉拿棒' } 或 { name: '小卡鐳塔', unitPrice: 18.69, quantity: 9, note: '日幣4.2×匯率4.45' }
+export interface TransactionItem {
+  name: string;
+  unitPrice?: number; // 單價（選填，已換算成台幣）
+  quantity?: number; // 數量（選填，沒填視為1）
+  note?: string; // 額外說明（選填，例如匯率換算依據、代購批次）
+}
+
 export interface Transaction {
   id: string;
   date: string; // ISO Date string YYYY-MM-DD
-  merchant: string; // 商家名稱
-  note?: string; // 備註/品項細節，跟商家名稱分開存（例如商家填「潮玩城」，備註填「名偵探柯南盲盒×2」）
+  merchant: string; // 商家名稱（真正的商家本體，例如遊戲儲值就算是透過Google Play/MyCard付款，
+                     // 這裡也應該填遊戲名稱本身，而不是帳單上顯示的付款通道名稱）
+  items?: TransactionItem[]; // 品項清單（選填），一筆交易買了多樣商品時用
+  note?: string; // 備註，不屬於任何品項的額外說明文字，跟商家名稱分開存
   originalText: string; // Raw OCR text for audit
   amount: number; // 實付金額（所有財務計算都用這個欄位，等於 grossAmount 扣掉 discounts 加總）
   grossAmount?: number; // 原始金額（折扣前）。沒有折扣時可以不填，視同等於 amount
   discounts?: Discount[]; // 折扣明細（選填），例如 [{label:'LINE POINT', amount:40}, {label:'會員折扣', amount:10}]
+  specialTag?: SpecialTag; // 代購/工作代墊等特殊性質標記（選填）
   type: TransactionType; // New field for Income/Expense
   accountId?: string; // 屬於哪個帳戶（選填，之後逐步補齊舊資料時可以留空）——取代舊的 source_type
+  paymentChannel?: string; // 同一個帳戶底下實際刷的通道（選填），例如中國信託底下可能是
+                            // VISA/方便付/LINE Pay，這幾個通道共用同一個帳戶餘額，不是各自獨立的帳戶
   fromAccountId?: string; // 僅 type === 'transfer' 使用：資金來源帳戶
   toAccountId?: string;   // 僅 type === 'transfer' 使用：資金去向帳戶
   category: CategoryHierarchy;
@@ -70,14 +92,25 @@ export interface PenaltyConfig {
   targetCategory: string; // L2 Category Name, default '休閒娛樂'
 }
 
-export interface SavingsGoal {
+// 願望清單項目（2026-07-21 從舊的「夢想目標/存錢進度」重新設計）：
+// 這個App本質是記帳，使用者沒有另外做「存錢」這個動作，所有錢就是帳戶餘額本身。
+// 所以這裡不追蹤「存了多少」，而是追蹤「想買的東西，現在的餘額夠不夠、還差多少」，
+// 排在陣列裡的順序＝優先順序（index 0 = 最優先），決定資金分配時誰先被扣。
+export interface WishlistItem {
   id: string;
-  name: string;
-  targetAmount: number;
-  startDate: string; // YYYY-MM-DD (Added for Dream Goal Center)
-  targetDate: string; // YYYY-MM-DD
-  initialAmount: number; // Amount saved before using the app
-  isPrimary: boolean;
+  name: string;             // 想買的東西，例如「手機」
+  targetAmount: number;     // 價錢
+  targetDate?: string;      // 選填 YYYY-MM-DD：有填＝這天前要準備好；沒填＝錢夠了才買，不趕時間
+  isPurchased?: boolean;    // 標記已經買了，買了之後不再佔用可動用餘額計算
+  purchasedDate?: string;
+}
+
+// 願望清單的「安全水位」設定：日常開銷保留＋緊急預備金，計算「可動用餘額」時要先扣掉，
+// 存在 Supabase Auth 的 user_metadata（跟暱稱同一套機制），使用者可以自己調整，
+// App 也會用 calculateSuggestedReserves 抓一個「不會太緊迫」的建議值給她參考。
+export interface WishlistSettings {
+  dailyBuffer: number;    // 日常開銷保留
+  emergencyFund: number;  // 緊急預備金
 }
 
 export interface Alert {

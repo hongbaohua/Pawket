@@ -1,20 +1,24 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { AlertCircle, TrendingUp, Download, Sparkles, TrendingDown, DollarSign, Cat, Smile, Frown, Meh, ArrowRight, PawPrint, Calendar, Settings, X, Check, PiggyBank, ChevronLeft, ChevronRight, ChevronDown, Activity, Zap, Percent, BarChart3, AlertTriangle, Info, ArrowDownRight, ArrowUpRight, Fish, PieChart as PieIcon, Search, Repeat, MousePointer2, Wallet, Target, Rocket, Gavel, Scale, AlertOctagon, Hourglass, Landmark, BrainCircuit, Lightbulb, PartyPopper, Disc, Star, Loader2, Sprout, Leaf, Flame, Trophy } from 'lucide-react';
-import { Alert, Transaction, L1Category, CATEGORY_LABELS, TimeScope, SavingsGoal, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange } from '../types';
+import { AlertCircle, TrendingUp, Download, Sparkles, TrendingDown, DollarSign, Cat, Smile, Frown, Meh, ArrowRight, PawPrint, Calendar, Settings, X, Check, PiggyBank, ChevronLeft, ChevronRight, ChevronDown, Activity, Zap, Percent, BarChart3, AlertTriangle, Info, ArrowDownRight, ArrowUpRight, Fish, PieChart as PieIcon, Search, Repeat, MousePointer2, Wallet, Target, Rocket, Gavel, Scale, AlertOctagon, Hourglass, Landmark, BrainCircuit, Lightbulb, PartyPopper, Disc, Star, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2 } from 'lucide-react';
+import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange } from '../types';
 import { addMonths, format, startOfMonth, endOfMonth, startOfDay, endOfDay, isValid, parseISO } from 'date-fns';
-import { analyzeFinancialHealth, calculateOpportunityCost, getSeasonalTrends, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, calculateGoalMetrics, calculateProjectedPenalty, calculateRunway, calculateTaxEstimation, calculateGapProjection, GoalMetrics, getDateRange } from '../services/logicService';
+import { analyzeFinancialHealth, calculateOpportunityCost, getSeasonalTrends, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, calculateWishlistMetrics, WishlistItemMetrics, calculateProjectedPenalty, calculateRunway, calculateTaxEstimation, getDateRange } from '../services/logicService';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { DTI_CAUTION_THRESHOLD, DTI_CRITICAL_THRESHOLD, RUNWAY_WARNING_DAYS } from '../config/financialRules';
+import AccountBalances, { AccountBalancesCollapsedPill } from './AccountBalances';
 
 interface DashboardProps {
   alerts: Alert[];
-  budgets: Budget[]; 
-  transactions: Transaction[]; 
-  allTransactions: Transaction[]; 
-  goal: SavingsGoal | null; 
+  budgets: Budget[];
+  transactions: Transaction[];
+  allTransactions: Transaction[];
+  accounts: Account[];
+  wishlistItems: WishlistItem[];
+  wishlistSettings: WishlistSettings;
+  onOpenWishlist: () => void;
   onPrint: () => void;
   timeScope: TimeScope;
   setTimeScope: (scope: TimeScope) => void;
@@ -32,100 +36,63 @@ interface DashboardProps {
 const COLORS = ['#FBBF24', '#34D399', '#F472B6', '#A78BFA', '#60A5FA'];
 const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 
-const MeowneyGoalBar = ({ 
-    metrics, 
-    goalName, 
-    onActionClick, 
-    showGapAction, 
-    healthMetrics,
-    anomalies,
-    freqAlerts
-}: { 
-    metrics: GoalMetrics, 
-    goalName: string, 
-    onActionClick: (type: string) => void,
-    showGapAction: boolean,
-    healthMetrics: any,
-    anomalies: any[],
-    freqAlerts: any[]
+// 願望清單卡片（2026-07-21重新設計，取代舊的「夢想目標」存錢進度條）：
+// 這個App本質是記帳，使用者沒有另外做「存錢」的動作，所以這裡不再顯示存錢%進度，
+// 改成直接告訴她「這個願望現在買不買得起、還差多少、還剩幾天」。
+const WishlistCard = ({
+    item,
+    metrics,
+    queueCount,
+    onOpenWishlist,
+}: {
+    item: WishlistItem,
+    metrics: WishlistItemMetrics,
+    queueCount: number,
+    onOpenWishlist: () => void,
 }) => {
-    const [displayPercent, setDisplayPercent] = useState(0);
-    const prevPercentRef = useRef(0);
-    
-    useEffect(() => {
-        const start = prevPercentRef.current;
-        const end = metrics.weightedPercent; 
-        if (start === end) return;
-        let animationFrameId: number;
-        const duration = 1200; 
-        const startTime = performance.now();
-        const animate = (currentTime: number) => {
-            const elapsed = currentTime - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const ease = 1 - Math.pow(1 - progress, 4);
-            const currentVal = start + (end - start) * ease;
-            setDisplayPercent(currentVal);
-            if (progress < 1) animationFrameId = requestAnimationFrame(animate);
-            else prevPercentRef.current = end;
-        };
-        animationFrameId = requestAnimationFrame(animate);
-        return () => cancelAnimationFrame(animationFrameId);
-    }, [metrics.weightedPercent]);
+    const isUrgent = !metrics.canAffordNow && item.targetDate && (metrics.isOverdue || (metrics.daysRemaining != null && metrics.daysRemaining <= 14));
 
-    const getStageConfig = (weightedP: number) => {
-        if (weightedP <= 25) return { stage: 'seed', barBackground: 'bg-[#A8E6CF]', textColor: 'text-[#5DAA8E]', lightBg: 'bg-[#E0F7EF]', borderColor: 'border-[#A8E6CF]', icon: <Sprout className="w-5 h-5 text-[#5DAA8E] animate-bounce" />, mascot: <Cat className="w-12 h-12 text-[#5DAA8E]" />, message: "起步萌芽期", subMessage: "萬事起頭難，我們已經種下希望的種子！", glow: false, texture: false };
-        if (weightedP <= 50) return { stage: 'grow', barBackground: 'bg-[#4D80E6]', textColor: 'text-[#4D80E6]', lightBg: 'bg-[#EEF4FF]', borderColor: 'border-[#BDD5FF]', icon: <Leaf className="w-5 h-5 text-white animate-pulse" />, mascot: <Cat className="w-12 h-12 text-[#4D80E6] -scale-x-100" />, message: "穩健成長期", subMessage: "根基越來越穩固，就像小樹苗正在長高！", glow: false, texture: false };
-        if (weightedP <= 80) return { stage: 'sprint', barBackground: 'bg-[#FFB74D]', textColor: 'text-[#F57C00]', lightBg: 'bg-[#FFF3E0]', borderColor: 'border-[#FFCC80]', icon: <Flame className="w-5 h-5 text-white animate-pulse" />, mascot: <Cat className="w-12 h-12 text-[#FFB74D] -scale-x-100" />, message: "熱情衝刺期", subMessage: "目標已經過半，全力加速向前衝刺吧！", glow: false, texture: true };
-        return { stage: 'harvest', barBackground: 'bg-gradient-to-r from-[#FFD700] to-[#FDB931]', textColor: 'text-[#D4AF37]', lightBg: 'bg-[#FFFBE6]', borderColor: 'border-[#FFE082]', icon: <Trophy className="w-5 h-5 text-white animate-bounce" />, mascot: <PartyPopper className="w-12 h-12 text-[#FFD700]" />, message: "榮耀豐收期", subMessage: "太耀眼了！夢想寶箱就在眼前，伸手可及！", glow: true, texture: false };
-    };
+    const config = metrics.canAffordNow
+        ? { textColor: 'text-[#D4AF37]', lightBg: 'bg-[#FFFBE6]', borderColor: 'border-[#FFE082]', icon: <Trophy className="w-5 h-5 text-white" />, mascot: <PartyPopper className="w-12 h-12 text-[#FFD700]" />, message: '可以入手了！', glow: true }
+        : isUrgent
+        ? { textColor: 'text-[#F57C00]', lightBg: 'bg-[#FFF3E0]', borderColor: 'border-[#FFCC80]', icon: <Flame className="w-5 h-5 text-white" />, mascot: <Cat className="w-12 h-12 text-[#FFB74D] -scale-x-100" />, message: '要加快囉', glow: false }
+        : item.targetDate
+        ? { textColor: 'text-[#4D80E6]', lightBg: 'bg-[#EEF4FF]', borderColor: 'border-[#BDD5FF]', icon: <Leaf className="w-5 h-5 text-white" />, mascot: <Cat className="w-12 h-12 text-[#4D80E6] -scale-x-100" />, message: '還有時間，繼續存', glow: false }
+        : { textColor: 'text-[#5DAA8E]', lightBg: 'bg-[#E0F7EF]', borderColor: 'border-[#A8E6CF]', icon: <Sprout className="w-5 h-5 text-[#5DAA8E]" />, mascot: <Cat className="w-12 h-12 text-[#5DAA8E]" />, message: '錢夠了就能買，不趕時間', glow: false };
 
-    const config = getStageConfig(metrics.weightedPercent);
     return (
         <div className={`bg-white p-6 rounded-[40px] shadow-xl border-2 flex flex-col relative overflow-hidden transition-all duration-500 ${config.borderColor} ${config.glow ? 'shadow-amber-200/50' : ''}`}>
-            <div className="flex justify-between items-start mb-6 z-10">
+            <div className="flex justify-between items-start mb-4 z-10">
                 <div>
-                    <h4 className="font-extrabold text-slate-700 text-lg flex items-center gap-2"><Target className={`w-5 h-5 ${config.textColor}`} />{goalName}</h4>
-                    <p className={`text-xs font-bold ${config.textColor} mt-1 opacity-80`}>{config.message} &bull; {config.subMessage}</p>
-                    <p className="text-[10px] text-slate-400 mt-1">時間進度: {metrics.timePercent.toFixed(1)}% &bull; 存款進度: {metrics.financialPercent.toFixed(1)}%</p>
+                    <h4 className="font-extrabold text-slate-700 text-lg flex items-center gap-2"><Target className={`w-5 h-5 ${config.textColor}`} />{item.name}</h4>
+                    <p className={`text-xs font-bold ${config.textColor} mt-1 opacity-80`}>{config.message}</p>
+                    {item.targetDate && (
+                        <p className="text-[10px] text-slate-400 mt-1">
+                            目標日期 {item.targetDate}{metrics.isOverdue ? '（已過期）' : metrics.daysRemaining != null ? `・還剩${metrics.daysRemaining}天` : ''}
+                        </p>
+                    )}
                 </div>
-                <div className={`p-2 rounded-full bg-white shadow-sm border-2 ${config.borderColor} transition-colors duration-500`}>{config.mascot}</div>
-            </div>
-            <div className="mb-8 z-10 relative">
-                <div className="flex justify-between items-end mb-2 px-1">
-                    <span className="text-xs font-bold text-slate-400 font-mono tracking-wider">SAVINGS PROGRESS</span>
-                    <span className={`text-3xl font-black ${config.textColor} tabular-nums transition-colors duration-500`}>{displayPercent.toFixed(1)}%</span>
-                </div>
-                <div className="h-6 bg-slate-100 rounded-full w-full relative shadow-inner overflow-hidden border border-slate-100">
-                    <div className={`h-full rounded-full relative flex items-center justify-end pr-1 transition-all duration-[1200ms] ease-out shadow-sm ${config.barBackground}`} style={{ width: `${metrics.weightedPercent}%`, backgroundImage: config.texture ? 'repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(255,255,255,0.2) 10px, rgba(255,255,255,0.2) 20px)' : undefined }}>
-                        <div className="absolute -right-3 top-1/2 -translate-y-1/2 bg-white p-1 rounded-full shadow-md z-20 scale-110 border-2 border-white">{config.icon}</div>
-                    </div>
-                </div>
-                <div className="flex justify-between mt-2 text-xs font-bold text-slate-400 px-1">
-                    <span>$0</span>
-                    <span>${Math.round(metrics.currentProgress).toLocaleString()} / ${metrics.targetAmount.toLocaleString()}</span>
-                </div>
+                <div className={`p-2 rounded-full bg-white shadow-sm border-2 ${config.borderColor} transition-colors duration-500 shrink-0`}>{config.mascot}</div>
             </div>
             <div className={`p-5 rounded-[24px] ${config.lightBg} border ${config.borderColor} relative z-10 transition-colors duration-500`}>
-                <div className="flex gap-3">
-                    <div className={`p-2 rounded-xl h-fit shrink-0 bg-white shadow-sm ${config.textColor}`}>{metrics.isFeasible ? <Smile className="w-5 h-5" /> : <BrainCircuit className="w-5 h-5" />}</div>
-                    <div className="space-y-2 flex-1">
-                        <div className="flex justify-between items-start">
-                            <p className="text-sm font-bold text-slate-700">{metrics.isFeasible ? '教練診斷：狀況極佳！' : '教練診斷：發現阻力'}</p>
-                            {!metrics.isFeasible && <span className="bg-white px-2 py-1 rounded-lg text-[10px] font-bold text-rose-500 shadow-sm border border-rose-100">缺口 ${Math.round(metrics.gap).toLocaleString()}/月</span>}
-                        </div>
-                        <div className="text-xs text-slate-500 leading-relaxed font-medium">
-                            {metrics.isFeasible ? <>您的平均存力 (ANC) <strong>${Math.round(metrics.anc).toLocaleString()}</strong> 超越了目標要求。建議保持當前節奏，或考慮增加投資比例加速複利效應。</> : <>教練發現每月有資金缺口。{healthMetrics.dtiRatio > 35 ? <span className="block mt-1 text-rose-500">🔴 <strong>風險阻礙：</strong>固定債務佔比過高 ({healthMetrics.dtiRatio.toFixed(0)}%)，請優先處理債務。</span> : healthMetrics.ratios.variable > 30 ? <span className="block mt-1 text-amber-600">🟠 <strong>結構失衡：</strong>變動支出過高，建議從「{(anomalies[0]?.category?.l2 || freqAlerts[0]?.l2 || '非必要支出')}」開始縮減。</span> : <span className="block mt-1 text-slate-600">🔵 <strong>建議：</strong>試著減少 {(anomalies[0]?.category?.l3 || '零食飲料')} 的頻率來填補缺口。</span>}</>}
-                        </div>
-                    </div>
+                <div className="flex justify-between items-end mb-1">
+                    <span className="text-xs font-bold text-slate-500">目標金額</span>
+                    <span className="text-xl font-black text-slate-700">${item.targetAmount.toLocaleString()}</span>
                 </div>
+                {metrics.canAffordNow ? (
+                    <p className="text-sm font-bold text-emerald-600 flex items-center gap-1.5 mt-2"><CheckCircle2 className="w-4 h-4" /> 扣掉安全水位跟前面的願望，現在的餘額夠買了！</p>
+                ) : (
+                    <p className="text-sm font-bold text-rose-500 mt-2">還差 ${Math.round(metrics.shortfall).toLocaleString()}</p>
+                )}
+                {queueCount > 0 && <p className="text-[10px] text-slate-400 mt-2">後面還排了 {queueCount} 個願望在等這個買完</p>}
             </div>
-            <div className={`absolute -top-10 -right-10 w-40 h-40 bg-gradient-to-br from-white/0 to-slate-100/50 rounded-full blur-3xl pointer-events-none transition-all duration-1000 ${config.glow ? 'opacity-80 scale-150 bg-amber-200/50' : 'opacity-100'}`}></div>
+            <button onClick={onOpenWishlist} className="text-[11px] font-bold text-slate-400 hover:text-indigo-500 mt-3 self-end">查看完整清單 →</button>
         </div>
     );
 };
 
-const Dashboard: React.FC<DashboardProps> = ({ 
-    alerts, budgets, transactions, allTransactions, goal, onPrint, timeScope, setTimeScope, cycleStartDay, setCycleStartDay, dateRangeLabel, currentDate, setCurrentDate, penaltyConfig, setPenaltyConfig, customRange, setCustomRange
+const Dashboard: React.FC<DashboardProps> = ({
+    alerts, budgets, transactions, allTransactions, accounts, wishlistItems, wishlistSettings, onOpenWishlist, onPrint, timeScope, setTimeScope, cycleStartDay, setCycleStartDay, dateRangeLabel, currentDate, setCurrentDate, penaltyConfig, setPenaltyConfig, customRange, setCustomRange
 }) => {
   const expenses = transactions.filter(t => t.type === 'expense');
   const incomes = transactions.filter(t => t.type === 'income');
@@ -140,17 +107,18 @@ const Dashboard: React.FC<DashboardProps> = ({
   const freqAlerts = useMemo(() => analyzeL2Frequency(transactions, allTransactions, currentDate), [transactions, allTransactions, currentDate]);
   const incomeBreakdown = useMemo(() => getCategoryBreakdown(transactions, 'income'), [transactions]);
   const expenseBreakdown = useMemo(() => getCategoryBreakdown(transactions, 'expense', L1Category.VARIABLE), [transactions]); 
-  const goalMetrics = useMemo(() => goal ? calculateGoalMetrics(goal, allTransactions) : null, [goal, allTransactions]);
+  const topWishlistItem = useMemo(() => wishlistItems.find(i => !i.isPurchased) || null, [wishlistItems]);
+  const wishlistMetrics = useMemo(
+    () => calculateWishlistMetrics(wishlistItems, accounts, allTransactions, wishlistSettings.dailyBuffer, wishlistSettings.emergencyFund),
+    [wishlistItems, accounts, allTransactions, wishlistSettings.dailyBuffer, wishlistSettings.emergencyFund]
+  );
   const penaltyData = useMemo(() => timeScope === 'all' ? { isOverspent: false, overage: 0, penaltyAmount: 0 } : calculateProjectedPenalty(transactions, budgets, penaltyConfig), [transactions, budgets, penaltyConfig, timeScope]);
   const runwayData = useMemo(() => calculateRunway(allTransactions), [allTransactions]);
   const taxData = useMemo(() => calculateTaxEstimation(allTransactions), [allTransactions]);
 
   const [expandedL2, setExpandedL2] = useState<string | null>(null);
-  const [showGapAction, setShowGapAction] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
-
-  const handleGoalAction = (type: string) => { if (type === 'opportunity') setShowGapAction(!showGapAction); };
 
   // --- Robust Date Range Fetching for Header and Modal ---
   const currentRangeObj = useMemo(() => {
@@ -210,6 +178,8 @@ const Dashboard: React.FC<DashboardProps> = ({
     const click = (e: MouseEvent) => { if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) setShowDatePicker(false); };
     document.addEventListener("mousedown", click); return () => document.removeEventListener("mousedown", click);
   }, []);
+
+  const [isBalancesExpanded, setIsBalancesExpanded] = useState(false);
 
   const saveSettings = () => { if (tempCycleDay >= 1 && tempCycleDay <= 31) { setCycleStartDay(tempCycleDay); setPenaltyConfig(tempPenaltyConfig); setShowSettings(false); } };
   const navigateMonth = (direction: number) => setCurrentDate(addMonths(currentDate, direction));
@@ -409,6 +379,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             </button>
         </div>
 
+        <div className="flex flex-col md:flex-row md:items-stretch md:justify-between gap-3">
         <div className="bg-white p-2 rounded-[24px] shadow-sm border border-orange-50 inline-flex flex-col md:flex-row gap-2 md:gap-0 w-full md:w-fit self-start items-center">
             <div className="flex bg-slate-50 p-1.5 rounded-2xl relative">
                 <button onClick={() => setTimeScope('all')} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300 relative z-10 ${timeScope === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>至今累積</button>
@@ -439,6 +410,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <button onClick={() => { setTempCycleDay(cycleStartDay); setTempPenaltyConfig(penaltyConfig); setShowSettings(!showSettings); }} className={`p-2 rounded-xl transition-colors ${timeScope === 'custom_cycle' ? 'bg-amber-100 text-amber-600' : 'text-slate-300 hover:bg-slate-100'}`}><Settings className="w-4 h-4" /></button>
             </div>
         </div>
+        {!isBalancesExpanded && (
+          <AccountBalancesCollapsedPill accounts={accounts} allTransactions={allTransactions} onExpand={() => setIsBalancesExpanded(true)} />
+        )}
+        </div>
+
+        {isBalancesExpanded && (
+          <AccountBalances accounts={accounts} allTransactions={allTransactions} onCollapse={() => setIsBalancesExpanded(false)} />
+        )}
       </div>
 
       {/* --- RECTIFIED PDF REPORT HEADER (OFF-SCREEN BUT VISIBLE TO CAPTURE) --- */}
@@ -572,7 +551,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               <h4 className="font-bold text-slate-700 flex items-center gap-2 mb-6"><TrendingUp className="w-5 h-5 text-amber-400" />季節性支出趨勢 (24個月)</h4>
               <div className="grid grid-cols-12 gap-1.5">{seasonalData.slice(-12).map((data, idx) => (<div key={idx} className="flex flex-col items-center gap-2"><div className="w-full bg-slate-50 rounded-lg h-32 relative flex items-end overflow-hidden"><div className="w-full rounded-t-lg" style={{ height: `${Math.max(data.intensity * 100, 5)}%`, backgroundColor: `rgba(251, 191, 36, ${Math.max(data.intensity, 0.2)})` }}></div></div><span className="text-[10px] font-bold text-slate-400">{data.label}</span></div>))}</div>
           </div>
-          {goalMetrics && goal ? <MeowneyGoalBar metrics={goalMetrics} goalName={goal.name} onActionClick={handleGoalAction} showGapAction={showGapAction} healthMetrics={healthMetrics} anomalies={anomalies} freqAlerts={freqAlerts} /> : <div className="bg-white p-6 rounded-[40px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm">尚未設定目標</div>}
+          {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-6 rounded-[40px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增願望清單</div>}
       </div>
 
       {/* SECTION 6: Forecasting */}

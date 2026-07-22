@@ -3,7 +3,7 @@
 // 轉成資料表用的欄位格式（snake_case、攤平），反之亦然。
 
 import { supabase } from './supabaseClient';
-import { Transaction, Account, AccountType, L1Category, Discount } from '../types';
+import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag } from '../types';
 
 // ── 帳戶 ──
 
@@ -79,12 +79,15 @@ interface TransactionRow {
   account_id: string | null;
   from_account_id: string | null;
   to_account_id: string | null;
+  payment_channel: string | null;
   date: string;
   merchant: string;
   note: string | null;
   original_text: string | null;
   gross_amount: number;
   discounts: Discount[] | null;
+  items: TransactionItem[] | null;
+  special_tag: SpecialTag | null;
   net_amount: number;
   type: 'income' | 'expense' | 'transfer';
   l1: L1Category | null;
@@ -105,10 +108,13 @@ const rowToTransaction = (row: TransactionRow): Transaction => ({
   amount: Number(row.net_amount),
   grossAmount: row.gross_amount != null ? Number(row.gross_amount) : undefined,
   discounts: row.discounts && row.discounts.length > 0 ? row.discounts : undefined,
+  items: row.items && row.items.length > 0 ? row.items : undefined,
+  specialTag: row.special_tag || undefined,
   type: row.type,
   accountId: row.account_id || undefined,
   fromAccountId: row.from_account_id || undefined,
   toAccountId: row.to_account_id || undefined,
+  paymentChannel: row.payment_channel || undefined,
   category: {
     l1: row.l1 || L1Category.VARIABLE,
     l2: row.l2 || '',
@@ -126,12 +132,15 @@ const transactionToRow = (userId: string, tx: Transaction) => ({
   account_id: tx.accountId || null,
   from_account_id: tx.fromAccountId || null,
   to_account_id: tx.toAccountId || null,
+  payment_channel: tx.paymentChannel || null,
   date: tx.date,
   merchant: tx.merchant,
   note: tx.note || null,
   original_text: tx.originalText,
   gross_amount: tx.grossAmount ?? tx.amount,
   discounts: tx.discounts ?? [],
+  items: tx.items ?? [],
+  special_tag: tx.specialTag ?? null,
   net_amount: tx.amount,
   type: tx.type,
   l1: tx.category.l1,
@@ -143,10 +152,23 @@ const transactionToRow = (userId: string, tx: Transaction) => ({
   parent_id: tx.parentId || null,
 });
 
+// Supabase/PostgREST 預設一次查詢最多回傳1000筆，不會報錯、只是安靜地砍掉超過的部分，
+// 資料一多（現在已經1700+筆）就會悄悄漏資料。用 range() 分頁抓到抓完為止，不依賴專案的
+// Max Rows 設定值，之後資料再變多也不會再卡住。
+const FETCH_PAGE_SIZE = 1000;
+
 export const fetchTransactions = async (): Promise<Transaction[]> => {
-  const { data, error } = await supabase.from('transactions').select('*').order('date', { ascending: false });
-  if (error) throw error;
-  return (data as TransactionRow[]).map(rowToTransaction);
+  const allRows: TransactionRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase.from('transactions').select('*').order('date', { ascending: false }).range(from, from + FETCH_PAGE_SIZE - 1);
+    if (error) throw error;
+    const page = data as TransactionRow[];
+    allRows.push(...page);
+    if (page.length < FETCH_PAGE_SIZE) break;
+    from += FETCH_PAGE_SIZE;
+  }
+  return allRows.map(rowToTransaction);
 };
 
 // upsert：新增跟編輯共用同一個函式，id 已存在就更新、不存在就新增
@@ -155,10 +177,18 @@ export const upsertTransaction = async (userId: string, tx: Transaction): Promis
   if (error) throw error;
 };
 
+// 分批寫入：一次塞幾千筆進同一個request，request本身太大容易被中間層(Supabase/Cloudflare)
+// 擋掉回傳403，跟資料/權限本身無關。切成小批次依序送出，安全很多。
+const UPSERT_BATCH_SIZE = 200;
+
 export const upsertTransactions = async (userId: string, txs: Transaction[]): Promise<void> => {
   if (txs.length === 0) return;
-  const { error } = await supabase.from('transactions').upsert(txs.map(t => transactionToRow(userId, t)));
-  if (error) throw error;
+  const rows = txs.map(t => transactionToRow(userId, t));
+  for (let i = 0; i < rows.length; i += UPSERT_BATCH_SIZE) {
+    const batch = rows.slice(i, i + UPSERT_BATCH_SIZE);
+    const { error } = await supabase.from('transactions').upsert(batch);
+    if (error) throw error;
+  }
 };
 
 export const deleteTransaction = async (id: string): Promise<void> => {
@@ -168,5 +198,11 @@ export const deleteTransaction = async (id: string): Promise<void> => {
 
 export const deleteTransactionsByParentId = async (parentId: string): Promise<void> => {
   const { error } = await supabase.from('transactions').delete().eq('parent_id', parentId);
+  if (error) throw error;
+};
+
+// 「清除所有紀錄」用：只刪這個使用者的 transactions，不動 accounts 表。
+export const deleteAllTransactions = async (userId: string): Promise<void> => {
+  const { error } = await supabase.from('transactions').delete().eq('user_id', userId);
   if (error) throw error;
 };

@@ -21,6 +21,23 @@ data-import/discount_corrections.json
 data-import/discount_review.txt
 data-import/__pycache__/
 supabase/seed_merchant_aliases.sql
+data-import/reparse_progress.json
+data-import/reparse_corrections.json
+data-import/reparse_review.txt
+data-import/merchant_dedup_map.json
+data-import/merchant_dedup_review.txt
+匯入_中華郵政_對帳.json
+data-import/post_office_records.json
+data-import/cash_2023_2024_records.json
+data-import/cash_2023_2024_review.txt
+data-import/easycard_records.json
+data-import/easycard_review.txt
+data-import/ctbc_final_merged.json
+匯入_統整全部.json
+data-import/opening_balance_adjustments.json
+
+# Vercel CLI 專案連結資訊（本機自動產生，不用進版本控制）
+.vercel
 
 # Editor directories and files
 .vscode/*

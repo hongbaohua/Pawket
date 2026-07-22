@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account, Discount } from '../types';
-import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote } from 'lucide-react';
+import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account, Discount, SpecialTag, TransactionItem } from '../types';
+import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard } from 'lucide-react';
 
 interface EditTransactionModalProps {
   transaction: Transaction;
@@ -26,6 +26,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   const [note, setNote] = useState(transaction.note || '');
   const [type, setType] = useState<TransactionType>(transaction.type);
   const [accountId, setAccountId] = useState<string>(transaction.accountId || accounts.find(a => !a.isArchived)?.id || '');
+  const [paymentChannel, setPaymentChannel] = useState(transaction.paymentChannel || '');
   const [amount, setAmount] = useState(transaction.amount);
   const [date, setDate] = useState(transaction.date);
   const [l1, setL1] = useState<L1Category>(transaction.category.l1);
@@ -49,6 +50,34 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     setDiscounts(prev => prev.map((d, i) => i === idx ? { ...d, [field]: field === 'amount' ? parseFloat(value) || 0 : value } : d));
   };
   const removeDiscountRow = (idx: number) => setDiscounts(prev => prev.filter((_, i) => i !== idx));
+
+  // 品項清單：一筆交易買了多樣商品時，結構化列出每一項（跟商家名稱、備註分開存）。
+  // 單價/數量/備註預設收合，大部分品項只需要填名稱。
+  const [items, setItems] = useState<TransactionItem[]>(transaction.items || []);
+  const [expandedItemIdx, setExpandedItemIdx] = useState<Set<number>>(
+    new Set((transaction.items || []).map((it, i) => (it.unitPrice != null ? i : -1)).filter(i => i >= 0))
+  );
+  const addItemRow = () => setItems(prev => [...prev, { name: '' }]);
+  const updateItemField = (idx: number, field: keyof TransactionItem, value: string) => {
+    setItems(prev => prev.map((it, i) => {
+      if (i !== idx) return it;
+      if (field === 'unitPrice' || field === 'quantity') {
+        return { ...it, [field]: value === '' ? undefined : parseFloat(value) || 0 };
+      }
+      return { ...it, [field]: value };
+    }));
+  };
+  const removeItemRow = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx));
+  const toggleItemExpanded = (idx: number) => setExpandedItemIdx(prev => {
+    const next = new Set(prev);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    return next;
+  });
+
+  // 特殊標記：代購／工作代墊。輕量標記＋顯示用，不做完整分帳計算。
+  const [specialTagType, setSpecialTagType] = useState<'none' | SpecialTag['type']>(transaction.specialTag?.type || 'none');
+  const [specialTagCounterparty, setSpecialTagCounterparty] = useState(transaction.specialTag?.counterparty || '');
+  const [specialTagNote, setSpecialTagNote] = useState(transaction.specialTag?.note || '');
 
   // Validation State
   const [errors, setErrors] = useState<Record<string, boolean>>({});
@@ -76,6 +105,14 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     const names = new Set(allTransactions.map(t => t.merchant));
     return Array.from(names).filter(name => name !== transaction.merchant).sort();
   }, [allTransactions, transaction.merchant]);
+
+  // 同一個帳戶底下用過的付款通道（VISA/方便付/LINE Pay這類），只列同帳戶的，跟別的帳戶混在一起沒意義
+  const paymentChannelSuggestions = useMemo(() => {
+    const channels = new Set(
+      allTransactions.filter(t => t.accountId === accountId && t.paymentChannel).map(t => t.paymentChannel!)
+    );
+    return Array.from(channels).sort();
+  }, [allTransactions, accountId]);
 
   // Generate L3 suggestions based on selected L2
   const l3Suggestions = useMemo(() => {
@@ -197,11 +234,18 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
       date,
       amount: parseFloat(amount.toString()), // ensure number
       merchant,
+      items: items.filter(it => it.name.trim()).map(it => ({ ...it, name: it.name.trim() })).length > 0
+        ? items.filter(it => it.name.trim()).map(it => ({ ...it, name: it.name.trim() }))
+        : undefined,
       note: note.trim() || undefined,
       type,
       accountId: accountId || undefined,
+      paymentChannel: paymentChannel.trim() || undefined,
       grossAmount: showBreakdown ? grossAmount : undefined,
       discounts: showBreakdown ? discounts.filter(d => d.label.trim() || d.amount) : undefined,
+      specialTag: specialTagType !== 'none' && specialTagCounterparty.trim()
+        ? { type: specialTagType, counterparty: specialTagCounterparty.trim(), note: specialTagNote.trim() || undefined }
+        : undefined,
       category: {
         l1,
         l2,
@@ -259,17 +303,45 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
 
               {/* Account Selector：取代舊的「金融卡/帳戶 vs 現金」二選一 */}
               {accounts.length > 0 && (
-                <div className="relative">
-                  <Wallet className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 pointer-events-none" />
-                  <select
-                    value={accountId}
-                    onChange={e => setAccountId(e.target.value)}
-                    className="w-full pl-9 pr-4 py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-100 text-slate-600 outline-none focus:border-amber-300"
-                  >
-                    {accounts.filter(a => !a.isArchived).map(a => (
-                      <option key={a.id} value={a.id}>{a.name}</option>
-                    ))}
-                  </select>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Wallet className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 pointer-events-none" />
+                    <select
+                      value={accountId}
+                      onChange={e => { setAccountId(e.target.value); setPaymentChannel(''); }}
+                      className="w-full pl-9 pr-4 py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-100 text-slate-600 outline-none focus:border-amber-300"
+                    >
+                      {accounts.filter(a => !a.isArchived).map(a => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex-1 flex flex-col gap-1.5">
+                    <div className="relative">
+                      <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={paymentChannel}
+                        onChange={e => setPaymentChannel(e.target.value)}
+                        placeholder="付款通道(選填，如VISA)"
+                        className="w-full pl-9 pr-3 py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-100 text-slate-600 outline-none focus:border-amber-300 placeholder:font-normal placeholder:text-slate-300"
+                      />
+                    </div>
+                    {paymentChannelSuggestions.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {paymentChannelSuggestions.map(c => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => setPaymentChannel(prev => prev === c ? '' : c)}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${paymentChannel === c ? 'bg-amber-400 text-white' : 'bg-slate-100 text-slate-500 hover:bg-amber-50 hover:text-amber-600'}`}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
           </div>
@@ -376,7 +448,55 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
             </datalist>
           </div>
 
-          {/* Note Field：跟商家名稱分開存，記品項細節用 */}
+          {/* Items Field：一筆交易買了多樣商品時，結構化列出每一項 */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 ml-1">
+              <ShoppingBag className="w-3 h-3" /> 品項清單（選填，買了不只一樣東西時用）
+            </label>
+            <div className="space-y-2">
+              {items.map((it, idx) => {
+                const isExpanded = expandedItemIdx.has(idx);
+                const subtotal = it.unitPrice != null ? it.unitPrice * (it.quantity || 1) : null;
+                return (
+                  <div key={idx} className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="text"
+                        value={it.name}
+                        onChange={(e) => updateItemField(idx, 'name', e.target.value)}
+                        placeholder="例如：吉拿棒"
+                        className="flex-1 p-2 bg-transparent text-sm font-bold text-slate-700 outline-none"
+                      />
+                      {subtotal != null && <span className="text-xs font-bold text-amber-500 whitespace-nowrap">${subtotal.toFixed(2)}</span>}
+                      <button type="button" onClick={() => toggleItemExpanded(idx)} className={`text-[10px] font-bold px-2 py-1 rounded-lg whitespace-nowrap ${isExpanded ? 'bg-amber-100 text-amber-600' : 'text-slate-400 hover:bg-slate-100'}`}>
+                        {isExpanded ? '收合單價' : '填單價'}
+                      </button>
+                      <button type="button" onClick={() => removeItemRow(idx)} className="p-1 text-slate-300 hover:text-rose-400 transition"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                    {isExpanded && (
+                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 animate-in slide-in-from-top-1">
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">單價(台幣)</label>
+                          <input type="number" value={it.unitPrice ?? ''} onChange={(e) => updateItemField(idx, 'unitPrice', e.target.value)} className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">數量</label>
+                          <input type="number" value={it.quantity ?? ''} onChange={(e) => updateItemField(idx, 'quantity', e.target.value)} placeholder="1" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
+                        </div>
+                        <div>
+                          <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">備註</label>
+                          <input type="text" value={it.note ?? ''} onChange={(e) => updateItemField(idx, 'note', e.target.value)} placeholder="例如：匯率4.45" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <button type="button" onClick={addItemRow} className="text-xs font-bold text-slate-400 hover:text-amber-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> 新增品項</button>
+            </div>
+          </div>
+
+          {/* Note Field：跟商家名稱分開存，記不屬於任何品項的額外說明 */}
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 ml-1">
               <StickyNote className="w-3 h-3" /> 備註（選填）
@@ -388,6 +508,47 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
               placeholder="例如：名偵探柯南盲盒×2"
               className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 transition outline-none shadow-sm focus:border-amber-300 focus:ring-4 focus:ring-amber-50"
             />
+          </div>
+
+          {/* Special Tag：代購／工作代墊。輕量標記＋顯示用，不做完整分帳計算 */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 ml-1">
+              <UserCheck className="w-3 h-3" /> 特殊性質（選填）
+            </label>
+            <div className="flex p-1.5 bg-white rounded-2xl border border-slate-100">
+              {([
+                { key: 'none', label: '一般' },
+                { key: 'proxy_purchase', label: '代購' },
+                { key: 'work_advance', label: '工作代墊' },
+              ] as const).map(opt => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => setSpecialTagType(opt.key)}
+                  className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-all ${specialTagType === opt.key ? 'bg-purple-50 text-purple-600 shadow-sm' : 'text-slate-400 hover:text-slate-500'}`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {specialTagType !== 'none' && (
+              <div className="p-4 bg-white rounded-2xl border border-slate-100 space-y-2 animate-in slide-in-from-top-2">
+                <input
+                  type="text"
+                  value={specialTagCounterparty}
+                  onChange={(e) => setSpecialTagCounterparty(e.target.value)}
+                  placeholder={specialTagType === 'proxy_purchase' ? '代購人是誰？' : '之後要跟誰報帳？'}
+                  className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-purple-300"
+                />
+                <input
+                  type="text"
+                  value={specialTagNote}
+                  onChange={(e) => setSpecialTagNote(e.target.value)}
+                  placeholder="額外說明（選填，例如：已打統編、0313批次）"
+                  className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-purple-300"
+                />
+              </div>
+            )}
           </div>
 
           {/* New Hierarchical Category Selector */}

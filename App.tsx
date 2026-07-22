@@ -1,29 +1,26 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { LayoutDashboard, ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, ShoppingBag, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Receipt, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat } from 'lucide-react';
+import { LayoutDashboard, ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import Scanner from './components/Scanner';
 import SplitModal from './components/SplitModal';
 import EditTransactionModal from './components/EditTransactionModal';
 import BatchCorrectionModal from './components/BatchCorrectionModal';
-import GoalModal from './components/GoalModal';
+import WishlistModal from './components/WishlistModal';
 import CategoryMappingModal from './components/CategoryMappingModal';
 import Auth from './components/Auth';
 import AccountsModal from './components/AccountsModal';
 import TransferModal from './components/TransferModal';
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, SavingsGoal, STANDARD_CATEGORIES, PenaltyConfig } from './types';
-import { generateTimeWeightedAlerts, getDateRange, findSimilarTransactions, calculateGoalMetrics } from './services/logicService';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig } from './types';
+import { generateTimeWeightedAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 import {
   seedDefaultAccountsIfEmpty, fetchTransactions, createAccount, updateAccount, archiveAccount,
-  upsertTransaction, upsertTransactions, deleteTransaction as dbDeleteTransaction, deleteTransactionsByParentId
+  upsertTransaction, upsertTransactions, deleteTransaction as dbDeleteTransaction, deleteTransactionsByParentId,
+  deleteAllTransactions
 } from './lib/db';
 import type { Session } from '@supabase/supabase-js';
-// 一次性資料：中信對帳單匯入時保留下來的25筆待處理轉帳(提款/存款)，見 data-import/README.md
-import pendingCtbcTransfers from './data-import/pending_transfers.json';
-// 一次性資料：回頭修正已匯入775筆資料的商家/備註/折扣格式，見 data-import/parse_discounts.py
-import discountCorrections from './data-import/discount_corrections.json';
 import { v4 as uuidv4 } from 'uuid';
 
 const HighlightText: React.FC<{ text: string; highlight: string }> = ({ text, highlight }) => {
@@ -43,6 +40,21 @@ const HighlightText: React.FC<{ text: string; highlight: string }> = ({ text, hi
         )}
       </span>
     );
+};
+
+// 把 Supabase/PostgREST 錯誤物件整理成一段能直接讀、直接複製貼給人看的文字，
+// 不用再叫使用者去挖主控台、展開物件——Ivy反應這步驟太麻煩，改成直接顯示在alert裡。
+const formatSupabaseError = (err: unknown): string => {
+  if (err && typeof err === 'object') {
+    const e = err as { message?: string; details?: string | null; hint?: string | null; code?: string };
+    const lines: string[] = [];
+    if (e.code) lines.push(`錯誤代碼：${e.code}`);
+    if (e.message) lines.push(`訊息：${e.message}`);
+    if (e.details) lines.push(`詳情：${e.details}`);
+    if (e.hint) lines.push(`提示：${e.hint}`);
+    if (lines.length > 0) return lines.join('\n');
+  }
+  return `未知錯誤：${String(err)}`;
 };
 
 const App: React.FC = () => {
@@ -122,21 +134,34 @@ const App: React.FC = () => {
 
   const [penaltyConfig, setPenaltyConfig] = useState<PenaltyConfig>(DEFAULT_PENALTY_CONFIG);
 
-  const [goals, setGoals] = useState<SavingsGoal[]>([]);
-  const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([]);
+  const [isWishlistModalOpen, setIsWishlistModalOpen] = useState(false);
 
-  const primaryGoal = useMemo(() => {
-      return goals.find(g => g.isPrimary) || goals[0] || null;
-  }, [goals]);
+  // 安全水位設定：存在 Supabase Auth 的 user_metadata（跟暱稱同一套機制），沒設定過就是0/0，
+  // WishlistModal 裡會提示一組「不會太緊迫」的建議值讓她套用。
+  const wishlistSettings: WishlistSettings = {
+      dailyBuffer: session?.user.user_metadata?.wishlistDailyBuffer ?? 0,
+      emergencyFund: session?.user.user_metadata?.wishlistEmergencyFund ?? 0,
+  };
+  const handleUpdateWishlistSettings = async (settings: WishlistSettings) => {
+      const { error } = await supabase.auth.updateUser({ data: { wishlistDailyBuffer: settings.dailyBuffer, wishlistEmergencyFund: settings.emergencyFund } });
+      if (error) { console.error('更新願望清單安全水位失敗', error); alert('儲存失敗，請檢查主控台錯誤訊息。'); }
+  };
 
-  const sidebarGoalMetrics = useMemo(() => {
-      if (!primaryGoal) return null;
-      return calculateGoalMetrics(primaryGoal, transactions);
-  }, [primaryGoal, transactions]);
+  const topWishlistItem = useMemo(() => {
+      return wishlistItems.find(i => !i.isPurchased) || null;
+  }, [wishlistItems]);
+
+  const sidebarWishlistMetrics = useMemo(() => {
+      if (!topWishlistItem) return null;
+      return calculateWishlistMetrics(wishlistItems, accounts, transactions, wishlistSettings.dailyBuffer, wishlistSettings.emergencyFund).items[topWishlistItem.id];
+  }, [wishlistItems, accounts, transactions, wishlistSettings.dailyBuffer, wishlistSettings.emergencyFund, topWishlistItem]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTagFilters, setSelectedTagFilters] = useState<Set<string>>(new Set());
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement>(null);
 
   const [splittingTransaction, setSplittingTransaction] = useState<Transaction | null>(null);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -246,6 +271,12 @@ const App: React.FC = () => {
     }
   }, [filteredTransactions, budgets, dateRange, timeScope]);
 
+  useEffect(() => {
+    const click = (e: MouseEvent) => { if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setIsAddMenuOpen(false); };
+    document.addEventListener('mousedown', click);
+    return () => document.removeEventListener('mousedown', click);
+  }, []);
+
   const handleTransactionsAdded = (newTx: Transaction[]) => {
     setTransactions(prev => [...prev, ...newTx]);
     setView('transactions');
@@ -353,77 +384,103 @@ const App: React.FC = () => {
     if (userId) upsertTransaction(userId, tx).catch(err => console.error('儲存轉帳失敗', err));
   };
 
-  // 一次性：把中信對帳單匯入時保留下來的25筆轉帳(提款/存款)接上真實帳戶。
-  // 用完這顆按鈕之後會移除，見 data-import/README.md。
-  const handleImportPendingCtbcTransfers = async () => {
+  // 清除所有紀錄：全面重整用，只刪 transactions、不動 accounts。要求輸入確認文字才會真的執行。
+  const handleClearAllRecords = async () => {
     if (!userId) return;
-    const ctbc = accounts.find(a => a.name === '中國信託' && !a.isArchived);
-    const cash = accounts.find(a => a.name === '現金' && !a.isArchived);
-    if (!ctbc || !cash) {
-      alert('找不到「中國信託」或「現金」帳戶，請先在帳戶管理建立好再匯入。');
-      return;
-    }
-    const already = new Set(transactions.map(t => t.id));
-    const newOnes = (pendingCtbcTransfers as any[]).filter(t => !already.has(t.id));
-    if (newOnes.length === 0) { alert('這批轉帳已經匯入過了。'); return; }
-    const toTransfer = (fromId: string, toId: string) => ({ fromAccountId: fromId, toAccountId: toId });
-    const transfers: Transaction[] = newOnes.map(t => {
-      const dir = t.transferDirection === 'CTBC->CASH' ? toTransfer(ctbc.id, cash.id) : toTransfer(cash.id, ctbc.id);
-      const label = t.transferDirection === 'CTBC->CASH' ? `轉帳：${ctbc.name} → ${cash.name}` : `轉帳：${cash.name} → ${ctbc.name}`;
-      return {
-        id: t.id,
-        date: t.date,
-        merchant: label,
-        originalText: t.originalText,
-        amount: t.amount,
-        type: 'transfer',
-        ...dir,
-        category: { l1: L1Category.VARIABLE, l2: '轉帳', l3: '' },
-        confidence: 1,
-        isVerified: true,
-        isSplit: false,
-      };
-    });
-    setTransactions(prev => [...prev, ...transfers]);
+    const input = window.prompt(
+      '這個動作會刪除所有交易紀錄（帳戶本身不會被刪），且無法復原！\n' +
+      '建議先點右邊的「備份」按鈕匯出目前資料存檔。\n\n' +
+      '確定要繼續的話，請在下面輸入「清除所有紀錄」四個字：'
+    );
+    if (input === null) return;
+    if (input !== '清除所有紀錄') { alert('輸入文字不符，已取消，沒有刪除任何資料。'); return; }
     try {
-      await upsertTransactions(userId, transfers);
-      alert(`已匯入 ${transfers.length} 筆轉帳！`);
+      await deleteAllTransactions(userId);
+      setTransactions([]);
+      alert('已清除所有交易紀錄。');
     } catch (err) {
-      console.error('匯入轉帳失敗', err);
-      alert('匯入失敗，請檢查主控台錯誤訊息。');
+      console.error('清除所有紀錄失敗', err);
+      alert('清除失敗，請檢查主控台錯誤訊息。');
     }
   };
 
-  // 一次性：回頭修正已匯入775筆資料裡，商家欄位夾帶折扣/描述文字的部分，
-  // 拆成乾淨的商家名稱＋備註＋原始金額／折扣明細。用完這顆按鈕之後會移除，見 data-import/parse_discounts.py。
-  const handleApplyDiscountCorrections = async () => {
+  // 配對帳戶：全面重整用，取代之前5個個別的一次性按鈕。只靠 originalText/merchant
+  // 字串解析配對，不依賴任何匯入當下才存在的暫時欄位，任何時間點都能安全重跑。
+  // 規則細節見 專案文件/PROJECT_STATUS.md 第5.8節。
+  const handleMatchAllAccounts = async () => {
     if (!userId) return;
-    const corrections = discountCorrections as {
-      id: string; merchant: string; note: string | null; grossAmount: number | null; discounts: { label: string; amount: number }[] | null;
-    }[];
-    const byId = new Map<string, Transaction>(transactions.map(t => [t.id, t]));
+    const byName = (name: string) => accounts.find(a => a.name === name && !a.isArchived);
+    const paymentTagToAccountName: Record<string, string | null> = {
+      '不指定': null, // 文化幣、姊姊的卡付的錢，不歸Ivy自己的任何帳戶
+      '中華郵政低信心': '中華郵政',
+      '中華郵政': '中華郵政',
+      '二技悠遊卡': '二技悠遊卡',
+      '五專悠遊卡': '五專悠遊卡',
+      '悠遊付錢包': '悠遊付錢包',
+      'MyCard': 'MyCard',
+      '麥當勞點點卡': '麥當勞點點卡',
+    };
+
     const updated: Transaction[] = [];
-    for (const c of corrections) {
-      const existing = byId.get(c.id);
-      if (!existing) continue;
-      const merged: Transaction = {
-        ...existing,
-        merchant: c.merchant,
-        note: c.note || undefined,
-        grossAmount: c.grossAmount ?? undefined,
-        discounts: c.discounts && c.discounts.length > 0 ? c.discounts : undefined,
-      };
-      updated.push(merged);
+    const missingAccountNames = new Set<string>();
+
+    for (const t of transactions) {
+      if (t.type === 'transfer') {
+        if (t.fromAccountId && t.toAccountId) continue;
+        const m = t.merchant.match(/^帳戶互轉：(.+?) → (.+)$/);
+        if (!m) continue;
+        const fromAcc = byName(m[1]);
+        const toAcc = byName(m[2]);
+        if (!fromAcc) missingAccountNames.add(m[1]);
+        if (!toAcc) missingAccountNames.add(m[2]);
+        if (!fromAcc || !toAcc) continue;
+        updated.push({ ...t, fromAccountId: fromAcc.id, toAccountId: toAcc.id });
+        continue;
+      }
+      if (t.accountId) continue;
+      const tagMatch = t.originalText?.match(/\(支付:([^)]+)\)/);
+      if (tagMatch) {
+        const targetName = paymentTagToAccountName[tagMatch[1]];
+        if (targetName === undefined) { missingAccountNames.add(`未知標籤:${tagMatch[1]}`); continue; }
+        if (targetName === null) continue; // 不指定，故意跳過不配對帳戶
+        const acc = byName(targetName);
+        if (!acc) { missingAccountNames.add(targetName); continue; }
+        updated.push({ ...t, accountId: acc.id });
+        continue;
+      }
+      let targetName: string | null = null;
+      if (t.originalText?.startsWith('中信對帳單匯入')) targetName = '中國信託';
+      else if (t.originalText?.startsWith('中華郵政對帳單匯入') || t.originalText?.startsWith('VISA金融卡對帳單')) targetName = '中華郵政';
+      else if (t.originalText?.startsWith('現金支出日記帳匯入')) targetName = '現金';
+      else if (t.originalText?.startsWith('二技悠遊卡餘額分頁匯入')) targetName = '二技悠遊卡';
+      if (!targetName) continue;
+      const acc = byName(targetName);
+      if (!acc) { missingAccountNames.add(targetName); continue; }
+      updated.push({ ...t, accountId: acc.id });
     }
-    if (updated.length === 0) { alert('找不到符合的交易，可能還沒匯入775筆資料，或已經套用過了。'); return; }
-    const updatedIds = new Set(updated.map(u => u.id));
-    setTransactions(prev => prev.map(t => updatedIds.has(t.id) ? updated.find(u => u.id === t.id)! : t));
-    try {
-      await upsertTransactions(userId, updated);
-      alert(`已更新 ${updated.length} 筆交易的商家/備註/折扣格式！`);
-    } catch (err) {
-      console.error('套用折扣修正失敗', err);
-      alert('更新失敗，請檢查主控台錯誤訊息。');
+
+    if (updated.length > 0) {
+      const updatedIds = new Set(updated.map(u => u.id));
+      setTransactions(prev => prev.map(t => updatedIds.has(t.id) ? updated.find(u => u.id === t.id)! : t));
+      try {
+        await upsertTransactions(userId, updated);
+      } catch (err) {
+        console.error('配對帳戶失敗', err);
+        alert(`配對失敗！\n\n${formatSupabaseError(err)}`);
+        return;
+      }
+    }
+
+    if (missingAccountNames.size > 0) {
+      alert(
+        `已配對 ${updated.length} 筆交易。\n\n` +
+        `但找不到以下帳戶，這些交易先跳過沒配對，請先在帳戶管理建立好同名帳戶再重新點一次這顆按鈕：\n` +
+        [...missingAccountNames].join('、')
+      );
+    } else if (updated.length === 0) {
+      alert('沒有需要配對的交易，可能都已經配對過了。');
+    } else {
+      alert(`已配對 ${updated.length} 筆交易的帳戶！`);
     }
   };
 
@@ -496,7 +553,30 @@ const App: React.FC = () => {
     setEditingTransaction({ id: uuidv4(), date: today, merchant: '', amount: 0, originalText: 'Manual Add', type: 'expense', category: { l1: L1Category.VARIABLE, l2: STANDARD_CATEGORIES[L1Category.VARIABLE][0], l3: '' }, confidence: 1.0, isVerified: true, isSplit: false });
   };
 
+  const handleEditNickname = async () => {
+    const current = session?.user.user_metadata?.nickname || '';
+    const next = window.prompt('幫自己取個暱稱', current);
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (trimmed === current) return;
+    const { error } = await supabase.auth.updateUser({ data: { nickname: trimmed } });
+    if (error) { console.error('更新暱稱失敗', error); alert('更新暱稱失敗，請檢查主控台錯誤訊息。'); }
+  };
+
   const handlePrint = () => window.print();
+
+  // 匯入真的存進資料庫成功才顯示「成功」，失敗要誠實跳出來，不能只在主控台印一行沒人看到。
+  const persistImportedTransactions = async (newUnique: Transaction[]) => {
+    setTransactions(prev => [...prev, ...newUnique]);
+    if (!userId) { alert(`已加到畫面上共 ${newUnique.length} 筆，但目前沒有登入，不會存進資料庫。`); return; }
+    try {
+      await upsertTransactions(userId, newUnique);
+      alert(`已確認存進資料庫：${newUnique.length} 筆！`);
+    } catch (err) {
+      console.error('匯入儲存失敗', err);
+      alert(`匯入儲存失敗！畫面上雖然看得到這 ${newUnique.length} 筆，但資料庫可能沒有全部存進去（可能中途就失敗了）。\n\n${formatSupabaseError(err)}`);
+    }
+  };
 
   const handleMappingConfirm = (mapping: Record<string, { l1: L1Category; l2: string }>) => {
     const updatedTxs = pendingImportTxs.map(t => {
@@ -509,9 +589,7 @@ const App: React.FC = () => {
     const existingIds = new Set(transactions.map(t => t.id));
     const newUnique = updatedTxs.filter(t => t.id && !existingIds.has(t.id));
     if (newUnique.length > 0) {
-      setTransactions(prev => [...prev, ...newUnique]);
-      alert(`成功匯入 ${newUnique.length} 筆資料！`);
-      if (userId) upsertTransactions(userId, newUnique).catch(err => console.error('匯入儲存失敗', err));
+      persistImportedTransactions(newUnique);
     } else alert("匯入的資料似乎已存在 😿");
     setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]);
   };
@@ -524,14 +602,14 @@ const App: React.FC = () => {
         try {
             const json = JSON.parse(event.target?.result as string);
             let importedTransactions = json.transactions || (Array.isArray(json) ? json : []);
-            let importedGoals = json.goals || (json.primaryGoal ? [{ ...json.primaryGoal, isPrimary: true }] : []);
-            if (importedGoals.length > 0) setGoals(prev => { const merged = [...prev]; importedGoals.forEach(g => { const idx = merged.findIndex(mg => mg.id === g.id); if (idx >= 0) merged[idx] = g; else merged.push(g); }); return merged; });
+            let importedWishlistItems = json.wishlistItems || [];
+            if (importedWishlistItems.length > 0) setWishlistItems(prev => { const merged = [...prev]; importedWishlistItems.forEach((g: WishlistItem) => { const idx = merged.findIndex(mg => mg.id === g.id); if (idx >= 0) merged[idx] = g; else merged.push(g); }); return merged; });
             if (importedTransactions.length > 0) {
                 const conflictsMap: Record<string, any> = {};
                 importedTransactions.forEach(t => { if (!Object.values(L1Category).includes(t.category.l1) || !STANDARD_CATEGORIES[t.category.l1]?.includes(t.category.l2)) { const key = `${t.category.l1}::${t.category.l2}`; if (!conflictsMap[key]) conflictsMap[key] = { key, originalL1: t.category.l1, originalL2: t.category.l2, count: 0 }; conflictsMap[key].count++; } });
                 const conflictsList = Object.values(conflictsMap);
-                if (conflictsList.length > 0) { setPendingImportTxs(importedTransactions); setConflictCategories(conflictsList); setIsMappingModalOpen(true); } 
-                else { const existingIds = new Set(transactions.map(t => t.id)); const newUnique = importedTransactions.filter((t: any) => t.id && !existingIds.has(t.id)); if (newUnique.length > 0) { setTransactions(prev => [...prev, ...newUnique]); alert(`成功匯入 ${newUnique.length} 筆資料！`); if (userId) upsertTransactions(userId, newUnique).catch(err => console.error('匯入儲存失敗', err)); } else alert("匯入的資料似乎已存在 😿"); }
+                if (conflictsList.length > 0) { setPendingImportTxs(importedTransactions); setConflictCategories(conflictsList); setIsMappingModalOpen(true); }
+                else { const existingIds = new Set(transactions.map(t => t.id)); const newUnique = importedTransactions.filter((t: any) => t.id && !existingIds.has(t.id)); if (newUnique.length > 0) { persistImportedTransactions(newUnique); } else alert("匯入的資料似乎已存在 😿"); }
             }
         } catch (err) { alert("檔案解析失敗。"); }
     };
@@ -542,7 +620,7 @@ const App: React.FC = () => {
   const handleExport = () => {
     const data = {
       transactions,
-      goals,
+      wishlistItems,
       exportDate: new Date().toISOString()
     };
     const jsonStr = JSON.stringify(data, null, 2);
@@ -588,22 +666,32 @@ const App: React.FC = () => {
           <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'dashboard' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><LayoutDashboard className={`w-6 h-6 ${view === 'dashboard' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">貓咪指揮中心</span></button>
           <button onClick={() => setView('scanner')} className={`w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'scanner' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><ScanLine className={`w-6 h-6 ${view === 'scanner' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">餵食帳單 (Scan)</span></button>
           <button onClick={() => setView('transactions')} className={`w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'transactions' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><List className={`w-6 h-6 ${view === 'transactions' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">罐罐明細本</span></button>
-          <button onClick={() => setIsGoalModalOpen(true)} className="w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-indigo-50 hover:text-indigo-500"><Target className="w-6 h-6" /><span className="hidden lg:block">設定夢想目標</span></button>
+          <button onClick={() => setIsWishlistModalOpen(true)} className="w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-indigo-50 hover:text-indigo-500"><Target className="w-6 h-6" /><span className="hidden lg:block">願望清單</span></button>
           <button onClick={() => setIsAccountsModalOpen(true)} className="w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-sky-50 hover:text-sky-500"><Wallet className="w-6 h-6" /><span className="hidden lg:block">帳戶管理</span></button>
         </nav>
-        <div className="px-4">
+        <div className="px-4 space-y-1">
+          <div className="w-full flex items-center gap-4 p-4 rounded-3xl group">
+            <div className="w-9 h-9 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center font-bold shrink-0">
+              {(session?.user.user_metadata?.nickname || session?.user.email || '?').charAt(0).toUpperCase()}
+            </div>
+            <div className="hidden lg:block flex-1 min-w-0">
+              <p className="text-sm font-bold text-slate-700 truncate">{session?.user.user_metadata?.nickname || '設定暱稱'}</p>
+              <p className="text-[11px] text-slate-300 truncate">{session?.user.email}</p>
+            </div>
+            <button onClick={handleEditNickname} className="hidden lg:block p-1.5 text-slate-300 hover:text-amber-500 opacity-0 group-hover:opacity-100 transition shrink-0" title="編輯暱稱"><Pencil className="w-3.5 h-3.5" /></button>
+          </div>
           <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold text-slate-300 hover:bg-rose-50 hover:text-rose-400"><LogOut className="w-6 h-6" /><span className="hidden lg:block">登出</span></button>
         </div>
         <div className="p-6 mt-auto">
-           {primaryGoal && <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-5 rounded-3xl border border-indigo-100 hidden lg:block relative overflow-hidden group hover:shadow-md cursor-pointer" onClick={() => setIsGoalModalOpen(true)}><div className="flex items-center gap-2 text-indigo-500 mb-3"><Target className="w-4 h-4" /><span className="text-xs font-bold uppercase tracking-wider">目標進行中</span></div><p className="font-bold text-slate-700 truncate">{primaryGoal.name}</p><div className="w-full bg-white h-2 rounded-full overflow-hidden border border-indigo-100 mt-2"><div className="bg-indigo-400 h-full rounded-full transition-all duration-1000" style={{ width: `${sidebarGoalMetrics?.weightedPercent || 0}%` }}></div></div><p className="text-[10px] text-indigo-400 mt-1 text-right font-bold">{sidebarGoalMetrics?.weightedPercent.toFixed(1)}%</p></div>}
+           {topWishlistItem && <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-5 rounded-3xl border border-indigo-100 hidden lg:block relative overflow-hidden group hover:shadow-md cursor-pointer" onClick={() => setIsWishlistModalOpen(true)}><div className="flex items-center gap-2 text-indigo-500 mb-3"><Target className="w-4 h-4" /><span className="text-xs font-bold uppercase tracking-wider">最優先想買的</span></div><p className="font-bold text-slate-700 truncate">{topWishlistItem.name}</p><p className={`text-xs font-bold mt-2 ${sidebarWishlistMetrics?.canAffordNow ? 'text-emerald-500' : 'text-rose-500'}`}>{sidebarWishlistMetrics?.canAffordNow ? '可動用餘額夠了！' : `還差 $${sidebarWishlistMetrics?.shortfall.toLocaleString()}`}</p></div>}
         </div>
       </aside>
       <main className="flex-1 ml-20 lg:ml-80 p-6 lg:p-10 transition-all">
-        {view === 'dashboard' && <Dashboard 
-            alerts={alerts} budgets={budgets} transactions={filteredTransactions} allTransactions={transactions} goal={primaryGoal} onPrint={handlePrint}
+        {view === 'dashboard' && <Dashboard
+            alerts={alerts} budgets={budgets} transactions={filteredTransactions} allTransactions={transactions} wishlistItems={wishlistItems} wishlistSettings={wishlistSettings} onOpenWishlist={() => setIsWishlistModalOpen(true)} onPrint={handlePrint}
             timeScope={timeScope} setTimeScope={setTimeScope} cycleStartDay={cycleStartDay} setCycleStartDay={setCycleStartDay} dateRangeLabel={dateRange.label}
             currentDate={currentDate} setCurrentDate={setCurrentDate} penaltyConfig={penaltyConfig} setPenaltyConfig={setPenaltyConfig}
-            customRange={customRange} setCustomRange={setCustomRange}
+            customRange={customRange} setCustomRange={setCustomRange} accounts={accounts}
           />}
         {view === 'scanner' && <Scanner onTransactionsAdded={handleTransactionsAdded} history={transactions} />}
         {view === 'transactions' && (
@@ -611,10 +699,17 @@ const App: React.FC = () => {
             <div className="p-8 border-b border-orange-50 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white gap-4">
               <div><h2 className="text-2xl font-extrabold text-slate-700 flex items-center gap-2"><div className="w-2 h-8 bg-amber-400 rounded-full"></div>罐罐明細本</h2><p className="text-slate-400 text-sm mt-1 ml-4 font-medium">共 {processedTransactions.length} 筆紀錄</p></div>
               <div className="flex flex-wrap gap-2 no-print">
-                 <button onClick={handleAddTransaction} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-emerald-400 hover:bg-emerald-500 rounded-2xl transition active:scale-95 shadow-md shadow-emerald-100"><Plus className="w-4 h-4" />新增交易</button>
-                 <button onClick={() => setTransferModalState({ open: true })} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-sky-400 hover:bg-sky-500 rounded-2xl transition active:scale-95 shadow-md shadow-sky-100"><Repeat className="w-4 h-4" />轉帳</button>
-                 <button onClick={handleImportPendingCtbcTransfers} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-indigo-400 hover:bg-indigo-500 rounded-2xl transition active:scale-95 shadow-md shadow-indigo-100" title="一次性：補匯入中信對帳單分析出的25筆轉帳"><Repeat className="w-4 h-4" />補匯入轉帳(一次性)</button>
-                 <button onClick={handleApplyDiscountCorrections} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-purple-400 hover:bg-purple-500 rounded-2xl transition active:scale-95 shadow-md shadow-purple-100" title="一次性：把已匯入775筆資料的商家欄位拆成商家/備註/折扣格式"><Receipt className="w-4 h-4" />修正折扣格式(一次性)</button>
+                 <div className="relative" ref={addMenuRef}>
+                   <button onClick={() => setIsAddMenuOpen(prev => !prev)} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-emerald-400 hover:bg-emerald-500 rounded-2xl transition active:scale-95 shadow-md shadow-emerald-100"><Plus className="w-4 h-4" />新增</button>
+                   {isAddMenuOpen && (
+                     <div className="absolute left-0 top-full mt-2 z-30 w-48 bg-white rounded-2xl shadow-xl border border-orange-50 p-2 animate-in fade-in zoom-in-95 duration-150">
+                       <button onClick={() => { setIsAddMenuOpen(false); handleAddTransaction(); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-emerald-50 hover:text-emerald-600 rounded-xl transition"><Plus className="w-4 h-4" />一般收支</button>
+                       <button onClick={() => { setIsAddMenuOpen(false); setTransferModalState({ open: true }); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-sky-50 hover:text-sky-600 rounded-xl transition"><Repeat className="w-4 h-4" />帳戶互轉</button>
+                     </div>
+                   )}
+                 </div>
+                 <button onClick={handleMatchAllAccounts} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-indigo-400 hover:bg-indigo-500 rounded-2xl transition active:scale-95 shadow-md shadow-indigo-100" title="一次性：把匯入交易的accountId/fromAccountId/toAccountId補上，可安全重複執行"><Wallet className="w-4 h-4" />配對帳戶(一次性)</button>
+                 <button onClick={handleClearAllRecords} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-2xl transition active:scale-95 shadow-md shadow-rose-100" title="危險：清除所有交易紀錄(不影響帳戶本身)，無法復原"><Trash2 className="w-4 h-4" />清除所有紀錄</button>
                  <div className="h-full w-px bg-slate-200 mx-2 hidden sm:block"></div>
                  <button onClick={() => importInputRef.current?.click()} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95"><Upload className="w-4 h-4" />匯入</button>
                  <input type="file" ref={importInputRef} onChange={handleImport} className="hidden" accept="application/json" />
@@ -628,10 +723,10 @@ const App: React.FC = () => {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm text-slate-600">
-                <thead className="bg-[#FFFBF5] text-xs uppercase font-bold text-slate-400 tracking-wider"><tr><th className="p-6">日期</th><th className="p-6">商家</th><th className="p-6">分類</th><th className="p-6 text-right">金額</th><th className="p-6 text-center no-print">操作</th></tr></thead>
+                <thead className="bg-[#FFFBF5] text-xs uppercase font-bold text-slate-400 tracking-wider"><tr><th className="p-6">日期</th><th className="p-6 w-32">帳戶</th><th className="p-6">商家</th><th className="p-6 min-w-[220px]">分類</th><th className="p-6 text-right">金額</th><th className="p-6 text-center no-print">操作</th></tr></thead>
                 <tbody className="divide-y divide-orange-50">
                   {processedTransactions.length === 0 ? (
-                    <tr><td colSpan={5} className="p-10 text-center text-slate-400 italic font-medium">喵~ 這裡空空的，快去記帳吧！</td></tr>
+                    <tr><td colSpan={6} className="p-10 text-center text-slate-400 italic font-medium">喵~ 這裡空空的，快去記帳吧！</td></tr>
                   ) : groupedDisplayItems.map(item => {
                     if (item.type === 'single') {
                       const t = item.data!;
@@ -641,12 +736,13 @@ const App: React.FC = () => {
                         return (
                           <tr key={t.id} className="transition hover:bg-sky-50/30 bg-sky-50/10">
                             <td className="p-6">{t.date}</td>
+                            <td className="p-6 w-32 text-slate-300 text-xs">—</td>
                             <td className="p-6 font-bold">{t.merchant}</td>
-                            <td className="p-6"><span className="px-2 py-1 bg-sky-100 text-sky-600 rounded text-xs font-bold">轉帳 &bull; {fromName} → {toName}</span></td>
+                            <td className="p-6"><span className="px-2 py-1 bg-sky-100 text-sky-600 rounded text-xs font-bold">帳戶互轉 &bull; {fromName} → {toName}</span></td>
                             <td className="p-6 text-right font-bold text-sky-600">${t.amount}</td>
                             <td className="p-6 text-center no-print">
                               <div className="flex justify-center gap-2">
-                                <button onClick={() => setTransferModalState({ open: true, transaction: t })} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯轉帳"><Pencil className="w-4 h-4" /></button>
+                                <button onClick={() => setTransferModalState({ open: true, transaction: t })} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯帳戶互轉"><Pencil className="w-4 h-4" /></button>
                                 <button onClick={() => handleDeleteTransaction(t.id)} className="p-2 border rounded-xl hover:bg-rose-50 text-rose-400" title="刪除項目"><Trash2 className="w-4 h-4" /></button>
                               </div>
                             </td>
@@ -656,14 +752,51 @@ const App: React.FC = () => {
                       return (
                         <tr key={t.id} className={`transition group ${t.type === 'income' ? 'bg-emerald-50/20' : 'hover:bg-orange-50/30'}`}>
                           <td className="p-6">{t.date}</td>
+                          <td className="p-6 w-32 text-xs font-bold text-slate-500">
+                            <div className="w-24 truncate" title={accounts.find(a => a.id === t.accountId)?.name || '未指定'}>
+                              {accounts.find(a => a.id === t.accountId)?.name || <span className="text-slate-300 font-normal">未指定</span>}
+                            </div>
+                            {t.paymentChannel && <div className="w-24 truncate text-slate-300 font-normal mt-0.5" title={t.paymentChannel}>{t.paymentChannel}</div>}
+                          </td>
                           <td className="p-6 font-bold">
-                            {t.merchant}
+                            <span className="flex items-center gap-1.5 flex-wrap">
+                              {t.merchant}
+                              {t.specialTag && (
+                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter ${t.specialTag.type === 'proxy_purchase' ? 'bg-purple-100 text-purple-600' : 'bg-amber-100 text-amber-600'}`}>
+                                  {t.specialTag.type === 'proxy_purchase' ? '代購' : '工作代墊'}
+                                  {t.specialTag.counterparty ? `・${t.specialTag.counterparty}` : ''}
+                                </span>
+                              )}
+                            </span>
+                            {t.items && t.items.length > 0 && (
+                              <span className="flex flex-wrap gap-1 mt-1">
+                                {t.items.map((item, idx) => (
+                                  <span key={idx} className="text-[11px] font-normal text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                                    {item.name}
+                                    {item.unitPrice != null && (
+                                      <span className="text-slate-400"> ${item.unitPrice}{(item.quantity && item.quantity !== 1) ? `×${item.quantity}` : ''}</span>
+                                    )}
+                                  </span>
+                                ))}
+                              </span>
+                            )}
                             {t.note && <span className="block text-xs font-normal text-slate-400 mt-0.5">{t.note}</span>}
                             {t.discounts && t.discounts.length > 0 && (
-                              <span className="block text-[11px] font-normal text-amber-500 mt-0.5">原始${t.grossAmount} － 折扣${t.discounts.reduce((s, d) => s + d.amount, 0)}</span>
+                              <span className="flex items-center flex-wrap gap-1.5 mt-1.5 p-2 bg-amber-50/60 border border-amber-100 rounded-xl w-fit">
+                                <span className="text-[11px] font-bold text-slate-400 line-through decoration-slate-300">${t.grossAmount}</span>
+                                {t.discounts.map((d, idx) => (
+                                  <span key={idx} className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-600 whitespace-nowrap">
+                                    {d.label || '折扣'}：-${d.amount}
+                                  </span>
+                                ))}
+                                <span className="text-slate-300 text-xs">→</span>
+                                <span className="text-sm font-black text-amber-600">${t.amount}</span>
+                              </span>
                             )}
                           </td>
-                          <td className="p-6"><span className="px-2 py-1 bg-slate-100 rounded text-xs">{CATEGORY_LABELS[t.category.l1]} &bull; {t.category.l2}</span></td>
+                          <td className="p-6">
+                            <span className="px-2 py-1 bg-slate-100 rounded text-xs">{CATEGORY_LABELS[t.category.l1]} &bull; {t.category.l2}</span>
+                          </td>
                           <td className={`p-6 text-right font-bold ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-700'}`}>{t.type === 'income' ? '+' : '-'}${t.amount}</td>
                           <td className="p-6 text-center no-print">
                             <div className="flex justify-center gap-2">
@@ -691,6 +824,11 @@ const App: React.FC = () => {
                           {/* ROOT Main Item Row */}
                           <tr className="bg-purple-50/30 border-t-2 border-purple-100">
                              <td className="p-6 text-xs font-bold text-purple-400">{groupDate}</td>
+                             <td className="p-6 w-32 text-xs font-bold text-slate-500">
+                               <div className="w-24 truncate" title={accounts.find(a => a.id === mainItem.accountId)?.name || '未指定'}>
+                                 {accounts.find(a => a.id === mainItem.accountId)?.name || <span className="text-slate-300 font-normal">未指定</span>}
+                               </div>
+                             </td>
                              <td className="p-6 font-black text-slate-700 flex items-center gap-2">
                                {mainItem.merchant} <span className="text-[10px] bg-purple-200 text-purple-600 px-1.5 py-0.5 rounded-full uppercase tracking-tighter">已分裝</span>
                              </td>
@@ -727,6 +865,11 @@ const App: React.FC = () => {
                           {subItemsList.map(child => (
                              <tr key={child.id} className="bg-white/50 border-l-4 border-purple-200 hover:bg-purple-50/10 transition group/child">
                                 <td className="p-4 pl-10 text-xs text-slate-400">└─ {child.date}</td>
+                                <td className="p-4 w-32 text-xs font-bold text-slate-500">
+                                  <div className="w-24 truncate" title={accounts.find(a => a.id === child.accountId)?.name || '未指定'}>
+                                    {accounts.find(a => a.id === child.accountId)?.name || <span className="text-slate-300 font-normal">未指定</span>}
+                                  </div>
+                                </td>
                                 <td className="p-4 text-slate-600 font-bold">
                                   {child.merchant}
                                 </td>
@@ -761,7 +904,7 @@ const App: React.FC = () => {
       {transferModalState.open && <TransferModal accounts={accounts} transaction={transferModalState.transaction} onClose={() => setTransferModalState({ open: false })} onSave={handleTransferSave} />}
       {isAccountsModalOpen && <AccountsModal accounts={accounts} onClose={() => setIsAccountsModalOpen(false)} onSave={handleSaveAccount} onArchive={handleArchiveAccount} />}
       {batchSource && <BatchCorrectionModal matches={batchCandidates} source={batchSource} onConfirm={handleBatchConfirm} onClose={() => { setBatchSource(null); setBatchCandidates([]); }} />}
-      {isGoalModalOpen && <GoalModal goals={goals} transactions={transactions} onClose={() => setIsGoalModalOpen(false)} onUpdateGoals={setGoals} />}
+      {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} settings={wishlistSettings} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={setWishlistItems} onUpdateSettings={handleUpdateWishlistSettings} />}
       {isMappingModalOpen && <CategoryMappingModal conflicts={conflictCategories} existingCustomOptions={customCategoryHistory} onConfirm={handleMappingConfirm} onCancel={() => { setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]); }} />}
       
       {(lastDeletedTransaction || lastCanceledSplit) && (

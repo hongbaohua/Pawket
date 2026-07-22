@@ -21,7 +21,7 @@ export enum L1Category {
 export const STANDARD_CATEGORIES: Record<L1Category, string[]> = {
   [L1Category.VARIABLE]: [
     '餐飲食品', '交通通勤', '生活日用', '休閒娛樂',
-    '服飾美妝', '醫療保健', '學習進修', '社交人情', '寵物花費',
+    '服飾美妝', '3C電子', '醫療保健', '學習進修', '社交人情', '寵物花費',
     '銀行手續費', '轉帳', '網路購物', '其他雜項'
   ],
   [L1Category.FIXED]: [

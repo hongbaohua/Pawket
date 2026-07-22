@@ -5,12 +5,13 @@ import { v4 as uuidv4 } from 'uuid';
 
 interface TransferModalProps {
   accounts: Account[];
-  transaction?: Transaction; // 有帶入代表是編輯既有的轉帳
+  transaction?: Transaction; // 有帶入代表是編輯既有的帳戶互轉
   onClose: () => void;
   onSave: (tx: Transaction) => void;
 }
 
-// 轉帳：帳戶間的資金移動（提款、儲值電子支付、悠遊卡加值...），不算收入也不算支出。
+// 帳戶互轉：App裡自己追蹤的帳戶之間的資金移動（提款、儲值電子支付、悠遊卡加值...），
+// 跟真正的銀行轉帳是不同概念，不算收入也不算支出，故意不叫「轉帳」避免混淆。
 const TransferModal: React.FC<TransferModalProps> = ({ accounts, transaction, onClose, onSave }) => {
   const activeAccounts = accounts.filter(a => !a.isArchived);
   const [date, setDate] = useState(transaction?.date || new Date().toISOString().split('T')[0]);
@@ -31,7 +32,7 @@ const TransferModal: React.FC<TransferModalProps> = ({ accounts, transaction, on
     onSave({
       id: transaction?.id || uuidv4(),
       date,
-      merchant: note.trim() || `轉帳：${fromName} → ${toName}`,
+      merchant: note.trim() || `帳戶互轉：${fromName} → ${toName}`,
       originalText: transaction?.originalText || 'Manual Transfer',
       amount: Math.abs(amount),
       type: 'transfer',
@@ -51,7 +52,7 @@ const TransferModal: React.FC<TransferModalProps> = ({ accounts, transaction, on
         <div className="p-8 border-b border-amber-100 flex justify-between items-center bg-white/50">
           <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-sky-100 text-sky-500"><Repeat className="w-5 h-5" /></div>
-            轉帳
+            帳戶互轉
           </h3>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition"><X className="w-6 h-6 text-slate-400" /></button>
         </div>

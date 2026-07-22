@@ -57,8 +57,8 @@ const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-      <div className="bg-white w-full max-w-xl rounded-[40px] shadow-2xl border-4 border-white p-8 max-h-[85vh] overflow-y-auto">
-        <div className="flex justify-between items-center mb-6">
+      <div className="bg-white w-full max-w-xl rounded-[40px] shadow-2xl border-4 border-white max-h-[85vh] flex flex-col overflow-hidden">
+        <div className="flex justify-between items-center p-8 pb-6 shrink-0">
           <h3 className="text-2xl font-extrabold text-slate-700 flex items-center gap-3">
             <div className="p-2.5 bg-amber-100 text-amber-500 rounded-2xl"><Wallet className="w-6 h-6" /></div>
             帳戶管理
@@ -66,24 +66,32 @@ const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave
           <button onClick={onClose} className="p-2 hover:bg-slate-50 rounded-full transition"><X className="w-6 h-6 text-slate-300" /></button>
         </div>
 
+        <div className="px-8 pb-8 overflow-y-auto">
         {!editing && (
           <>
-            <div className="space-y-3 mb-6">
-              {activeAccounts.map(acc => (
-                <div key={acc.id} className="flex items-center justify-between p-4 bg-[#FFFBF5] rounded-2xl border border-orange-50">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white rounded-xl text-amber-500 shadow-sm">{TYPE_ICONS[acc.type]}</div>
-                    <div>
-                      <p className="font-bold text-slate-700">{acc.name}</p>
-                      <p className="text-xs text-slate-400">{TYPE_LABELS[acc.type]}</p>
+            <div className="space-y-5 mb-6">
+              {TYPE_ORDER.map(type => {
+                const group = activeAccounts.filter(a => a.type === type);
+                if (group.length === 0) return null;
+                return (
+                  <div key={type}>
+                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1 flex items-center gap-1.5">
+                      {TYPE_ICONS[type]} {TYPE_LABELS[type]}
+                    </p>
+                    <div className="space-y-2">
+                      {group.map(acc => (
+                        <div key={acc.id} className="flex items-center justify-between p-4 bg-[#FFFBF5] rounded-2xl border border-orange-50">
+                          <p className="font-bold text-slate-700">{acc.name}</p>
+                          <div className="flex gap-2">
+                            <button onClick={() => setEditing(acc)} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯"><Pencil className="w-4 h-4" /></button>
+                            <button onClick={() => onArchive(acc.id)} className="p-2 border rounded-xl hover:bg-rose-50 text-rose-400" title="封存（不會刪除底下的交易紀錄）"><Archive className="w-4 h-4" /></button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => setEditing(acc)} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯"><Pencil className="w-4 h-4" /></button>
-                    <button onClick={() => onArchive(acc.id)} className="p-2 border rounded-xl hover:bg-rose-50 text-rose-400" title="封存（不會刪除底下的交易紀錄）"><Archive className="w-4 h-4" /></button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {activeAccounts.length === 0 && <p className="text-center text-slate-300 py-6">還沒有任何帳戶</p>}
             </div>
             <button
@@ -120,12 +128,12 @@ const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave
               </select>
               {editing.type === 'e_wallet' && (
                 <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
-                  儲值可以來自任何一個銀行帳戶/信用卡，不用在這裡指定固定來源——儲值時到「罐罐明細本」記一筆「轉帳」交易，選這次實際用的來源帳戶就可以。
+                  儲值可以來自任何一個銀行帳戶/信用卡，不用在這裡指定固定來源——儲值時到「罐罐明細本」記一筆「帳戶互轉」交易，選這次實際用的來源帳戶就可以。
                 </p>
               )}
               {editing.type === 'stored_value' && (
                 <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
-                  例如悠遊卡、麥當勞點點卡這類實體儲值卡。有些只能從特定電子支付錢包加值（例如悠遊卡只能從悠遊付加值），加值時一樣記一筆「轉帳」交易即可。
+                  例如悠遊卡、麥當勞點點卡這類實體儲值卡。有些只能從特定電子支付錢包加值（例如悠遊卡只能從悠遊付加值），加值時一樣記一筆「帳戶互轉」交易即可。
                 </p>
               )}
             </div>
@@ -137,6 +145,7 @@ const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave
             </div>
           </form>
         )}
+        </div>
       </div>
     </div>
   );

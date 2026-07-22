@@ -1,5 +1,5 @@
 
-import { Transaction, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, SavingsGoal, PenaltyConfig } from '../types';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig } from '../types';
 import { format, getDaysInMonth, getDate, startOfMonth, endOfMonth, addMonths, subMonths, differenceInDays, isAfter, isBefore, startOfDay, endOfDay, parseISO, startOfYear, getMonth, getYear, isSameMonth, differenceInMonths, subDays, addDays } from 'date-fns';
 import {
   ALERT_K_FACTOR, ALERT_CRITICAL_THRESHOLD_PERCENT,
@@ -9,7 +9,6 @@ import {
   FREQUENCY_HISTORY_MONTHS, FREQUENCY_MULTIPLIER, FREQUENCY_MIN_COUNT,
   CASH_DUPLICATE_CHECK_DAYS, CASH_WITHDRAWAL_KEYWORDS,
   TAX_DEDUCTIBLE_KEYWORDS,
-  GOAL_CASHFLOW_ANALYSIS_DAYS,
 } from '../config/financialRules';
 
 // Precision helper to avoid floating point errors
@@ -428,93 +427,95 @@ export const findSimilarTransactions = (
     });
 };
 
-export interface GoalMetrics {
-    currentProgress: number; 
-    smartProgress: number;   
-    targetAmount: number;    
-    financialPercent: number; 
-    timePercent: number;      
-    weightedPercent: number;  
-    progressPercent: number;  
-    rms: number; 
-    anc: number; 
-    gap: number; 
-    isFeasible: boolean; 
-    monthsRemaining: number;
+// 願望清單（2026-07-21重新設計，取代舊的「夢想目標/存錢進度」）：
+// 這個App本質是記帳，使用者沒有另外做「存錢」的動作，所有錢就是帳戶餘額本身，
+// 所以不追蹤「存了多少」，而是追蹤「想買的東西，現在的餘額夠不夠、還差多少」。
+// 可動用餘額 = 現金+金融卡(bank_debit)總餘額 − 日常開銷保留 − 緊急預備金 − 排在前面、還沒買的項目金額。
+// items 陣列的順序＝優先順序（index 0 最優先），分配時先扣優先項目的錢。
+export interface WishlistItemMetrics {
+    totalLiquidBalance: number;      // 現金+金融卡總餘額（電子支付/儲值卡/信用卡不算）
+    reservedByEarlierItems: number;  // 排在前面、還沒買的項目已經佔用掉多少
+    availableForThisItem: number;    // 扣掉保留水位跟前面項目後，這個項目能動用的錢
+    shortfall: number;               // 還差多少，0代表夠了
+    canAffordNow: boolean;
+    daysRemaining?: number;          // 有設targetDate才有
+    isOverdue?: boolean;
 }
 
-export const calculateGoalMetrics = (goal: SavingsGoal, allTransactions: Transaction[]): GoalMetrics => {
+export interface WishlistMetricsResult {
+    totalLiquidBalance: number; // 現金+金融卡總餘額，跟清單裡有沒有項目無關，隨時都能算
+    items: Record<string, WishlistItemMetrics>;
+}
+
+export const calculateWishlistMetrics = (
+    items: WishlistItem[],
+    accounts: Account[],
+    allTransactions: Transaction[],
+    dailyBuffer: number,
+    emergencyFund: number,
+): WishlistMetricsResult => {
+    // 只算現金＋金融卡帳戶（bank_debit），電子支付錢包/儲值卡/信用卡不算「可以拿來買大東西」的錢
+    const liquidAccounts = accounts.filter(a => !a.isArchived && (a.type === 'cash' || a.type === 'bank_debit'));
+    const balances = calculateAccountBalances(liquidAccounts, allTransactions);
+    const totalLiquidBalance = liquidAccounts.reduce((sum, a) => sum + (balances[a.id] || 0), 0);
+
     const now = new Date();
-    const currentDate = now;
-    const targetAmount = goal.targetAmount || 1;
-    const investmentTxs = allTransactions.filter(t => t.category.l1 === L1Category.INVESTMENT);
-    const investmentNet = investmentTxs.reduce((acc, t) => {
-        if (t.type === 'expense') return acc + t.amount;
-        else return acc - t.amount;
-    }, 0);
+    const result: Record<string, WishlistItemMetrics> = {};
+    let reservedByEarlierItems = 0;
 
-    const currentProgress = Math.max(0, goal.initialAmount + investmentNet);
-    const startDate = goal.startDate ? parseISO(goal.startDate) : subDays(now, 30);
-    const targetDate = parseISO(goal.targetDate);
-    const monthsDiff = differenceInMonths(targetDate, currentDate);
-    const monthsRemaining = Math.max(monthsDiff, 1); 
-    const remainingAmount = Math.max(targetAmount - currentProgress, 0);
-    const isOverdue = isAfter(currentDate, targetDate);
-    const rms = isOverdue ? remainingAmount : (remainingAmount / monthsRemaining);
-    const cashflowWindowStart = subDays(currentDate, GOAL_CASHFLOW_ANALYSIS_DAYS);
-    const recentTxs = allTransactions.filter(t => {
-        const d = parseISO(t.date);
-        return isAfter(d, cashflowWindowStart) && isBefore(d, currentDate);
-    });
-    const totalIncomeWindow = recentTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
-    const totalExpenseWindow = recentTxs.filter(t => t.type === 'expense').reduce((acc, t) => acc + t.amount, 0);
-    // 把窗口內的淨現金流換算成「平均每月」（窗口天數 ÷ 30 天/月）
-    const anc = Math.max((totalIncomeWindow - totalExpenseWindow) / (GOAL_CASHFLOW_ANALYSIS_DAYS / 30), 0);
-    // smartProgress = actual amount saved (no confusing "excess capacity" addition)
-    const smartProgress = currentProgress;
-
-    let financialPercent = (currentProgress / targetAmount) * 100;
-    financialPercent = Math.max(0, Math.min(100, financialPercent));
-
-    const totalDays = differenceInDays(targetDate, startDate);
-    const daysPassed = differenceInDays(currentDate, startDate);
-
-    let timePercent = 0;
-    if (totalDays > 0) {
-        timePercent = (daysPassed / totalDays) * 100;
-    } else {
-        timePercent = isAfter(currentDate, targetDate) ? 100 : 0;
+    for (const item of items) {
+        if (item.isPurchased) {
+            // 已買的項目不再佔用可動用餘額，但仍給一組metrics方便畫面顯示歷史紀錄
+            result[item.id] = {
+                totalLiquidBalance, reservedByEarlierItems, availableForThisItem: 0,
+                shortfall: 0, canAffordNow: true,
+            };
+            continue;
+        }
+        const availableForThisItem = totalLiquidBalance - dailyBuffer - emergencyFund - reservedByEarlierItems;
+        const shortfall = Math.max(0, item.targetAmount - availableForThisItem);
+        const metrics: WishlistItemMetrics = {
+            totalLiquidBalance,
+            reservedByEarlierItems,
+            availableForThisItem,
+            shortfall,
+            canAffordNow: shortfall === 0,
+        };
+        if (item.targetDate) {
+            const targetDate = parseISO(item.targetDate);
+            metrics.isOverdue = isAfter(now, targetDate);
+            metrics.daysRemaining = metrics.isOverdue ? 0 : differenceInDays(targetDate, now);
+        }
+        result[item.id] = metrics;
+        reservedByEarlierItems += item.targetAmount;
     }
-    timePercent = Math.max(0, Math.min(100, timePercent));
 
-    // weightedPercent = actual financial progress (bar reflects real savings %)
-    // timePercent kept for coach diagnosis reference only
-    const weightedPercent = financialPercent;
-
-    const gap = rms - anc;
-    const isFeasible = gap <= 0; 
-
-    return {
-        currentProgress,
-        smartProgress,
-        targetAmount,
-        financialPercent,
-        timePercent,
-        weightedPercent,
-        progressPercent: weightedPercent,
-        rms,
-        anc,
-        gap,
-        isFeasible,
-        monthsRemaining
-    };
+    return { totalLiquidBalance, items: result };
 };
 
-export const calculateGapProjection = (gap: number) => {
-    const r = OPPORTUNITY_COST_ANNUAL_RETURN;
-    const n = OPPORTUNITY_COST_YEARS;
-    const futureValue = gap * Math.pow((1 + r), n);
-    return futureValue;
+// 幫使用者抓一個「不會太緊迫」的日常開銷保留／緊急預備金建議值：
+// 用最近12個月的固定+變動支出算中位數（比平均值更不受單月爆買影響）當「一般月份」代表值，
+// 日常開銷保留 = 1.5個月，緊急預備金 = 3個月。
+export const calculateSuggestedReserves = (allTransactions: Transaction[]): { monthlyBaseline: number; dailyBuffer: number; emergencyFund: number } => {
+    const now = new Date();
+    const monthlyTotals: Record<string, number> = {};
+    for (let i = 0; i < 12; i++) {
+        monthlyTotals[format(subMonths(now, i), 'yyyy-MM')] = 0;
+    }
+    allTransactions.forEach(t => {
+        if (t.type !== 'expense') return;
+        if (t.category.l1 !== L1Category.FIXED && t.category.l1 !== L1Category.VARIABLE) return;
+        const key = format(parseISO(t.date), 'yyyy-MM');
+        if (key in monthlyTotals) monthlyTotals[key] += t.amount;
+    });
+    const values = Object.values(monthlyTotals).sort((a, b) => a - b);
+    const mid = Math.floor(values.length / 2);
+    const monthlyBaseline = values.length % 2 !== 0 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
+    return {
+        monthlyBaseline,
+        dailyBuffer: Math.round(monthlyBaseline * 1.5),
+        emergencyFund: Math.round(monthlyBaseline * 3),
+    };
 };
 
 export const applyHistoricalCategory = (newTx: Transaction, history: Transaction[]): Transaction => {
@@ -582,6 +583,33 @@ export const calculateRunway = (allTransactions: Transaction[]) => {
         }
     }
     return { currentBalance, dailyBurnRate, daysRemaining, depletionDate };
+};
+
+// 即時計算每個帳戶目前的餘額：純粹從所有交易紀錄加總算出來，不用「期初餘額」這種
+// 額外欄位——income/expense 用 accountId 記到哪個帳戶，transfer 用 fromAccountId
+// 扣、toAccountId 加。前提是這個帳戶「從開始使用這個App起」的交易都有記，數字才會準；
+// 如果帳戶本身在使用App之前就已經有錢，這裡算出來的只會是「用了App之後的淨變化」，
+// 不是真實餘額——要對到真的餘額，之後靠階段5對帳模組來抓落差，不是靠這個功能。
+export const calculateAccountBalances = (accounts: Account[], allTransactions: Transaction[]): Record<string, number> => {
+  const balances: Record<string, number> = {};
+  accounts.forEach(a => { balances[a.id] = 0; });
+
+  allTransactions.forEach(t => {
+    if (t.type === 'income' && t.accountId && balances[t.accountId] !== undefined) {
+      balances[t.accountId] = fromCents(toCents(balances[t.accountId]) + toCents(t.amount));
+    } else if (t.type === 'expense' && t.accountId && balances[t.accountId] !== undefined) {
+      balances[t.accountId] = fromCents(toCents(balances[t.accountId]) - toCents(t.amount));
+    } else if (t.type === 'transfer') {
+      if (t.fromAccountId && balances[t.fromAccountId] !== undefined) {
+        balances[t.fromAccountId] = fromCents(toCents(balances[t.fromAccountId]) - toCents(t.amount));
+      }
+      if (t.toAccountId && balances[t.toAccountId] !== undefined) {
+        balances[t.toAccountId] = fromCents(toCents(balances[t.toAccountId]) + toCents(t.amount));
+      }
+    }
+  });
+
+  return balances;
 };
 
 export const calculateTaxEstimation = (allTransactions: Transaction[]) => {
