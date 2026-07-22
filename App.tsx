@@ -7,6 +7,7 @@ import SplitModal from './components/SplitModal';
 import EditTransactionModal from './components/EditTransactionModal';
 import BatchCorrectionModal from './components/BatchCorrectionModal';
 import WishlistModal from './components/WishlistModal';
+import TrashModal from './components/TrashModal';
 import CategoryMappingModal from './components/CategoryMappingModal';
 import Auth from './components/Auth';
 import AccountsModal from './components/AccountsModal';
@@ -18,7 +19,8 @@ import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 import {
   seedDefaultAccountsIfEmpty, fetchTransactions, createAccount, updateAccount, archiveAccount,
   upsertTransaction, upsertTransactions, deleteTransaction as dbDeleteTransaction, deleteTransactionsByParentId,
-  deleteAllTransactions, fetchWishlistItems, upsertWishlistItems, deleteWishlistItem as dbDeleteWishlistItem
+  deleteAllTransactions, fetchWishlistItems, upsertWishlistItems, deleteWishlistItem as dbDeleteWishlistItem,
+  fetchDeletedTransactions, restoreTransaction, permanentlyDeleteTransaction
 } from './lib/db';
 import type { Session } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
@@ -40,6 +42,22 @@ const HighlightText: React.FC<{ text: string; highlight: string }> = ({ text, hi
         )}
       </span>
     );
+};
+
+// 罐罐明細本列表用：帳戶/分類標籤化顏色。帳戶照類型上色（跟AccountsModal/AccountBalances
+// 「現金→衍生資產」分組概念一致），分類照L1大類上色，不要全部都同一種灰色格式。
+const ACCOUNT_TYPE_TAG_STYLE: Record<string, string> = {
+  cash: 'bg-slate-100 text-slate-600',
+  bank_debit: 'bg-blue-100 text-blue-600',
+  bank_credit: 'bg-rose-100 text-rose-600',
+  e_wallet: 'bg-purple-100 text-purple-600',
+  stored_value: 'bg-amber-100 text-amber-600',
+};
+const L1_TAG_STYLE: Record<L1Category, string> = {
+  [L1Category.FIXED]: 'bg-slate-100 text-slate-600',
+  [L1Category.VARIABLE]: 'bg-amber-100 text-amber-600',
+  [L1Category.INVESTMENT]: 'bg-emerald-100 text-emerald-600',
+  [L1Category.INCOME]: 'bg-teal-100 text-teal-600',
 };
 
 // 把 Supabase/PostgREST 錯誤物件整理成一段能直接讀、直接複製貼給人看的文字，
@@ -182,6 +200,9 @@ const App: React.FC = () => {
   const addMenuRef = useRef<HTMLDivElement>(null);
 
   const [splittingTransaction, setSplittingTransaction] = useState<Transaction | null>(null);
+  // 罐罐明細本列表：品項/備註太長會把列高撐得很高，預設收合只顯示前幾個/第一行，點了才展開全部。
+  const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set());
+  const toggleRowExpanded = (id: string) => setExpandedRowIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [transferModalState, setTransferModalState] = useState<{ open: boolean; transaction?: Transaction }>({ open: false });
   const [batchCandidates, setBatchCandidates] = useState<Transaction[]>([]);
@@ -536,19 +557,24 @@ const App: React.FC = () => {
       }
   };
 
+  // 刪除一律先跳二次確認（Ivy手滑誤刪過一次），實際刪除是軟刪除(deleted_at)，
+  // 資料還在資料庫裡，垃圾桶(見下方handleOpenTrash)可以救回，不是真的永久移除。
   const handleDeleteTransaction = (id: string) => {
     const txToDelete = transactions.find(t => t.id === id);
     if (!txToDelete) return;
 
     if (txToDelete.isSplit && txToDelete.parentId) {
         const group = transactions.filter(t => t.parentId === txToDelete.parentId);
-        if (group.length > 1 && window.confirm('這筆帳目屬於分裝群組，是否要刪除整個分裝群組？')) {
+        if (group.length > 1) {
+            if (!window.confirm('這筆帳目屬於分裝群組，是否要刪除整個分裝群組？（可以之後去垃圾桶救回）')) return;
             setTransactions(prev => prev.filter(t => t.parentId !== txToDelete.parentId));
             setLastDeletedTransaction(null);
             deleteTransactionsByParentId(txToDelete.parentId).catch(err => console.error('刪除群組失敗', err));
             return;
         }
     }
+
+    if (!window.confirm(`確定要刪除「${txToDelete.merchant || '這筆'}」紀錄嗎？（可以之後去垃圾桶救回）`)) return;
 
     setLastDeletedTransaction(txToDelete);
     setLastCanceledSplit(null);
@@ -563,7 +589,46 @@ const App: React.FC = () => {
     setTransactions(prev => [...prev, lastDeletedTransaction]);
     setLastDeletedTransaction(null);
     if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
-    if (userId) upsertTransaction(userId, lastDeletedTransaction).catch(err => console.error('復原刪除失敗', err));
+    restoreTransaction(lastDeletedTransaction.id).catch(err => console.error('復原刪除失敗', err));
+  };
+
+  // 垃圾桶：讀取所有軟刪除的交易，供 TrashModal 顯示/救回/永久刪除。
+  const [isTrashModalOpen, setIsTrashModalOpen] = useState(false);
+  const [deletedTransactions, setDeletedTransactions] = useState<Transaction[]>([]);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const handleOpenTrash = async () => {
+    setIsTrashModalOpen(true);
+    setTrashLoading(true);
+    try {
+        setDeletedTransactions(await fetchDeletedTransactions());
+    } catch (err) {
+        console.error('讀取垃圾桶失敗', err);
+        alert(`讀取垃圾桶失敗。\n\n${formatSupabaseError(err)}`);
+    } finally {
+        setTrashLoading(false);
+    }
+  };
+  const handleRestoreFromTrash = async (id: string) => {
+    try {
+        await restoreTransaction(id);
+        const restored = deletedTransactions.find(t => t.id === id);
+        setDeletedTransactions(prev => prev.filter(t => t.id !== id));
+        if (restored) setTransactions(prev => [...prev, restored]);
+    } catch (err) {
+        console.error('救回失敗', err);
+        alert(`救回失敗。\n\n${formatSupabaseError(err)}`);
+    }
+  };
+  const handlePermanentlyDelete = async (id: string) => {
+    const tx = deletedTransactions.find(t => t.id === id);
+    if (!window.confirm(`確定要永久刪除「${tx?.merchant || '這筆'}」嗎？這次真的沒辦法救回了。`)) return;
+    try {
+        await permanentlyDeleteTransaction(id);
+        setDeletedTransactions(prev => prev.filter(t => t.id !== id));
+    } catch (err) {
+        console.error('永久刪除失敗', err);
+        alert(`永久刪除失敗。\n\n${formatSupabaseError(err)}`);
+    }
   };
 
   const handleAddTransaction = () => {
@@ -706,7 +771,7 @@ const App: React.FC = () => {
            {topWishlistItem && <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-5 rounded-3xl border border-indigo-100 relative overflow-hidden group hover:shadow-md cursor-pointer" onClick={() => setIsWishlistModalOpen(true)}><div className="flex items-center gap-2 text-indigo-500 mb-3"><Target className="w-4 h-4" /><span className="text-xs font-bold uppercase tracking-wider">最優先想買的</span></div><p className="font-bold text-slate-700 truncate">{topWishlistItem.name}</p><p className={`text-xs font-bold mt-2 ${sidebarWishlistMetrics?.canAffordNow ? 'text-emerald-500' : 'text-rose-500'}`}>{sidebarWishlistMetrics?.canAffordNow ? '可動用餘額夠了！' : `還差 $${sidebarWishlistMetrics?.shortfall.toLocaleString()}`}</p></div>}
         </div>
       </aside>
-      <main className="flex-1 mt-16 lg:mt-0 lg:ml-80 p-4 lg:p-10 transition-all">
+      <main className="flex-1 min-w-0 mt-16 lg:mt-0 lg:ml-80 p-4 lg:p-10 transition-all">
         {view === 'dashboard' && <Dashboard
             alerts={alerts} budgets={budgets} transactions={filteredTransactions} allTransactions={transactions} wishlistItems={wishlistItems} wishlistSettings={wishlistSettings} onOpenWishlist={() => setIsWishlistModalOpen(true)} onPrint={handlePrint}
             timeScope={timeScope} setTimeScope={setTimeScope} cycleStartDay={cycleStartDay} setCycleStartDay={setCycleStartDay} dateRangeLabel={dateRange.label}
@@ -730,6 +795,7 @@ const App: React.FC = () => {
                  </div>
                  <button onClick={handleMatchAllAccounts} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-indigo-400 hover:bg-indigo-500 rounded-2xl transition active:scale-95 shadow-md shadow-indigo-100" title="一次性：把匯入交易的accountId/fromAccountId/toAccountId補上，可安全重複執行"><Wallet className="w-4 h-4" />配對帳戶(一次性)</button>
                  <button onClick={handleClearAllRecords} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-2xl transition active:scale-95 shadow-md shadow-rose-100" title="危險：清除所有交易紀錄(不影響帳戶本身)，無法復原"><Trash2 className="w-4 h-4" />清除所有紀錄</button>
+                 <button onClick={handleOpenTrash} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="垃圾桶：救回不小心刪除的紀錄"><Trash2 className="w-4 h-4" />垃圾桶{deletedTransactions.length > 0 ? `(${deletedTransactions.length})` : ''}</button>
                  <div className="h-full w-px bg-slate-200 mx-2 hidden sm:block"></div>
                  <button onClick={() => importInputRef.current?.click()} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95"><Upload className="w-4 h-4" />匯入</button>
                  <input type="file" ref={importInputRef} onChange={handleImport} className="hidden" accept="application/json" />
@@ -772,11 +838,14 @@ const App: React.FC = () => {
                       return (
                         <tr key={t.id} className={`transition group ${t.type === 'income' ? 'bg-emerald-50/20' : 'hover:bg-orange-50/30'}`}>
                           <td className="p-6">{t.date}</td>
-                          <td className="p-6 w-32 text-xs font-bold text-slate-500">
-                            <div className="w-24 truncate" title={accounts.find(a => a.id === t.accountId)?.name || '未指定'}>
-                              {accounts.find(a => a.id === t.accountId)?.name || <span className="text-slate-300 font-normal">未指定</span>}
-                            </div>
-                            {t.paymentChannel && <div className="w-24 truncate text-slate-300 font-normal mt-0.5" title={t.paymentChannel}>{t.paymentChannel}</div>}
+                          <td className="p-6 w-32 text-xs">
+                            {(() => {
+                              const acc = accounts.find(a => a.id === t.accountId);
+                              return acc
+                                ? <span className={`inline-block px-2 py-1 rounded-lg font-bold truncate max-w-[100px] align-bottom ${ACCOUNT_TYPE_TAG_STYLE[acc.type] || 'bg-slate-100 text-slate-600'}`} title={acc.name}>{acc.name}</span>
+                                : <span className="text-slate-300 font-normal">未指定</span>;
+                            })()}
+                            {t.paymentChannel && <div className="w-24 truncate text-slate-300 font-normal mt-1 text-[10px]" title={t.paymentChannel}>{t.paymentChannel}</div>}
                           </td>
                           <td className="p-6 font-bold">
                             <span className="flex items-center gap-1.5 flex-wrap">
@@ -788,19 +857,35 @@ const App: React.FC = () => {
                                 </span>
                               )}
                             </span>
-                            {t.items && t.items.length > 0 && (
-                              <span className="flex flex-wrap gap-1 mt-1">
-                                {t.items.map((item, idx) => (
-                                  <span key={idx} className="text-[11px] font-normal text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                                    {item.name}
-                                    {item.unitPrice != null && (
-                                      <span className="text-slate-400"> ${item.unitPrice}{(item.quantity && item.quantity !== 1) ? `×${item.quantity}` : ''}</span>
-                                    )}
-                                  </span>
-                                ))}
+                            {t.items && t.items.length > 0 && (() => {
+                              const isRowExpanded = expandedRowIds.has(t.id);
+                              const visibleItems = isRowExpanded ? t.items : t.items.slice(0, 3);
+                              const hiddenCount = t.items.length - visibleItems.length;
+                              return (
+                                <span className="flex flex-wrap items-center gap-1 mt-1">
+                                  {visibleItems.map((item, idx) => (
+                                    <span key={idx} className="text-[11px] font-normal text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                                      {item.name}
+                                      {item.unitPrice != null && (
+                                        <span className="text-slate-400"> ${item.unitPrice}{(item.quantity && item.quantity !== 1) ? `×${item.quantity}` : ''}</span>
+                                      )}
+                                    </span>
+                                  ))}
+                                  {hiddenCount > 0 && (
+                                    <button type="button" onClick={() => toggleRowExpanded(t.id)} className="text-[11px] font-bold text-amber-500 hover:text-amber-600">+{hiddenCount} 更多</button>
+                                  )}
+                                </span>
+                              );
+                            })()}
+                            {t.note && (
+                              <span
+                                className={`text-xs font-normal text-slate-400 mt-0.5 ${expandedRowIds.has(t.id) ? 'block' : 'line-clamp-1 cursor-pointer'}`}
+                                onClick={() => !expandedRowIds.has(t.id) && toggleRowExpanded(t.id)}
+                                title={!expandedRowIds.has(t.id) ? '點擊展開完整備註' : undefined}
+                              >
+                                {t.note}
                               </span>
                             )}
-                            {t.note && <span className="block text-xs font-normal text-slate-400 mt-0.5">{t.note}</span>}
                             {t.discounts && t.discounts.length > 0 && (
                               <span className="flex items-center flex-wrap gap-1.5 mt-1.5 p-2 bg-amber-50/60 border border-amber-100 rounded-xl w-fit">
                                 <span className="text-[11px] font-bold text-slate-400 line-through decoration-slate-300">${t.grossAmount}</span>
@@ -815,7 +900,7 @@ const App: React.FC = () => {
                             )}
                           </td>
                           <td className="p-6">
-                            <span className="px-2 py-1 bg-slate-100 rounded text-xs">{CATEGORY_LABELS[t.category.l1]} &bull; {t.category.l2}</span>
+                            <span className={`px-2 py-1 rounded-lg text-xs font-bold ${L1_TAG_STYLE[t.category.l1]}`}>{CATEGORY_LABELS[t.category.l1]} &bull; {t.category.l2}</span>
                           </td>
                           <td className={`p-6 text-right font-bold ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-700'}`}>{t.type === 'income' ? '+' : '-'}${t.amount}</td>
                           <td className="p-6 text-center no-print">
@@ -844,10 +929,13 @@ const App: React.FC = () => {
                           {/* ROOT Main Item Row */}
                           <tr className="bg-purple-50/30 border-t-2 border-purple-100">
                              <td className="p-6 text-xs font-bold text-purple-400">{groupDate}</td>
-                             <td className="p-6 w-32 text-xs font-bold text-slate-500">
-                               <div className="w-24 truncate" title={accounts.find(a => a.id === mainItem.accountId)?.name || '未指定'}>
-                                 {accounts.find(a => a.id === mainItem.accountId)?.name || <span className="text-slate-300 font-normal">未指定</span>}
-                               </div>
+                             <td className="p-6 w-32 text-xs">
+                               {(() => {
+                                 const acc = accounts.find(a => a.id === mainItem.accountId);
+                                 return acc
+                                   ? <span className={`inline-block px-2 py-1 rounded-lg font-bold truncate max-w-[100px] align-bottom ${ACCOUNT_TYPE_TAG_STYLE[acc.type] || 'bg-slate-100 text-slate-600'}`} title={acc.name}>{acc.name}</span>
+                                   : <span className="text-slate-300 font-normal">未指定</span>;
+                               })()}
                              </td>
                              <td className="p-6 font-black text-slate-700 flex items-center gap-2">
                                {mainItem.merchant} <span className="text-[10px] bg-purple-200 text-purple-600 px-1.5 py-0.5 rounded-full uppercase tracking-tighter">已分裝</span>
@@ -925,6 +1013,7 @@ const App: React.FC = () => {
       {isAccountsModalOpen && <AccountsModal accounts={accounts} onClose={() => setIsAccountsModalOpen(false)} onSave={handleSaveAccount} onArchive={handleArchiveAccount} />}
       {batchSource && <BatchCorrectionModal matches={batchCandidates} source={batchSource} onConfirm={handleBatchConfirm} onClose={() => { setBatchSource(null); setBatchCandidates([]); }} />}
       {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} settings={wishlistSettings} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={handleUpdateWishlistItems} onUpdateSettings={handleUpdateWishlistSettings} />}
+      {isTrashModalOpen && <TrashModal items={deletedTransactions} loading={trashLoading} onClose={() => setIsTrashModalOpen(false)} onRestore={handleRestoreFromTrash} onPermanentlyDelete={handlePermanentlyDelete} />}
       {isMappingModalOpen && <CategoryMappingModal conflicts={conflictCategories} existingCustomOptions={customCategoryHistory} onConfirm={handleMappingConfirm} onCancel={() => { setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]); }} />}
       
       {(lastDeletedTransaction || lastCanceledSplit) && (

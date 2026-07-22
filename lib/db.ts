@@ -97,6 +97,7 @@ interface TransactionRow {
   is_verified: boolean;
   is_split: boolean;
   parent_id: string | null;
+  deleted_at: string | null;
 }
 
 const rowToTransaction = (row: TransactionRow): Transaction => ({
@@ -124,6 +125,7 @@ const rowToTransaction = (row: TransactionRow): Transaction => ({
   isVerified: row.is_verified,
   isSplit: row.is_split,
   parentId: row.parent_id || undefined,
+  deletedAt: row.deleted_at || undefined,
 });
 
 const transactionToRow = (userId: string, tx: Transaction) => ({
@@ -161,7 +163,7 @@ export const fetchTransactions = async (): Promise<Transaction[]> => {
   const allRows: TransactionRow[] = [];
   let from = 0;
   while (true) {
-    const { data, error } = await supabase.from('transactions').select('*').order('date', { ascending: false }).range(from, from + FETCH_PAGE_SIZE - 1);
+    const { data, error } = await supabase.from('transactions').select('*').is('deleted_at', null).order('date', { ascending: false }).range(from, from + FETCH_PAGE_SIZE - 1);
     if (error) throw error;
     const page = data as TransactionRow[];
     allRows.push(...page);
@@ -169,6 +171,13 @@ export const fetchTransactions = async (): Promise<Transaction[]> => {
     from += FETCH_PAGE_SIZE;
   }
   return allRows.map(rowToTransaction);
+};
+
+// 垃圾桶：撈出已經軟刪除、還沒被永久清除的交易，最近刪除的排前面。
+export const fetchDeletedTransactions = async (): Promise<Transaction[]> => {
+  const { data, error } = await supabase.from('transactions').select('*').not('deleted_at', 'is', null).order('deleted_at', { ascending: false });
+  if (error) throw error;
+  return (data as TransactionRow[]).map(rowToTransaction);
 };
 
 // upsert：新增跟編輯共用同一個函式，id 已存在就更新、不存在就新增
@@ -191,13 +200,26 @@ export const upsertTransactions = async (userId: string, txs: Transaction[]): Pr
   }
 };
 
+// 軟刪除：只標記 deleted_at，資料還在，垃圾桶可以救回。避免手滑誤刪就真的沒救了
+// （Ivy實際發生過一次），不是真的從資料庫移除。
 export const deleteTransaction = async (id: string): Promise<void> => {
-  const { error } = await supabase.from('transactions').delete().eq('id', id);
+  const { error } = await supabase.from('transactions').update({ deleted_at: new Date().toISOString() }).eq('id', id);
   if (error) throw error;
 };
 
 export const deleteTransactionsByParentId = async (parentId: string): Promise<void> => {
-  const { error } = await supabase.from('transactions').delete().eq('parent_id', parentId);
+  const { error } = await supabase.from('transactions').update({ deleted_at: new Date().toISOString() }).eq('parent_id', parentId);
+  if (error) throw error;
+};
+
+export const restoreTransaction = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('transactions').update({ deleted_at: null }).eq('id', id);
+  if (error) throw error;
+};
+
+// 垃圾桶「永久刪除」用：這個才是真的從資料庫移除，沒有回頭路。
+export const permanentlyDeleteTransaction = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('transactions').delete().eq('id', id);
   if (error) throw error;
 };
 

@@ -51,6 +51,7 @@ create table if not exists transactions (
   is_split boolean not null default false,
   parent_id uuid references transactions(id) on delete set null, -- 拆分群組的母項目 id
   reconcile_status text check (reconcile_status in ('matched', 'pending_settlement', 'missing_manual', 'missing_official')),
+  deleted_at timestamptz,                -- 軟刪除時間戳記，非NULL代表在垃圾桶裡，NULL代表正常存在
   created_at timestamptz not null default now()
 );
 
@@ -143,3 +144,4 @@ create index if not exists idx_transactions_user_date on transactions(user_id, d
 create index if not exists idx_transactions_account on transactions(account_id);
 create index if not exists idx_accounts_user on accounts(user_id);
 create index if not exists idx_wishlist_items_user_order on wishlist_items(user_id, sort_order);
+create index if not exists idx_transactions_deleted_at on transactions(user_id, deleted_at);

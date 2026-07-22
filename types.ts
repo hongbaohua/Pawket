@@ -78,6 +78,7 @@ export interface Transaction {
   isVerified: boolean;
   isSplit: boolean;
   parentId?: string; // If this is a child of a split
+  deletedAt?: string; // 軟刪除時間戳記（選填），有值代表在垃圾桶裡，正常列表不會顯示
 }
 
 export interface Budget {

@@ -74,6 +74,28 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     return next;
   });
 
+  // 外幣試算小工具：跟折扣計算同樣的邏輯，使用者只要填「原幣金額」+「匯率」，
+  // 自動算出單價(台幣)+寫進備註，不用自己按計算機算完再手動打字進來。
+  // 這兩個欄位是暫時的計算輸入，不直接存進 TransactionItem，算出結果後才寫回 unitPrice/note。
+  const [fxExpandedIdx, setFxExpandedIdx] = useState<Set<number>>(new Set());
+  const [fxInputs, setFxInputs] = useState<Record<number, { amount: string; rate: string }>>({});
+  const toggleFxExpanded = (idx: number) => setFxExpandedIdx(prev => {
+    const next = new Set(prev);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    return next;
+  });
+  const updateFxInput = (idx: number, field: 'amount' | 'rate', value: string) => {
+    const current = fxInputs[idx] || { amount: '', rate: '' };
+    const nextInput = { ...current, [field]: value };
+    setFxInputs(prev => ({ ...prev, [idx]: nextInput }));
+    const amountNum = parseFloat(nextInput.amount);
+    const rateNum = parseFloat(nextInput.rate);
+    if (!isNaN(amountNum) && !isNaN(rateNum)) {
+      const converted = Math.round(amountNum * rateNum * 100) / 100;
+      setItems(prev => prev.map((it, i) => i === idx ? { ...it, unitPrice: converted, note: `原幣$${amountNum} × 匯率${rateNum}` } : it));
+    }
+  };
+
   // 特殊標記：代購／工作代墊。輕量標記＋顯示用，不做完整分帳計算。
   const [specialTagType, setSpecialTagType] = useState<'none' | SpecialTag['type']>(transaction.specialTag?.type || 'none');
   const [specialTagCounterparty, setSpecialTagCounterparty] = useState(transaction.specialTag?.counterparty || '');
@@ -448,11 +470,13 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
             </datalist>
           </div>
 
-          {/* Items Field：一筆交易買了多樣商品時，結構化列出每一項 */}
+          {/* Items Field：這筆買了什麼，無論一項還是多項都填在這裡（跟「分裝盤」不是同一件事，
+              分裝盤是把這筆錢拆到不同預算分類，這裡純粹是記錄買了什麼東西） */}
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 ml-1">
-              <ShoppingBag className="w-3 h-3" /> 品項清單（選填，買了不只一樣東西時用）
+              <ShoppingBag className="w-3 h-3" /> 喵喵購物清單（選填，這筆買了什麼）
             </label>
+            <p className="text-[10px] text-slate-300 ml-1 -mt-1">這裡只記錄買了什麼，不會拆分類；要把錢拆到不同預算類別請用「貓咪零食分裝盤」（明細列的分裝按鈕）</p>
             <div className="space-y-2">
               {items.map((it, idx) => {
                 const isExpanded = expandedItemIdx.has(idx);
@@ -474,19 +498,37 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                       <button type="button" onClick={() => removeItemRow(idx)} className="p-1 text-slate-300 hover:text-rose-400 transition"><Trash2 className="w-4 h-4" /></button>
                     </div>
                     {isExpanded && (
-                      <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 animate-in slide-in-from-top-1">
-                        <div>
-                          <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">單價(台幣)</label>
-                          <input type="number" value={it.unitPrice ?? ''} onChange={(e) => updateItemField(idx, 'unitPrice', e.target.value)} className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
+                      <div className="pt-2 border-t border-slate-100 animate-in slide-in-from-top-1 space-y-2">
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">單價(台幣)</label>
+                            <input type="number" value={it.unitPrice ?? ''} onChange={(e) => updateItemField(idx, 'unitPrice', e.target.value)} className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">數量</label>
+                            <input type="number" value={it.quantity ?? ''} onChange={(e) => updateItemField(idx, 'quantity', e.target.value)} placeholder="1" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">備註</label>
+                            <input type="text" value={it.note ?? ''} onChange={(e) => updateItemField(idx, 'note', e.target.value)} placeholder="例如：日幣購入" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
+                          </div>
                         </div>
-                        <div>
-                          <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">數量</label>
-                          <input type="number" value={it.quantity ?? ''} onChange={(e) => updateItemField(idx, 'quantity', e.target.value)} placeholder="1" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
-                        </div>
-                        <div>
-                          <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">備註</label>
-                          <input type="text" value={it.note ?? ''} onChange={(e) => updateItemField(idx, 'note', e.target.value)} placeholder="例如：匯率4.45" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
-                        </div>
+                        <button type="button" onClick={() => toggleFxExpanded(idx)} className={`text-[10px] font-bold px-2 py-1 rounded-lg ${fxExpandedIdx.has(idx) ? 'bg-sky-100 text-sky-600' : 'text-slate-400 hover:bg-slate-100'}`}>
+                          {fxExpandedIdx.has(idx) ? '收合外幣試算' : '這項是外幣？點我試算台幣'}
+                        </button>
+                        {fxExpandedIdx.has(idx) && (
+                          <div className="grid grid-cols-2 gap-2 p-2 bg-sky-50/50 border border-sky-100 rounded-lg animate-in slide-in-from-top-1">
+                            <div>
+                              <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">原幣金額</label>
+                              <input type="number" value={fxInputs[idx]?.amount ?? ''} onChange={(e) => updateFxInput(idx, 'amount', e.target.value)} placeholder="例如：1000" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
+                            </div>
+                            <div>
+                              <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">匯率</label>
+                              <input type="number" step="0.01" value={fxInputs[idx]?.rate ?? ''} onChange={(e) => updateFxInput(idx, 'rate', e.target.value)} placeholder="例如：4.45" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
+                            </div>
+                            <p className="col-span-2 text-[10px] text-sky-400">填好這兩格會自動算出單價(台幣)，並把換算依據寫進備註，不用自己按計算機。</p>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
