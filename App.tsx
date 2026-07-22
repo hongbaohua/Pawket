@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { LayoutDashboard, ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat } from 'lucide-react';
+import { ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import Scanner from './components/Scanner';
 import SplitModal from './components/SplitModal';
@@ -679,19 +679,18 @@ const App: React.FC = () => {
           桌機版(lg+)維持原本左側直向側欄，兩者共用同一個element，靠 flex-row/flex-col
           切換方向，不寫兩份重複的JSX。 */}
       <aside className="w-full h-16 lg:w-72 lg:h-auto bg-white flex flex-row lg:flex-col items-center lg:items-stretch fixed top-0 inset-x-0 lg:inset-x-auto lg:left-0 z-20 no-print transition-all shadow-[0_4px_20px_rgba(0,0,0,0.04)] lg:shadow-[8px_0_30px_rgba(0,0,0,0.02)] rounded-b-[24px] lg:rounded-b-none lg:rounded-r-[40px] lg:my-4 lg:ml-4 lg:h-[calc(100vh-32px)] border-b lg:border-b-0 lg:border-r border-orange-50 px-3 lg:px-0 gap-1 lg:gap-0">
-        <div className="p-1 lg:p-8 flex items-center gap-3 shrink-0">
+        <div className="p-1 lg:p-8 flex items-center gap-3 shrink-0 cursor-pointer" onClick={() => setView('dashboard')} title="回到貓咪指揮中心">
            <div className="w-9 h-9 lg:w-12 lg:h-12 bg-gradient-to-br from-amber-300 to-orange-400 rounded-xl lg:rounded-2xl flex items-center justify-center shadow-lg shadow-orange-100 text-white transform rotate-[-5deg] hover:rotate-0 transition-all duration-300"><Cat className="w-5 h-5 lg:w-7 lg:h-7" /></div>
            <span className="font-extrabold text-2xl tracking-tight text-slate-700 hidden lg:block">Paw<span className="text-amber-500">ket</span></span>
         </div>
         <nav className="flex flex-row lg:flex-col flex-1 lg:py-6 gap-1 lg:gap-4 lg:space-y-0 px-1 lg:px-4 overflow-x-auto lg:overflow-visible">
-          <button onClick={() => setView('dashboard')} className={`shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'dashboard' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><LayoutDashboard className={`w-5 h-5 lg:w-6 lg:h-6 ${view === 'dashboard' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">貓咪指揮中心</span></button>
           <button onClick={() => setView('scanner')} className={`shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'scanner' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><ScanLine className={`w-5 h-5 lg:w-6 lg:h-6 ${view === 'scanner' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">餵食帳單 (Scan)</span></button>
           <button onClick={() => setView('transactions')} className={`shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'transactions' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><List className={`w-5 h-5 lg:w-6 lg:h-6 ${view === 'transactions' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">罐罐明細本</span></button>
           <button onClick={() => setIsWishlistModalOpen(true)} className="shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-indigo-50 hover:text-indigo-500"><Target className="w-5 h-5 lg:w-6 lg:h-6" /><span className="hidden lg:block">願望清單</span></button>
           <button onClick={() => setIsAccountsModalOpen(true)} className="shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-sky-50 hover:text-sky-500"><Wallet className="w-5 h-5 lg:w-6 lg:h-6" /><span className="hidden lg:block">帳戶管理</span></button>
         </nav>
         <div className="flex flex-row lg:flex-col items-center shrink-0 lg:px-4 lg:space-y-1 gap-1 lg:gap-0">
-          <div className="flex items-center gap-4 p-2 lg:p-4 rounded-3xl group">
+          <div className="flex items-center gap-4 p-2 lg:p-4 rounded-3xl group cursor-pointer" onClick={handleEditNickname} title="編輯暱稱">
             <div className="w-8 h-8 lg:w-9 lg:h-9 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center font-bold shrink-0 text-sm lg:text-base">
               {(session?.user.user_metadata?.nickname || session?.user.email || '?').charAt(0).toUpperCase()}
             </div>
@@ -699,7 +698,7 @@ const App: React.FC = () => {
               <p className="text-sm font-bold text-slate-700 truncate">{session?.user.user_metadata?.nickname || '設定暱稱'}</p>
               <p className="text-[11px] text-slate-300 truncate">{session?.user.email}</p>
             </div>
-            <button onClick={handleEditNickname} className="hidden lg:block p-1.5 text-slate-300 hover:text-amber-500 opacity-0 group-hover:opacity-100 transition shrink-0" title="編輯暱稱"><Pencil className="w-3.5 h-3.5" /></button>
+            <Pencil className="hidden lg:block w-3.5 h-3.5 text-slate-300 group-hover:text-amber-500 opacity-0 group-hover:opacity-100 transition shrink-0" />
           </div>
           <button onClick={() => supabase.auth.signOut()} className="shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold text-slate-300 hover:bg-rose-50 hover:text-rose-400" title="登出"><LogOut className="w-5 h-5 lg:w-6 lg:h-6" /><span className="hidden lg:block">登出</span></button>
         </div>

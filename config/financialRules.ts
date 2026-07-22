@@ -43,9 +43,12 @@ export const RUNWAY_ANALYSIS_WINDOW_DAYS = 90; // 用「最近幾天」的變動
 export const RUNWAY_WARNING_DAYS = 90;         // 估算剩餘天數低於這個數字，介面轉紅色警戒
 
 // ── 6. 異常消費偵測（單筆金額突然變超高才提醒） ──
-export const ANOMALY_MIN_HISTORY_COUNT = 2;  // 同一個次分類至少要出現超過幾次歷史紀錄，才有「平均值」可以比較
-export const ANOMALY_AMOUNT_MULTIPLIER = 1.5; // 這筆金額超過歷史平均的幾倍，才會被標記為異常
-export const ANOMALY_MIN_AMOUNT = 50;         // 金額低於這個數字不列入異常偵測（避免小額誤判，例如飲料錢忽高忽低）
+// 2026-07-22 Ivy 實測回報：原本的門檻(3筆歷史紀錄、超過平均1.5倍)太敏感，把很多正常的
+// 消費波動也標成「異常」（例如平常晚餐$100、這次$151這種程度的正常差異）。調高門檻，
+// 只有真的明顯偏離平常花費的才提醒，避免「什麼都是異常」讓警示失去意義。
+export const ANOMALY_MIN_HISTORY_COUNT = 5;   // 同一個次分類至少要出現超過幾次歷史紀錄，才有「平均值」可以比較（原本2太少，3筆就能定義「平常」不可靠）
+export const ANOMALY_AMOUNT_MULTIPLIER = 2.2; // 這筆金額超過歷史平均的幾倍，才會被標記為異常（原本1.5倍太容易觸發）
+export const ANOMALY_MIN_AMOUNT = 300;        // 金額低於這個數字不列入異常偵測（原本50太低，小額類別稍微高一點就被標記，但金額本身不痛不癢）
 
 // ── 7. 異常頻率偵測（同一個次分類，這個週期刷太多次才提醒） ──
 export const FREQUENCY_HISTORY_MONTHS = 3;  // 拿最近幾個月的平均次數當比較基準

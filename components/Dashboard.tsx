@@ -540,7 +540,11 @@ const Dashboard: React.FC<DashboardProps> = ({
               </div>
               <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
                   <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><AlertCircle className="w-4 h-4 text-pink-500" /> 異常消費偵測</h4>
-                  <div className="space-y-3">{anomalies.slice(0, 3).map((tx) => (<div key={tx.id} className="p-4 bg-pink-50/50 rounded-2xl border border-pink-100 flex items-start gap-3"><div className="flex-1"><p className="font-bold text-slate-700 text-sm">{tx.merchant}</p><span className="font-black text-pink-600">${tx.amount.toLocaleString()}</span></div></div>))}</div>
+                  {anomalies.length === 0 ? (
+                    <p className="text-sm text-slate-300 font-medium py-2">這期間的消費都跟平常差不多，沒有明顯異常喵～</p>
+                  ) : (
+                    <div className="space-y-3">{anomalies.slice(0, 3).map((tx) => (<div key={tx.id} className="p-4 bg-pink-50/50 rounded-2xl border border-pink-100 flex items-start justify-between gap-3"><div className="flex-1 min-w-0"><p className="font-bold text-slate-700 text-sm truncate">{tx.merchant}</p><p className="text-xs text-slate-400 mt-1">{tx.category.l3 || tx.category.l2}平常約${Math.round(tx.avgAmount).toLocaleString()}，這筆高出{Math.round(tx.diffPercent)}%</p></div><span className="font-black text-pink-600 shrink-0">${tx.amount.toLocaleString()}</span></div>))}</div>
+                  )}
               </div>
           </div>
       </div>
