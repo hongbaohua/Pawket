@@ -243,9 +243,15 @@ const App: React.FC = () => {
       let result = [...transactions];
       if (searchTerm.trim()) {
           const lowerTerm = searchTerm.toLowerCase();
-          result = result.filter(t => 
+          // 原本沒有搜尋 note/品項/代購對象，Ivy找「邵瀞葶」這種只存在specialTag.counterparty
+          // 裡的關鍵字時完全找不到大部分符合的紀錄，看起來像資料不見了，其實只是搜尋範圍漏掉。
+          result = result.filter(t =>
               t.merchant.toLowerCase().includes(lowerTerm) ||
               (t.originalText || '').toLowerCase().includes(lowerTerm) ||
+              (t.note || '').toLowerCase().includes(lowerTerm) ||
+              (t.items || []).some(it => it.name.toLowerCase().includes(lowerTerm) || (it.note || '').toLowerCase().includes(lowerTerm)) ||
+              (t.specialTag?.counterparty || '').toLowerCase().includes(lowerTerm) ||
+              (t.specialTag?.note || '').toLowerCase().includes(lowerTerm) ||
               t.category.l1.toLowerCase().includes(lowerTerm) ||
               t.category.l2.toLowerCase().includes(lowerTerm) ||
               (t.category.l3 || '').toLowerCase().includes(lowerTerm)
