@@ -38,6 +38,8 @@ data-import/opening_balance_adjustments.json
 supabase/fix_001_currency_jpy_to_cny.sql
 supabase/fix_002_backfill_payment_channel.sql
 supabase/fix_003_backfill_transfer_channel.sql
+supabase/fix_004_fill_zhanmenghuajian_items.sql
+supabase/fix_005_reword_discount_note.sql
 
 # Vercel CLI 專案連結資訊（本機自動產生，不用進版本控制）
 .vercel
