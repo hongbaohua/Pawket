@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat } from 'lucide-react';
+import { ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, Settings } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import Scanner from './components/Scanner';
 import SplitModal from './components/SplitModal';
@@ -198,6 +198,8 @@ const App: React.FC = () => {
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement>(null);
+  const [isSidebarMoreOpen, setIsSidebarMoreOpen] = useState(false);
+  const sidebarMoreRef = useRef<HTMLDivElement>(null);
 
   const [splittingTransaction, setSplittingTransaction] = useState<Transaction | null>(null);
   // 罐罐明細本列表：品項/備註太長會把列高撐得很高，預設收合只顯示前幾個/第一行，點了才展開全部。
@@ -312,6 +314,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const click = (e: MouseEvent) => { if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setIsAddMenuOpen(false); };
+    document.addEventListener('mousedown', click);
+    return () => document.removeEventListener('mousedown', click);
+  }, []);
+
+  useEffect(() => {
+    const click = (e: MouseEvent) => { if (sidebarMoreRef.current && !sidebarMoreRef.current.contains(e.target as Node)) setIsSidebarMoreOpen(false); };
     document.addEventListener('mousedown', click);
     return () => document.removeEventListener('mousedown', click);
   }, []);
@@ -748,11 +756,21 @@ const App: React.FC = () => {
            <div className="w-9 h-9 lg:w-12 lg:h-12 bg-gradient-to-br from-amber-300 to-orange-400 rounded-xl lg:rounded-2xl flex items-center justify-center shadow-lg shadow-orange-100 text-white transform rotate-[-5deg] hover:rotate-0 transition-all duration-300"><Cat className="w-5 h-5 lg:w-7 lg:h-7" /></div>
            <span className="font-extrabold text-2xl tracking-tight text-slate-700 hidden lg:block">Paw<span className="text-amber-500">ket</span></span>
         </div>
-        <nav className="flex flex-row lg:flex-col flex-1 lg:py-6 gap-1 lg:gap-4 lg:space-y-0 px-1 lg:px-4 overflow-x-auto lg:overflow-visible">
-          <button onClick={() => setView('scanner')} className={`shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'scanner' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><ScanLine className={`w-5 h-5 lg:w-6 lg:h-6 ${view === 'scanner' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">餵食帳單 (Scan)</span></button>
-          <button onClick={() => setView('transactions')} className={`shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'transactions' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><List className={`w-5 h-5 lg:w-6 lg:h-6 ${view === 'transactions' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">罐罐明細本</span></button>
-          <button onClick={() => setIsWishlistModalOpen(true)} className="shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-indigo-50 hover:text-indigo-500"><Target className="w-5 h-5 lg:w-6 lg:h-6" /><span className="hidden lg:block">願望清單</span></button>
-          <button onClick={() => setIsAccountsModalOpen(true)} className="shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-sky-50 hover:text-sky-500"><Wallet className="w-5 h-5 lg:w-6 lg:h-6" /><span className="hidden lg:block">帳戶管理</span></button>
+        <nav className="flex flex-row lg:flex-col flex-1 lg:py-6 gap-1 lg:gap-4 lg:space-y-0 px-1 lg:px-4 overflow-x-auto lg:overflow-visible relative">
+          {/* 明細本是最常用的功能，排最前面；餵食帳單以後可能改成對帳用途，排後面。
+              願望清單/帳戶管理比較像系統設定，移出主導覽、收進下面的「更多」選單，
+              騰出空間讓手機版也能顯示文字標籤（純icon太難辨識，Ivy反應過）。 */}
+          <button onClick={() => setView('transactions')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'transactions' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><List className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'transactions' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">明細本</span></button>
+          <button onClick={() => setView('scanner')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'scanner' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><ScanLine className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'scanner' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">餵食帳單</span></button>
+          <div className="relative shrink-0 lg:w-full" ref={sidebarMoreRef}>
+            <button onClick={() => setIsSidebarMoreOpen(v => !v)} className={`w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold border-2 ${isSidebarMoreOpen ? 'bg-slate-50 border-slate-200 text-slate-600' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><Settings className="w-5 h-5 lg:w-6 lg:h-6 shrink-0" /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">更多</span></button>
+            {isSidebarMoreOpen && (
+              <div className="absolute top-full right-0 lg:right-auto lg:left-0 mt-2 lg:mt-1 w-40 bg-white rounded-2xl shadow-xl border border-orange-50 p-2 z-30 animate-in fade-in zoom-in-95 duration-150">
+                <button onClick={() => { setIsWishlistModalOpen(true); setIsSidebarMoreOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-indigo-50 hover:text-indigo-500 rounded-xl transition"><Target className="w-4 h-4" />願望清單</button>
+                <button onClick={() => { setIsAccountsModalOpen(true); setIsSidebarMoreOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-sky-50 hover:text-sky-500 rounded-xl transition"><Wallet className="w-4 h-4" />帳戶管理</button>
+              </div>
+            )}
+          </div>
         </nav>
         <div className="flex flex-row lg:flex-col items-center shrink-0 lg:px-4 lg:space-y-1 gap-1 lg:gap-0">
           <div className="flex items-center gap-4 p-2 lg:p-4 rounded-3xl group cursor-pointer" onClick={handleEditNickname} title="編輯暱稱">
@@ -807,12 +825,15 @@ const App: React.FC = () => {
                      <div className="flex gap-3"><div className="relative flex-1"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" /><input type="text" placeholder="快速查找..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-white border border-slate-100 rounded-2xl shadow-sm text-slate-700 font-bold outline-none" />{searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-300"><X className="w-4 h-4" /></button>}</div><button onClick={() => setIsFilterExpanded(!isFilterExpanded)} className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all border ${isFilterExpanded ? 'bg-amber-100 text-amber-600 border-amber-200' : 'bg-white text-slate-500 border-slate-100'}`}><Filter className="w-5 h-5" /><span className="hidden sm:inline">標籤篩選</span></button></div>
                  </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm text-slate-600">
-                <thead className="bg-[#FFFBF5] text-xs uppercase font-bold text-slate-400 tracking-wider"><tr><th className="p-6">日期</th><th className="p-6 w-32">帳戶</th><th className="p-6">商家</th><th className="p-6 min-w-[220px]">分類</th><th className="p-6 text-right">金額</th><th className="p-6 text-center no-print">操作</th></tr></thead>
-                <tbody className="divide-y divide-orange-50">
+            {/* 手機版(<lg)把表格改成卡片式垂直排列（每個<tr>變成一張卡片，<td>各自
+                從table-cell改成block疊起來），不用再橫向捲動才看得到完整一筆紀錄；
+                桌機版(lg+)維持原本的表格排版，不受影響。 */}
+            <div className="lg:overflow-x-auto">
+              <table className="w-full text-left text-sm text-slate-600 block lg:table">
+                <thead className="hidden lg:table-header-group bg-[#FFFBF5] text-xs uppercase font-bold text-slate-400 tracking-wider"><tr><th className="p-6">日期</th><th className="p-6 w-32">帳戶</th><th className="p-6">商家</th><th className="p-6 min-w-[220px]">分類</th><th className="p-6 text-right">金額</th><th className="p-6 text-center no-print">操作</th></tr></thead>
+                <tbody className="block lg:table-row-group divide-y-0 lg:divide-y lg:divide-orange-50 space-y-3 lg:space-y-0 p-3 lg:p-0">
                   {processedTransactions.length === 0 ? (
-                    <tr><td colSpan={6} className="p-10 text-center text-slate-400 italic font-medium">喵~ 這裡空空的，快去記帳吧！</td></tr>
+                    <tr className="block lg:table-row"><td colSpan={6} className="block lg:table-cell p-10 text-center text-slate-400 italic font-medium">喵~ 這裡空空的，快去記帳吧！</td></tr>
                   ) : groupedDisplayItems.map(item => {
                     if (item.type === 'single') {
                       const t = item.data!;
@@ -820,14 +841,14 @@ const App: React.FC = () => {
                         const fromName = accounts.find(a => a.id === t.fromAccountId)?.name || '?';
                         const toName = accounts.find(a => a.id === t.toAccountId)?.name || '?';
                         return (
-                          <tr key={t.id} className="transition hover:bg-sky-50/30 bg-sky-50/10">
-                            <td className="p-6">{t.date}</td>
-                            <td className="p-6 w-32 text-slate-300 text-xs">—</td>
-                            <td className="p-6 font-bold">{t.merchant}</td>
-                            <td className="p-6"><span className="px-2 py-1 bg-sky-100 text-sky-600 rounded text-xs font-bold">帳戶互轉 &bull; {fromName} → {toName}</span></td>
-                            <td className="p-6 text-right font-bold text-sky-600">${t.amount}</td>
-                            <td className="p-6 text-center no-print">
-                              <div className="flex justify-center gap-2">
+                          <tr key={t.id} className="block lg:table-row transition hover:bg-sky-50/30 bg-sky-50/10 rounded-2xl lg:rounded-none border lg:border-0 border-sky-100 mb-3 lg:mb-0 last:mb-0">
+                            <td className="block lg:table-cell px-4 pt-3 lg:p-6 text-xs lg:text-sm text-slate-400 lg:text-slate-600">{t.date}</td>
+                            <td className="hidden lg:table-cell p-6 w-32 text-slate-300 text-xs">—</td>
+                            <td className="block lg:table-cell px-4 pt-1 lg:p-6 font-bold">{t.merchant}</td>
+                            <td className="block lg:table-cell px-4 pt-1 lg:p-6"><span className="px-2 py-1 bg-sky-100 text-sky-600 rounded text-xs font-bold">帳戶互轉 &bull; {fromName} → {toName}</span></td>
+                            <td className="block lg:table-cell px-4 pt-1 lg:p-6 text-left lg:text-right font-bold text-sky-600">${t.amount}</td>
+                            <td className="block lg:table-cell px-4 pb-3 pt-2 lg:p-6 text-left lg:text-center no-print">
+                              <div className="flex justify-start lg:justify-center gap-2">
                                 <button onClick={() => setTransferModalState({ open: true, transaction: t })} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯帳戶互轉"><Pencil className="w-4 h-4" /></button>
                                 <button onClick={() => handleDeleteTransaction(t.id)} className="p-2 border rounded-xl hover:bg-rose-50 text-rose-400" title="刪除項目"><Trash2 className="w-4 h-4" /></button>
                               </div>
@@ -836,18 +857,18 @@ const App: React.FC = () => {
                         );
                       }
                       return (
-                        <tr key={t.id} className={`transition group ${t.type === 'income' ? 'bg-emerald-50/20' : 'hover:bg-orange-50/30'}`}>
-                          <td className="p-6">{t.date}</td>
-                          <td className="p-6 w-32 text-xs">
+                        <tr key={t.id} className={`flex flex-wrap lg:table-row transition group rounded-2xl lg:rounded-none border lg:border-0 border-orange-100 mb-3 lg:mb-0 last:mb-0 ${t.type === 'income' ? 'bg-emerald-50/20' : 'hover:bg-orange-50/30'}`}>
+                          <td className="w-1/2 lg:table-cell lg:w-auto px-4 pt-3 lg:p-6 text-xs lg:text-sm text-slate-400 lg:text-slate-600 order-1">{t.date}</td>
+                          <td className="w-1/2 lg:table-cell lg:w-32 px-4 pt-3 lg:p-6 text-xs text-right lg:text-left order-2">
                             {(() => {
                               const acc = accounts.find(a => a.id === t.accountId);
                               return acc
                                 ? <span className={`inline-block px-2 py-1 rounded-lg font-bold truncate max-w-[100px] align-bottom ${ACCOUNT_TYPE_TAG_STYLE[acc.type] || 'bg-slate-100 text-slate-600'}`} title={acc.name}>{acc.name}</span>
                                 : <span className="text-slate-300 font-normal">未指定</span>;
                             })()}
-                            {t.paymentChannel && <div className="w-24 truncate text-slate-300 font-normal mt-1 text-[10px]" title={t.paymentChannel}>{t.paymentChannel}</div>}
+                            {t.paymentChannel && <div className="w-24 truncate text-slate-300 font-normal mt-1 text-[10px] ml-auto lg:ml-0" title={t.paymentChannel}>{t.paymentChannel}</div>}
                           </td>
-                          <td className="p-6 font-bold">
+                          <td className="w-full lg:table-cell px-4 pt-2 lg:p-6 font-bold order-3">
                             <span className="flex items-center gap-1.5 flex-wrap">
                               {t.merchant}
                               {t.specialTag && (
@@ -899,12 +920,12 @@ const App: React.FC = () => {
                               </span>
                             )}
                           </td>
-                          <td className="p-6">
+                          <td className="w-1/2 lg:table-cell px-4 pt-2 lg:p-6 order-4">
                             <span className={`px-2 py-1 rounded-lg text-xs font-bold ${L1_TAG_STYLE[t.category.l1]}`}>{CATEGORY_LABELS[t.category.l1]} &bull; {t.category.l2}</span>
                           </td>
-                          <td className={`p-6 text-right font-bold ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-700'}`}>{t.type === 'income' ? '+' : '-'}${t.amount}</td>
-                          <td className="p-6 text-center no-print">
-                            <div className="flex justify-center gap-2">
+                          <td className={`w-1/2 lg:table-cell px-4 pt-2 lg:p-6 text-right font-bold order-5 ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-700'}`}>{t.type === 'income' ? '+' : '-'}${t.amount}</td>
+                          <td className="w-full lg:table-cell px-4 pb-3 pt-2 lg:p-6 lg:text-center no-print order-6">
+                            <div className="flex justify-end lg:justify-center gap-2">
                               <button onClick={() => setSplittingTransaction(t)} className="p-2 border rounded-xl hover:bg-purple-50 text-purple-400" title="拆帳分類"><Divide className="w-4 h-4" /></button>
                               <button onClick={() => setEditingTransaction(t)} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯項目"><Pencil className="w-4 h-4" /></button>
                               <button onClick={() => handleDeleteTransaction(t.id)} className="p-2 border rounded-xl hover:bg-rose-50 text-rose-400" title="刪除項目"><Trash2 className="w-4 h-4" /></button>
@@ -927,9 +948,9 @@ const App: React.FC = () => {
                       return (
                         <React.Fragment key={`group-${parentId}`}>
                           {/* ROOT Main Item Row */}
-                          <tr className="bg-purple-50/30 border-t-2 border-purple-100">
-                             <td className="p-6 text-xs font-bold text-purple-400">{groupDate}</td>
-                             <td className="p-6 w-32 text-xs">
+                          <tr className="flex flex-wrap lg:table-row bg-purple-50/30 border-2 lg:border-2 lg:border-t-2 border-purple-100 rounded-2xl lg:rounded-none mb-1 lg:mb-0">
+                             <td className="w-1/2 lg:table-cell lg:w-auto px-4 pt-3 lg:p-6 text-xs font-bold text-purple-400 order-1">{groupDate}</td>
+                             <td className="w-1/2 lg:table-cell lg:w-32 px-4 pt-3 lg:p-6 text-xs text-right lg:text-left order-2">
                                {(() => {
                                  const acc = accounts.find(a => a.id === mainItem.accountId);
                                  return acc
@@ -937,30 +958,30 @@ const App: React.FC = () => {
                                    : <span className="text-slate-300 font-normal">未指定</span>;
                                })()}
                              </td>
-                             <td className="p-6 font-black text-slate-700 flex items-center gap-2">
+                             <td className="w-full lg:table-cell px-4 pt-2 lg:p-6 font-black text-slate-700 flex items-center gap-2 order-3">
                                {mainItem.merchant} <span className="text-[10px] bg-purple-200 text-purple-600 px-1.5 py-0.5 rounded-full uppercase tracking-tighter">已分裝</span>
                              </td>
-                             <td className="p-6">
+                             <td className="w-1/2 lg:table-cell px-4 pt-2 lg:p-6 order-4">
                                 <span className="px-2 py-1 bg-white/80 border border-purple-100 rounded text-xs font-bold text-purple-400">
                                   {CATEGORY_LABELS[mainItem.category.l1]} &bull; {mainItem.category.l2}
                                 </span>
                              </td>
-                             <td className={`p-6 text-right font-black ${mainItem.type === 'income' ? 'text-emerald-600' : 'text-slate-700'}`}>
+                             <td className={`w-1/2 lg:table-cell px-4 pt-2 lg:p-6 text-right font-black order-5 ${mainItem.type === 'income' ? 'text-emerald-600' : 'text-slate-700'}`}>
                                 {mainItem.type === 'income' ? '+' : '-'}${totalAmount.toFixed(2)}
                              </td>
-                             <td className="p-6 text-center no-print">
-                               <div className="flex justify-center gap-2">
+                             <td className="w-full lg:table-cell px-4 pb-3 pt-2 lg:p-6 lg:text-center no-print order-6">
+                               <div className="flex justify-end lg:justify-center gap-2">
                                   {/* Re-edit existing split */}
-                                  <button 
-                                    onClick={() => setSplittingTransaction(mainItem)} 
-                                    className="p-2 border border-purple-200 bg-white rounded-xl hover:bg-purple-100 text-purple-500 transition-colors shadow-sm" 
+                                  <button
+                                    onClick={() => setSplittingTransaction(mainItem)}
+                                    className="p-2 border border-purple-200 bg-white rounded-xl hover:bg-purple-100 text-purple-500 transition-colors shadow-sm"
                                     title="編輯分裝比例"
                                   >
                                     <Divide className="w-4 h-4" />
                                   </button>
-                                  <button 
-                                    onClick={() => handleCancelSplit(parentId!)} 
-                                    className="p-2 border border-purple-200 bg-white rounded-xl hover:bg-purple-100 text-purple-500 transition-colors shadow-sm" 
+                                  <button
+                                    onClick={() => handleCancelSplit(parentId!)}
+                                    className="p-2 border border-purple-200 bg-white rounded-xl hover:bg-purple-100 text-purple-500 transition-colors shadow-sm"
                                     title="取消分裝並合併"
                                   >
                                     <RotateCcw className="w-4 h-4" />
@@ -971,26 +992,26 @@ const App: React.FC = () => {
                           </tr>
                           {/* Sub-Items Indented */}
                           {subItemsList.map(child => (
-                             <tr key={child.id} className="bg-white/50 border-l-4 border-purple-200 hover:bg-purple-50/10 transition group/child">
-                                <td className="p-4 pl-10 text-xs text-slate-400">└─ {child.date}</td>
-                                <td className="p-4 w-32 text-xs font-bold text-slate-500">
-                                  <div className="w-24 truncate" title={accounts.find(a => a.id === child.accountId)?.name || '未指定'}>
+                             <tr key={child.id} className="flex flex-wrap lg:table-row bg-white/50 lg:border-l-4 border-purple-200 hover:bg-purple-50/10 transition group/child rounded-xl lg:rounded-none mb-1 lg:mb-0 ml-3 lg:ml-0 border lg:border-t-0">
+                                <td className="w-1/2 lg:table-cell lg:w-auto px-3 pt-2 lg:p-4 lg:pl-10 text-xs text-slate-400 order-1"><span className="lg:hidden">↳ </span><span className="hidden lg:inline">└─ </span>{child.date}</td>
+                                <td className="w-1/2 lg:table-cell lg:w-32 px-3 pt-2 lg:p-4 text-xs font-bold text-slate-500 text-right lg:text-left order-2">
+                                  <div className="w-24 truncate ml-auto lg:ml-0" title={accounts.find(a => a.id === child.accountId)?.name || '未指定'}>
                                     {accounts.find(a => a.id === child.accountId)?.name || <span className="text-slate-300 font-normal">未指定</span>}
                                   </div>
                                 </td>
-                                <td className="p-4 text-slate-600 font-bold">
+                                <td className="w-full lg:table-cell px-3 pt-1 lg:p-4 text-slate-600 font-bold order-3">
                                   {child.merchant}
                                 </td>
-                                <td className="p-4">
+                                <td className="w-1/2 lg:table-cell px-3 pt-1 lg:p-4 order-4">
                                   <span className="px-2 py-1 bg-slate-100 rounded text-xs">
                                     {CATEGORY_LABELS[child.category.l1]} &bull; {child.category.l2}
                                   </span>
                                 </td>
-                                <td className={`p-4 text-right font-bold ${child.type === 'income' ? 'text-emerald-500' : 'text-slate-500'}`}>
+                                <td className={`w-1/2 lg:table-cell px-3 pt-1 lg:p-4 text-right font-bold order-5 ${child.type === 'income' ? 'text-emerald-500' : 'text-slate-500'}`}>
                                   {child.type === 'income' ? '+' : '-'}${child.amount}
                                 </td>
-                                <td className="p-4 text-center no-print">
-                                   <div className="flex justify-center gap-1 opacity-0 group-hover/child:opacity-100 transition-opacity">
+                                <td className="w-full lg:table-cell px-3 pb-2 pt-1 lg:p-4 lg:text-center no-print order-6">
+                                   <div className="flex justify-end lg:justify-center gap-1 opacity-100 lg:opacity-0 lg:group-hover/child:opacity-100 transition-opacity">
                                       <button onClick={() => setEditingTransaction(child)} className="p-1.5 hover:text-amber-500 transition" title="編輯此子項內容"><Pencil className="w-3.5 h-3.5" /></button>
                                       <button onClick={() => handleDeleteTransaction(child.id)} className="p-1.5 hover:text-rose-400 transition" title="刪除此子項"><Trash2 className="w-3.5 h-3.5" /></button>
                                    </div>

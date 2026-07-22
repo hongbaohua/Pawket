@@ -369,9 +369,9 @@ const Dashboard: React.FC<DashboardProps> = ({
       {/* HEADER SECTION (App View) */}
       <div className="flex flex-col gap-6" data-html2canvas-ignore>
         <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
-            <div>
-                <h1 className="text-3xl font-extrabold text-slate-700 tracking-tight flex items-center gap-3">貓咪指揮中心<span className="text-sm bg-amber-100 text-amber-600 px-3 py-1 rounded-full font-bold">Pawket AI</span></h1>
-                <p className="text-slate-400 text-sm font-medium mt-1 ml-1">讓每一分錢都變成可愛的形狀 ✨</p>
+            <div className="flex flex-col items-center text-center md:items-start md:text-left">
+                <h1 className="text-3xl font-extrabold text-slate-700 tracking-tight flex items-center justify-center md:justify-start gap-3">貓咪指揮中心<span className="text-sm bg-amber-100 text-amber-600 px-3 py-1 rounded-full font-bold">Pawket AI</span></h1>
+                <p className="text-slate-400 text-sm font-medium mt-1 md:ml-1">讓每一分錢都變成可愛的形狀 ✨</p>
             </div>
             <button onClick={() => setShowExportModal(true)} disabled={isExporting} className={`flex items-center gap-2 px-6 py-3 bg-white border border-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-amber-50 hover:text-amber-600 hover:border-amber-100 transition shadow-sm active:scale-95 ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`}>
                 {isExporting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
@@ -380,7 +380,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
 
         <div className="flex flex-col md:flex-row md:items-stretch md:justify-between gap-3">
-        <div className="bg-white p-2 rounded-[24px] shadow-sm border border-orange-50 inline-flex flex-col md:flex-row gap-2 md:gap-0 w-full md:w-fit self-start items-center">
+        <div className="order-2 md:order-1 bg-white p-2 rounded-[24px] shadow-sm border border-orange-50 inline-flex flex-col md:flex-row gap-2 md:gap-0 w-full md:w-fit self-start items-center">
             <div className="flex bg-slate-50 p-1.5 rounded-2xl relative">
                 <button onClick={() => setTimeScope('all')} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300 relative z-10 ${timeScope === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>至今累積</button>
                 <button onClick={() => setTimeScope('natural_month')} className={`px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300 relative z-10 ${timeScope === 'natural_month' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}>月度模式</button>
@@ -411,7 +411,9 @@ const Dashboard: React.FC<DashboardProps> = ({
             </div>
         </div>
         {!isBalancesExpanded && (
-          <AccountBalancesCollapsedPill accounts={accounts} allTransactions={allTransactions} onExpand={() => setIsBalancesExpanded(true)} />
+          <div className="order-1 md:order-2">
+            <AccountBalancesCollapsedPill accounts={accounts} allTransactions={allTransactions} onExpand={() => setIsBalancesExpanded(true)} />
+          </div>
         )}
         </div>
 
