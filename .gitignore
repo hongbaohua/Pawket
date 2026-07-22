@@ -35,6 +35,7 @@ data-import/easycard_review.txt
 data-import/ctbc_final_merged.json
 匯入_統整全部.json
 data-import/opening_balance_adjustments.json
+supabase/fix_001_currency_jpy_to_cny.sql
 
 # Vercel CLI 專案連結資訊（本機自動產生，不用進版本控制）
 .vercel
