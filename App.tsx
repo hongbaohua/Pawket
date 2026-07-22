@@ -12,7 +12,7 @@ import CategoryMappingModal from './components/CategoryMappingModal';
 import Auth from './components/Auth';
 import AccountsModal from './components/AccountsModal';
 import TransferModal from './components/TransferModal';
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig } from './types';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag } from './types';
 import { generateTimeWeightedAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -243,13 +243,17 @@ const App: React.FC = () => {
       let result = [...transactions];
       if (searchTerm.trim()) {
           const lowerTerm = searchTerm.toLowerCase();
-          // 原本沒有搜尋 note/品項/代購對象，Ivy找「邵瀞葶」這種只存在specialTag.counterparty
-          // 裡的關鍵字時完全找不到大部分符合的紀錄，看起來像資料不見了，其實只是搜尋範圍漏掉。
+          // 原本沒有搜尋 note/品項/代購對象/代購性質標籤本身，Ivy把「代購」兩個字從商家/
+          // 品項文字移除、改成直接選「代購」性質後，搜尋「代購」完全找不到——因為
+          // specialTag.type本身(proxy_purchase/work_advance)從來沒有被搜尋比對過，
+          // 只搜了counterparty/note這些附加文字。這裡把性質對應的中文標籤也加進搜尋範圍。
+          const specialTagLabel = (tag?: SpecialTag) => tag?.type === 'proxy_purchase' ? '代購' : tag?.type === 'work_advance' ? '工作代墊' : '';
           result = result.filter(t =>
               t.merchant.toLowerCase().includes(lowerTerm) ||
               (t.originalText || '').toLowerCase().includes(lowerTerm) ||
               (t.note || '').toLowerCase().includes(lowerTerm) ||
               (t.items || []).some(it => it.name.toLowerCase().includes(lowerTerm) || (it.note || '').toLowerCase().includes(lowerTerm)) ||
+              specialTagLabel(t.specialTag).includes(searchTerm.trim()) ||
               (t.specialTag?.counterparty || '').toLowerCase().includes(lowerTerm) ||
               (t.specialTag?.note || '').toLowerCase().includes(lowerTerm) ||
               t.category.l1.toLowerCase().includes(lowerTerm) ||
@@ -912,6 +916,8 @@ const App: React.FC = () => {
                                       {item.unitPrice != null && (
                                         <span className="text-slate-400"> ${item.unitPrice}{(item.quantity && item.quantity !== 1) ? `×${item.quantity}` : ''}</span>
                                       )}
+                                      {/* 涉及外幣/折扣的品項，備註(原幣金額/匯率/折扣)直接顯示在這裡，不用點開編輯才看得到 */}
+                                      {item.note && <span className="text-sky-500"> ({item.note})</span>}
                                     </span>
                                   ))}
                                   {hiddenCount > 0 && (

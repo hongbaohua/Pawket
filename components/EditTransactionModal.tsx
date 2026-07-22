@@ -136,8 +136,27 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   // 外幣試算小工具：跟折扣計算同樣的邏輯，使用者只要填「原幣金額」+「匯率」，
   // 自動算出單價(台幣)+寫進備註，不用自己按計算機算完再手動打字進來。
   // 這兩個欄位是暫時的計算輸入，不直接存進 TransactionItem，算出結果後才寫回 unitPrice/note。
-  const [fxExpandedIdx, setFxExpandedIdx] = useState<Set<number>>(new Set());
-  const [fxInputs, setFxInputs] = useState<Record<number, { amount: string; rate: string }>>({});
+  //
+  // 2026-07-23 Ivy反應：填過外幣的品項，重新打開只看到換算後的台幣數字，原幣金額/匯率
+  // 都要點開「這項是外幣」才看得到，備註文字又要另外看，太麻煩。改成：重新打開時只要
+  // 備註格式單純(只有「金額×匯率X」，沒有折扣這種額外文字混在中間)，就自動展開試算欄位
+  // 並把原幣金額/匯率回填好；備註格式比較複雜(例如包含「折」)寧可不猜、維持原樣顯示
+  // 純文字，也不要猜錯值塞回試算欄位造成二次錯誤。
+  const parseSimpleFxNote = (note: string | undefined): { amount: string; rate: string } | null => {
+    if (!note) return null;
+    const m = note.match(/^[^\d]*([\d.]+)\s*[×xX*]\s*匯率\s*([\d.]+)\s*$/);
+    return m ? { amount: m[1], rate: m[2] } : null;
+  };
+  const [fxExpandedIdx, setFxExpandedIdx] = useState<Set<number>>(() => {
+    const initial = new Set<number>();
+    (transaction.items || []).forEach((it, i) => { if (parseSimpleFxNote(it.note)) initial.add(i); });
+    return initial;
+  });
+  const [fxInputs, setFxInputs] = useState<Record<number, { amount: string; rate: string }>>(() => {
+    const initial: Record<number, { amount: string; rate: string }> = {};
+    (transaction.items || []).forEach((it, i) => { const parsed = parseSimpleFxNote(it.note); if (parsed) initial[i] = parsed; });
+    return initial;
+  });
   const toggleFxExpanded = (idx: number) => setFxExpandedIdx(prev => {
     const next = new Set(prev);
     if (next.has(idx)) next.delete(idx); else next.add(idx);
