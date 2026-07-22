@@ -607,8 +607,10 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
 
             {isCategoryExpanded && (
                 <div className="space-y-4 animate-in slide-in-from-top-2">
-                    {/* L1 Tabs */}
-                    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                    {/* L1 Tabs：原本overflow-x-auto+no-scrollbar，手機版4個分類塞不下一行，
+                        又把捲軸藏起來，導致「收入帳戶」完全看不到也不知道要滑——改成
+                        自動換行，全部分類永遠都看得到。 */}
+                    <div className="flex flex-wrap gap-2 pb-1">
                         {Object.values(L1Category).map(cat => (
                             <button
                                 key={cat}

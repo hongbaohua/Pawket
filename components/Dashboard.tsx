@@ -368,15 +368,17 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       {/* HEADER SECTION (App View) */}
       <div className="flex flex-col gap-6" data-html2canvas-ignore>
-        <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
-            <div className="flex flex-col items-center text-center md:items-start md:text-left">
+        <div className="relative flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+            {/* 手機版原本這個按鈕跟桌機版一樣大小、置中排在標題正下方，視覺上太搶眼、
+                位置也很突兀。改成手機版縮小成右上角的小圓形icon按鈕，桌機版維持原樣。 */}
+            <button onClick={() => setShowExportModal(true)} disabled={isExporting} className={`absolute top-0 right-0 md:static p-2.5 md:px-6 md:py-3 flex items-center gap-2 bg-white border border-slate-100 text-slate-600 font-bold rounded-full md:rounded-2xl hover:bg-amber-50 hover:text-amber-600 hover:border-amber-100 transition shadow-sm active:scale-95 ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`} title="匯出 PDF 報告">
+                {isExporting ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Download className="w-4 h-4 md:w-5 md:h-5" />}
+                <span className="hidden md:inline">{isExporting ? '生成中...' : '匯出 PDF 報告'}</span>
+            </button>
+            <div className="flex flex-col items-center text-center md:items-start md:text-left pt-1 md:pt-0 pr-12 md:pr-0">
                 <h1 className="text-3xl font-extrabold text-slate-700 tracking-tight flex items-center justify-center md:justify-start gap-3">貓咪指揮中心<span className="text-sm bg-amber-100 text-amber-600 px-3 py-1 rounded-full font-bold">Pawket AI</span></h1>
                 <p className="text-slate-400 text-sm font-medium mt-1 md:ml-1">讓每一分錢都變成可愛的形狀 ✨</p>
             </div>
-            <button onClick={() => setShowExportModal(true)} disabled={isExporting} className={`flex items-center gap-2 px-6 py-3 bg-white border border-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-amber-50 hover:text-amber-600 hover:border-amber-100 transition shadow-sm active:scale-95 ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                {isExporting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
-                {isExporting ? '生成中...' : '匯出 PDF 報告'}
-            </button>
         </div>
 
         <div className="flex flex-col md:flex-row md:items-stretch md:justify-between gap-3">
