@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, Settings } from 'lucide-react';
+import { ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import Scanner from './components/Scanner';
 import SplitModal from './components/SplitModal';
@@ -198,8 +198,8 @@ const App: React.FC = () => {
   const [isFilterExpanded, setIsFilterExpanded] = useState(false);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement>(null);
-  const [isSidebarMoreOpen, setIsSidebarMoreOpen] = useState(false);
-  const sidebarMoreRef = useRef<HTMLDivElement>(null);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   const [splittingTransaction, setSplittingTransaction] = useState<Transaction | null>(null);
   // 罐罐明細本列表：品項/備註太長會把列高撐得很高，預設收合只顯示前幾個/第一行，點了才展開全部。
@@ -319,7 +319,7 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const click = (e: MouseEvent) => { if (sidebarMoreRef.current && !sidebarMoreRef.current.contains(e.target as Node)) setIsSidebarMoreOpen(false); };
+    const click = (e: MouseEvent) => { if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) setIsUserMenuOpen(false); };
     document.addEventListener('mousedown', click);
     return () => document.removeEventListener('mousedown', click);
   }, []);
@@ -762,18 +762,12 @@ const App: React.FC = () => {
               騰出空間讓手機版也能顯示文字標籤（純icon太難辨識，Ivy反應過）。 */}
           <button onClick={() => setView('transactions')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'transactions' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><List className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'transactions' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">明細本</span></button>
           <button onClick={() => setView('scanner')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'scanner' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><ScanLine className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'scanner' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">餵食帳單</span></button>
-          <div className="relative shrink-0 lg:w-full" ref={sidebarMoreRef}>
-            <button onClick={() => setIsSidebarMoreOpen(v => !v)} className={`w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold border-2 ${isSidebarMoreOpen ? 'bg-slate-50 border-slate-200 text-slate-600' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><Settings className="w-5 h-5 lg:w-6 lg:h-6 shrink-0" /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">更多</span></button>
-            {isSidebarMoreOpen && (
-              <div className="absolute top-full right-0 lg:right-auto lg:left-0 mt-2 lg:mt-1 w-40 bg-white rounded-2xl shadow-xl border border-orange-50 p-2 z-30 animate-in fade-in zoom-in-95 duration-150">
-                <button onClick={() => { setIsWishlistModalOpen(true); setIsSidebarMoreOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-indigo-50 hover:text-indigo-500 rounded-xl transition"><Target className="w-4 h-4" />願望清單</button>
-                <button onClick={() => { setIsAccountsModalOpen(true); setIsSidebarMoreOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-sky-50 hover:text-sky-500 rounded-xl transition"><Wallet className="w-4 h-4" />帳戶管理</button>
-              </div>
-            )}
-          </div>
         </nav>
-        <div className="flex flex-row lg:flex-col items-center shrink-0 lg:px-4 lg:space-y-1 gap-1 lg:gap-0">
-          <div className="flex items-center gap-4 p-2 lg:p-4 rounded-3xl group cursor-pointer" onClick={handleEditNickname} title="編輯暱稱">
+        {/* 用戶名稱/大頭貼是「總設定」入口：願望清單本身在側欄下方已經有常駐的卡片可以點
+            （桌機版），不需要再開一個獨立按鈕；帳戶管理、登出這種比較像系統設定的動作
+            收在這裡，手機版沒有側欄卡片空間，所以這裡也放願望清單當備援入口。 */}
+        <div className="relative shrink-0" ref={userMenuRef}>
+          <div className="flex items-center gap-4 p-2 lg:p-4 rounded-3xl group cursor-pointer" onClick={() => setIsUserMenuOpen(v => !v)} title="總設定">
             <div className="w-8 h-8 lg:w-9 lg:h-9 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center font-bold shrink-0 text-sm lg:text-base">
               {(session?.user.user_metadata?.nickname || session?.user.email || '?').charAt(0).toUpperCase()}
             </div>
@@ -781,12 +775,29 @@ const App: React.FC = () => {
               <p className="text-sm font-bold text-slate-700 truncate">{session?.user.user_metadata?.nickname || '設定暱稱'}</p>
               <p className="text-[11px] text-slate-300 truncate">{session?.user.email}</p>
             </div>
-            <Pencil className="hidden lg:block w-3.5 h-3.5 text-slate-300 group-hover:text-amber-500 opacity-0 group-hover:opacity-100 transition shrink-0" />
           </div>
-          <button onClick={() => supabase.auth.signOut()} className="shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold text-slate-300 hover:bg-rose-50 hover:text-rose-400" title="登出"><LogOut className="w-5 h-5 lg:w-6 lg:h-6" /><span className="hidden lg:block">登出</span></button>
+          {isUserMenuOpen && (
+            <div className="absolute top-full right-0 lg:right-auto lg:left-4 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-orange-50 p-2 z-30 animate-in fade-in zoom-in-95 duration-150">
+              <button onClick={() => { handleEditNickname(); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-amber-50 hover:text-amber-600 rounded-xl transition"><Pencil className="w-4 h-4" />編輯暱稱</button>
+              <button onClick={() => { setIsWishlistModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-indigo-50 hover:text-indigo-500 rounded-xl transition"><Target className="w-4 h-4" />願望清單</button>
+              <button onClick={() => { setIsAccountsModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-sky-50 hover:text-sky-500 rounded-xl transition"><Wallet className="w-4 h-4" />帳戶管理</button>
+              <div className="h-px bg-slate-100 my-1"></div>
+              <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-400 hover:bg-rose-50 hover:text-rose-400 rounded-xl transition"><LogOut className="w-4 h-4" />登出</button>
+            </div>
+          )}
         </div>
         <div className="hidden lg:block p-6 mt-auto">
-           {topWishlistItem && <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-5 rounded-3xl border border-indigo-100 relative overflow-hidden group hover:shadow-md cursor-pointer" onClick={() => setIsWishlistModalOpen(true)}><div className="flex items-center gap-2 text-indigo-500 mb-3"><Target className="w-4 h-4" /><span className="text-xs font-bold uppercase tracking-wider">最優先想買的</span></div><p className="font-bold text-slate-700 truncate">{topWishlistItem.name}</p><p className={`text-xs font-bold mt-2 ${sidebarWishlistMetrics?.canAffordNow ? 'text-emerald-500' : 'text-rose-500'}`}>{sidebarWishlistMetrics?.canAffordNow ? '可動用餘額夠了！' : `還差 $${sidebarWishlistMetrics?.shortfall.toLocaleString()}`}</p></div>}
+           <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-5 rounded-3xl border border-indigo-100 relative overflow-hidden group hover:shadow-md cursor-pointer" onClick={() => setIsWishlistModalOpen(true)}>
+             <div className="flex items-center gap-2 text-indigo-500 mb-3"><Target className="w-4 h-4" /><span className="text-xs font-bold uppercase tracking-wider">最優先想買的</span></div>
+             {topWishlistItem ? (
+               <>
+                 <p className="font-bold text-slate-700 truncate">{topWishlistItem.name}</p>
+                 <p className={`text-xs font-bold mt-2 ${sidebarWishlistMetrics?.canAffordNow ? 'text-emerald-500' : 'text-rose-500'}`}>{sidebarWishlistMetrics?.canAffordNow ? '可動用餘額夠了！' : `還差 $${sidebarWishlistMetrics?.shortfall.toLocaleString()}`}</p>
+               </>
+             ) : (
+               <p className="text-sm font-bold text-indigo-300">還沒有想買的東西，點這裡設定願望清單</p>
+             )}
+           </div>
         </div>
       </aside>
       <main className="flex-1 min-w-0 mt-16 lg:mt-0 lg:ml-80 p-4 lg:p-10 transition-all">
