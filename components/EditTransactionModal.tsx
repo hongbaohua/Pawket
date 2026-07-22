@@ -1,7 +1,66 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account, Discount, SpecialTag, TransactionItem } from '../types';
-import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard } from 'lucide-react';
+import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard, Calculator } from 'lucide-react';
+
+// 2026-07-22 Ivy反應金額欄位太死板：原價/折扣/代購費/匯率/進位規則每家代購都不一樣，
+// 原本用Excel試算表可以直接打公式，現在被拆成好幾個獨立欄位反而更亂。
+// 讓金額欄位可以直接打算式(例如 280*0.93*0.85+50、ceil(280*0.93))，
+// 失焦時自動算成數字，不用把每個計算因素都拆成單獨欄位——想怎麼算都可以，跟Excel一樣。
+const evalMathExpression = (expr: string): number | null => {
+  const trimmed = expr.trim();
+  if (!trimmed) return null;
+  let jsExpr = trimmed;
+  ['round', 'ceil', 'floor'].forEach(fn => {
+    jsExpr = jsExpr.replace(new RegExp(`\\b${fn}\\s*\\(`, 'g'), `Math.${fn}(`);
+  });
+  // 白名單檢查：把允許的Math.xxx函式名拿掉之後，剩下的字元只能是數字/運算子/括號/逗號，
+  // 防止使用者(或萬一被塞入的內容)夾帶任意程式碼。
+  const stripped = jsExpr.replace(/Math\.(round|ceil|floor)/g, '');
+  if (!/^[0-9+\-*/().,\s]+$/.test(stripped)) return null;
+  try {
+    // eslint-disable-next-line no-new-func
+    const result = Function(`"use strict"; return (${jsExpr});`)();
+    return typeof result === 'number' && isFinite(result) ? result : null;
+  } catch {
+    return null;
+  }
+};
+
+// 金額輸入框：平常顯示/儲存都是數字，但輸入中允許暫時打算式文字，失焦才計算成數字。
+// 算式看不懂/算不出來就還原成上一個有效數字，不會讓表單卡在一個奇怪的字串狀態。
+const CalcInput = React.forwardRef<HTMLInputElement, {
+  value: number | undefined;
+  onCommit: (n: number) => void;
+  className?: string;
+  placeholder?: string;
+  readOnly?: boolean;
+}>(({ value, onCommit, className, placeholder, readOnly }, ref) => {
+  const [draft, setDraft] = useState(value != null ? String(value) : '');
+  useEffect(() => { setDraft(value != null ? String(value) : ''); }, [value]);
+  return (
+    <input
+      ref={ref}
+      type="text"
+      inputMode="decimal"
+      readOnly={readOnly}
+      value={draft}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={() => {
+        const result = evalMathExpression(draft);
+        if (result != null) {
+          const rounded = Math.round(result * 100) / 100;
+          onCommit(rounded);
+          setDraft(String(rounded));
+        } else {
+          setDraft(value != null ? String(value) : '');
+        }
+      }}
+      className={className}
+      placeholder={placeholder}
+    />
+  );
+});
 
 interface EditTransactionModalProps {
   transaction: Transaction;
@@ -410,14 +469,13 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
              </div>
              <div className="flex-1 space-y-2">
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 ml-1">
-                   實付金額
+                   實付金額 <Calculator className="w-3 h-3 text-slate-300" title="可以直接打算式，例如 280*0.93+50" />
                 </label>
-                <input
+                <CalcInput
                    ref={amountRef}
-                   type="number"
                    readOnly={showBreakdown}
                    value={amount}
-                   onChange={e => setAmount(parseFloat(e.target.value))}
+                   onCommit={n => setAmount(n)}
                    className={`w-full p-4 border rounded-2xl font-bold transition outline-none shadow-sm ${showBreakdown ? 'bg-slate-50 text-slate-500' : 'bg-white text-slate-700'} ${errors.amount ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200 focus:border-amber-300 focus:ring-4 focus:ring-amber-50'}`}
                 />
              </div>
@@ -439,11 +497,10 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
             {showBreakdown && (
               <div className="mt-3 p-4 bg-white rounded-2xl border border-slate-100 space-y-3 animate-in slide-in-from-top-2">
                 <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">原始金額（折扣前）</label>
-                  <input
-                    type="number"
+                  <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">原始金額（折扣前，可以直接打算式）</label>
+                  <CalcInput
                     value={grossAmount}
-                    onChange={e => setGrossAmount(parseFloat(e.target.value) || 0)}
+                    onCommit={n => setGrossAmount(n)}
                     className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:border-amber-300"
                   />
                 </div>
@@ -458,10 +515,9 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                         placeholder="例如：LINE POINT"
                         className="flex-1 p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-amber-300"
                       />
-                      <input
-                        type="number"
-                        value={d.amount || ''}
-                        onChange={e => updateDiscountRow(idx, 'amount', e.target.value)}
+                      <CalcInput
+                        value={d.amount}
+                        onCommit={n => updateDiscountRow(idx, 'amount', String(n))}
                         placeholder="0"
                         className="w-24 p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-amber-300"
                       />
@@ -527,12 +583,12 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                       <div className="pt-2 border-t border-slate-100 animate-in slide-in-from-top-1 space-y-2">
                         <div className="grid grid-cols-3 gap-2">
                           <div>
-                            <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">單價(台幣)</label>
-                            <input type="number" value={it.unitPrice ?? ''} onChange={(e) => updateItemField(idx, 'unitPrice', e.target.value)} className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
+                            <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">單價(台幣，可打算式)</label>
+                            <CalcInput value={it.unitPrice} onCommit={n => updateItemField(idx, 'unitPrice', String(n))} className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
                           </div>
                           <div>
                             <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">數量</label>
-                            <input type="number" value={it.quantity ?? ''} onChange={(e) => updateItemField(idx, 'quantity', e.target.value)} placeholder="1" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
+                            <CalcInput value={it.quantity} onCommit={n => updateItemField(idx, 'quantity', String(n))} placeholder="1" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
                           </div>
                           <div>
                             <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">備註</label>
