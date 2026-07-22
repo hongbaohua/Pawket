@@ -18,7 +18,7 @@ import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 import {
   seedDefaultAccountsIfEmpty, fetchTransactions, createAccount, updateAccount, archiveAccount,
   upsertTransaction, upsertTransactions, deleteTransaction as dbDeleteTransaction, deleteTransactionsByParentId,
-  deleteAllTransactions
+  deleteAllTransactions, fetchWishlistItems, upsertWishlistItems, deleteWishlistItem as dbDeleteWishlistItem
 } from './lib/db';
 import type { Session } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
@@ -91,13 +91,15 @@ const App: React.FC = () => {
     (async () => {
       setDataLoading(true);
       try {
-        const [accs, txs] = await Promise.all([
+        const [accs, txs, wishlist] = await Promise.all([
           seedDefaultAccountsIfEmpty(userId),
           fetchTransactions(),
+          fetchWishlistItems(),
         ]);
         if (!cancelled) {
           setAccounts(accs);
           setTransactions(txs);
+          setWishlistItems(wishlist);
         }
       } catch (err) {
         console.error('載入資料失敗', err);
@@ -146,6 +148,22 @@ const App: React.FC = () => {
   const handleUpdateWishlistSettings = async (settings: WishlistSettings) => {
       const { error } = await supabase.auth.updateUser({ data: { wishlistDailyBuffer: settings.dailyBuffer, wishlistEmergencyFund: settings.emergencyFund } });
       if (error) { console.error('更新願望清單安全水位失敗', error); alert('儲存失敗，請檢查主控台錯誤訊息。'); }
+  };
+
+  // 願望清單的新增/編輯/刪除/排序全部都是透過整份陣列替換（見 WishlistModal），
+  // 所以同步邏輯統一放在這裡：先比對舊清單找出被刪掉的id單獨刪除，剩下的整份用陣列順序
+  // 重新 upsert sort_order。畫面先樂觀更新，資料庫失敗才跳出來，不要讓她以為存好了其實沒存到。
+  const handleUpdateWishlistItems = async (newItems: WishlistItem[]) => {
+      const removedIds = wishlistItems.filter(old => !newItems.some(n => n.id === old.id)).map(i => i.id);
+      setWishlistItems(newItems);
+      if (!userId) return;
+      try {
+          for (const id of removedIds) await dbDeleteWishlistItem(id);
+          await upsertWishlistItems(userId, newItems);
+      } catch (err) {
+          console.error('願望清單儲存失敗', err);
+          alert(`願望清單儲存失敗！畫面上的變更可能沒有存進資料庫。\n\n${formatSupabaseError(err)}`);
+      }
   };
 
   const topWishlistItem = useMemo(() => {
@@ -603,7 +621,7 @@ const App: React.FC = () => {
             const json = JSON.parse(event.target?.result as string);
             let importedTransactions = json.transactions || (Array.isArray(json) ? json : []);
             let importedWishlistItems = json.wishlistItems || [];
-            if (importedWishlistItems.length > 0) setWishlistItems(prev => { const merged = [...prev]; importedWishlistItems.forEach((g: WishlistItem) => { const idx = merged.findIndex(mg => mg.id === g.id); if (idx >= 0) merged[idx] = g; else merged.push(g); }); return merged; });
+            if (importedWishlistItems.length > 0) { const merged = [...wishlistItems]; importedWishlistItems.forEach((g: WishlistItem) => { const idx = merged.findIndex(mg => mg.id === g.id); if (idx >= 0) merged[idx] = g; else merged.push(g); }); handleUpdateWishlistItems(merged); }
             if (importedTransactions.length > 0) {
                 const conflictsMap: Record<string, any> = {};
                 importedTransactions.forEach(t => { if (!Object.values(L1Category).includes(t.category.l1) || !STANDARD_CATEGORIES[t.category.l1]?.includes(t.category.l2)) { const key = `${t.category.l1}::${t.category.l2}`; if (!conflictsMap[key]) conflictsMap[key] = { key, originalL1: t.category.l1, originalL2: t.category.l2, count: 0 }; conflictsMap[key].count++; } });
@@ -657,21 +675,24 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#FFFBF5] text-slate-600 font-sans flex selection:bg-amber-100 selection:text-amber-800 relative">
-      <aside className="w-20 lg:w-72 bg-white flex flex-col fixed h-full z-20 no-print transition-all shadow-[8px_0_30px_rgba(0,0,0,0.02)] rounded-r-[40px] my-0 lg:my-4 lg:ml-4 lg:h-[calc(100vh-32px)] border-r border-orange-50">
-        <div className="p-8 flex items-center gap-3">
-           <div className="w-12 h-12 bg-gradient-to-br from-amber-300 to-orange-400 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-100 text-white transform rotate-[-5deg] hover:rotate-0 transition-all duration-300"><Cat className="w-7 h-7" /></div>
+      {/* 手機版(< lg)是頂欄：logo+icon導覽橫向排一列，固定在頂端、不佔滿全螢幕高度；
+          桌機版(lg+)維持原本左側直向側欄，兩者共用同一個element，靠 flex-row/flex-col
+          切換方向，不寫兩份重複的JSX。 */}
+      <aside className="w-full h-16 lg:w-72 lg:h-auto bg-white flex flex-row lg:flex-col items-center lg:items-stretch fixed top-0 inset-x-0 lg:inset-x-auto lg:left-0 z-20 no-print transition-all shadow-[0_4px_20px_rgba(0,0,0,0.04)] lg:shadow-[8px_0_30px_rgba(0,0,0,0.02)] rounded-b-[24px] lg:rounded-b-none lg:rounded-r-[40px] lg:my-4 lg:ml-4 lg:h-[calc(100vh-32px)] border-b lg:border-b-0 lg:border-r border-orange-50 px-3 lg:px-0 gap-1 lg:gap-0">
+        <div className="p-1 lg:p-8 flex items-center gap-3 shrink-0">
+           <div className="w-9 h-9 lg:w-12 lg:h-12 bg-gradient-to-br from-amber-300 to-orange-400 rounded-xl lg:rounded-2xl flex items-center justify-center shadow-lg shadow-orange-100 text-white transform rotate-[-5deg] hover:rotate-0 transition-all duration-300"><Cat className="w-5 h-5 lg:w-7 lg:h-7" /></div>
            <span className="font-extrabold text-2xl tracking-tight text-slate-700 hidden lg:block">Paw<span className="text-amber-500">ket</span></span>
         </div>
-        <nav className="flex-1 py-6 space-y-4 px-4">
-          <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'dashboard' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><LayoutDashboard className={`w-6 h-6 ${view === 'dashboard' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">貓咪指揮中心</span></button>
-          <button onClick={() => setView('scanner')} className={`w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'scanner' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><ScanLine className={`w-6 h-6 ${view === 'scanner' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">餵食帳單 (Scan)</span></button>
-          <button onClick={() => setView('transactions')} className={`w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'transactions' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><List className={`w-6 h-6 ${view === 'transactions' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">罐罐明細本</span></button>
-          <button onClick={() => setIsWishlistModalOpen(true)} className="w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-indigo-50 hover:text-indigo-500"><Target className="w-6 h-6" /><span className="hidden lg:block">願望清單</span></button>
-          <button onClick={() => setIsAccountsModalOpen(true)} className="w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-sky-50 hover:text-sky-500"><Wallet className="w-6 h-6" /><span className="hidden lg:block">帳戶管理</span></button>
+        <nav className="flex flex-row lg:flex-col flex-1 lg:py-6 gap-1 lg:gap-4 lg:space-y-0 px-1 lg:px-4 overflow-x-auto lg:overflow-visible">
+          <button onClick={() => setView('dashboard')} className={`shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'dashboard' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><LayoutDashboard className={`w-5 h-5 lg:w-6 lg:h-6 ${view === 'dashboard' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">貓咪指揮中心</span></button>
+          <button onClick={() => setView('scanner')} className={`shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'scanner' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><ScanLine className={`w-5 h-5 lg:w-6 lg:h-6 ${view === 'scanner' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">餵食帳單 (Scan)</span></button>
+          <button onClick={() => setView('transactions')} className={`shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'transactions' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><List className={`w-5 h-5 lg:w-6 lg:h-6 ${view === 'transactions' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="hidden lg:block">罐罐明細本</span></button>
+          <button onClick={() => setIsWishlistModalOpen(true)} className="shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-indigo-50 hover:text-indigo-500"><Target className="w-5 h-5 lg:w-6 lg:h-6" /><span className="hidden lg:block">願望清單</span></button>
+          <button onClick={() => setIsAccountsModalOpen(true)} className="shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 border-transparent text-slate-400 hover:bg-sky-50 hover:text-sky-500"><Wallet className="w-5 h-5 lg:w-6 lg:h-6" /><span className="hidden lg:block">帳戶管理</span></button>
         </nav>
-        <div className="px-4 space-y-1">
-          <div className="w-full flex items-center gap-4 p-4 rounded-3xl group">
-            <div className="w-9 h-9 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center font-bold shrink-0">
+        <div className="flex flex-row lg:flex-col items-center shrink-0 lg:px-4 lg:space-y-1 gap-1 lg:gap-0">
+          <div className="flex items-center gap-4 p-2 lg:p-4 rounded-3xl group">
+            <div className="w-8 h-8 lg:w-9 lg:h-9 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center font-bold shrink-0 text-sm lg:text-base">
               {(session?.user.user_metadata?.nickname || session?.user.email || '?').charAt(0).toUpperCase()}
             </div>
             <div className="hidden lg:block flex-1 min-w-0">
@@ -680,13 +701,13 @@ const App: React.FC = () => {
             </div>
             <button onClick={handleEditNickname} className="hidden lg:block p-1.5 text-slate-300 hover:text-amber-500 opacity-0 group-hover:opacity-100 transition shrink-0" title="編輯暱稱"><Pencil className="w-3.5 h-3.5" /></button>
           </div>
-          <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-4 p-4 rounded-3xl transition-all duration-300 font-bold text-slate-300 hover:bg-rose-50 hover:text-rose-400"><LogOut className="w-6 h-6" /><span className="hidden lg:block">登出</span></button>
+          <button onClick={() => supabase.auth.signOut()} className="shrink-0 lg:w-full flex items-center gap-4 p-2.5 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold text-slate-300 hover:bg-rose-50 hover:text-rose-400" title="登出"><LogOut className="w-5 h-5 lg:w-6 lg:h-6" /><span className="hidden lg:block">登出</span></button>
         </div>
-        <div className="p-6 mt-auto">
-           {topWishlistItem && <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-5 rounded-3xl border border-indigo-100 hidden lg:block relative overflow-hidden group hover:shadow-md cursor-pointer" onClick={() => setIsWishlistModalOpen(true)}><div className="flex items-center gap-2 text-indigo-500 mb-3"><Target className="w-4 h-4" /><span className="text-xs font-bold uppercase tracking-wider">最優先想買的</span></div><p className="font-bold text-slate-700 truncate">{topWishlistItem.name}</p><p className={`text-xs font-bold mt-2 ${sidebarWishlistMetrics?.canAffordNow ? 'text-emerald-500' : 'text-rose-500'}`}>{sidebarWishlistMetrics?.canAffordNow ? '可動用餘額夠了！' : `還差 $${sidebarWishlistMetrics?.shortfall.toLocaleString()}`}</p></div>}
+        <div className="hidden lg:block p-6 mt-auto">
+           {topWishlistItem && <div className="bg-gradient-to-br from-indigo-50 to-purple-50 p-5 rounded-3xl border border-indigo-100 relative overflow-hidden group hover:shadow-md cursor-pointer" onClick={() => setIsWishlistModalOpen(true)}><div className="flex items-center gap-2 text-indigo-500 mb-3"><Target className="w-4 h-4" /><span className="text-xs font-bold uppercase tracking-wider">最優先想買的</span></div><p className="font-bold text-slate-700 truncate">{topWishlistItem.name}</p><p className={`text-xs font-bold mt-2 ${sidebarWishlistMetrics?.canAffordNow ? 'text-emerald-500' : 'text-rose-500'}`}>{sidebarWishlistMetrics?.canAffordNow ? '可動用餘額夠了！' : `還差 $${sidebarWishlistMetrics?.shortfall.toLocaleString()}`}</p></div>}
         </div>
       </aside>
-      <main className="flex-1 ml-20 lg:ml-80 p-6 lg:p-10 transition-all">
+      <main className="flex-1 mt-16 lg:mt-0 lg:ml-80 p-4 lg:p-10 transition-all">
         {view === 'dashboard' && <Dashboard
             alerts={alerts} budgets={budgets} transactions={filteredTransactions} allTransactions={transactions} wishlistItems={wishlistItems} wishlistSettings={wishlistSettings} onOpenWishlist={() => setIsWishlistModalOpen(true)} onPrint={handlePrint}
             timeScope={timeScope} setTimeScope={setTimeScope} cycleStartDay={cycleStartDay} setCycleStartDay={setCycleStartDay} dateRangeLabel={dateRange.label}
@@ -904,7 +925,7 @@ const App: React.FC = () => {
       {transferModalState.open && <TransferModal accounts={accounts} transaction={transferModalState.transaction} onClose={() => setTransferModalState({ open: false })} onSave={handleTransferSave} />}
       {isAccountsModalOpen && <AccountsModal accounts={accounts} onClose={() => setIsAccountsModalOpen(false)} onSave={handleSaveAccount} onArchive={handleArchiveAccount} />}
       {batchSource && <BatchCorrectionModal matches={batchCandidates} source={batchSource} onConfirm={handleBatchConfirm} onClose={() => { setBatchSource(null); setBatchCandidates([]); }} />}
-      {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} settings={wishlistSettings} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={setWishlistItems} onUpdateSettings={handleUpdateWishlistSettings} />}
+      {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} settings={wishlistSettings} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={handleUpdateWishlistItems} onUpdateSettings={handleUpdateWishlistSettings} />}
       {isMappingModalOpen && <CategoryMappingModal conflicts={conflictCategories} existingCustomOptions={customCategoryHistory} onConfirm={handleMappingConfirm} onCancel={() => { setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]); }} />}
       
       {(lastDeletedTransaction || lastCanceledSplit) && (

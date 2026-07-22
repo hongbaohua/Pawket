@@ -36,6 +36,9 @@ create table if not exists transactions (
   original_text text,                    -- OCR或匯入時的原始文字，供稽核用
   gross_amount numeric not null default 0,  -- 原始金額（折扣前）
   discounts jsonb not null default '[]',    -- 折扣明細陣列 [{type,label,amount}]
+  items jsonb not null default '[]',        -- 結構化品項清單 [{name,unitPrice?,quantity?,note?}]
+  special_tag jsonb,                        -- 代購/工作代墊輕量標記 {type,counterparty,note?}
+  payment_channel text,                     -- 同一帳戶底下的實際付款通道（選填），例如 VISA/方便付/LINE Pay
   net_amount numeric not null default 0,    -- 實付金額 = gross_amount - Σdiscounts
   type text not null check (type in ('income', 'expense', 'transfer')),
   from_account_id uuid references accounts(id),  -- 僅 type='transfer' 使用
@@ -63,16 +66,19 @@ create table if not exists merchant_aliases (
   created_at timestamptz not null default now()
 );
 
--- ── 4. 夢想目標 ──
-create table if not exists savings_goals (
+-- ── 4. 願望清單 ──
+-- 不是「存錢進度」：這個App本質是記帳，錢就是帳戶餘額本身，沒有另外撥一筆去「存」。
+-- 願望清單只是「排隊克制自己不要花掉」的優先順序清單，可動用餘額扣掉排在前面還沒買的項目才知道
+-- 排後面的項目還差多少——沒有 initial_amount/start_date 這種「存了多少進度」的欄位。
+create table if not exists wishlist_items (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   target_amount numeric not null,
-  start_date date not null,
-  target_date date not null,
-  initial_amount numeric not null default 0,
-  is_primary boolean not null default false,
+  target_date date,                      -- 選填：有填＝這天前要準備好；沒填＝錢夠了才買，不趕時間
+  is_purchased boolean not null default false,
+  purchased_date date,
+  sort_order int not null default 0,     -- 優先順序＝排列順序（上移/下移調整），不是額外的權重數字
   created_at timestamptz not null default now()
 );
 
@@ -103,7 +109,7 @@ create table if not exists shared_expense_participants (
 alter table accounts enable row level security;
 alter table transactions enable row level security;
 alter table merchant_aliases enable row level security;
-alter table savings_goals enable row level security;
+alter table wishlist_items enable row level security;
 alter table shared_expenses enable row level security;
 alter table shared_expense_participants enable row level security;
 
@@ -116,7 +122,7 @@ create policy "只能存取自己的交易" on transactions
 create policy "只能存取自己的商家別名" on merchant_aliases
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
-create policy "只能存取自己的夢想目標" on savings_goals
+create policy "只能存取自己的願望清單" on wishlist_items
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 create policy "只能存取自己的分帳紀錄" on shared_expenses
@@ -136,3 +142,4 @@ create policy "只能存取自己分帳紀錄底下的分帳對象" on shared_ex
 create index if not exists idx_transactions_user_date on transactions(user_id, date desc);
 create index if not exists idx_transactions_account on transactions(account_id);
 create index if not exists idx_accounts_user on accounts(user_id);
+create index if not exists idx_wishlist_items_user_order on wishlist_items(user_id, sort_order);

@@ -3,7 +3,7 @@
 // 轉成資料表用的欄位格式（snake_case、攤平），反之亦然。
 
 import { supabase } from './supabaseClient';
-import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag } from '../types';
+import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag, WishlistItem } from '../types';
 
 // ── 帳戶 ──
 
@@ -204,5 +204,57 @@ export const deleteTransactionsByParentId = async (parentId: string): Promise<vo
 // 「清除所有紀錄」用：只刪這個使用者的 transactions，不動 accounts 表。
 export const deleteAllTransactions = async (userId: string): Promise<void> => {
   const { error } = await supabase.from('transactions').delete().eq('user_id', userId);
+  if (error) throw error;
+};
+
+// ── 願望清單 ──
+
+interface WishlistItemRow {
+  id: string;
+  name: string;
+  target_amount: number;
+  target_date: string | null;
+  is_purchased: boolean;
+  purchased_date: string | null;
+  sort_order: number;
+}
+
+const rowToWishlistItem = (row: WishlistItemRow): WishlistItem => ({
+  id: row.id,
+  name: row.name,
+  targetAmount: Number(row.target_amount),
+  targetDate: row.target_date || undefined,
+  isPurchased: row.is_purchased,
+  purchasedDate: row.purchased_date || undefined,
+});
+
+// 優先順序＝清單排列順序，存進 sort_order 欄位，讀出來時依它排序還原順序。
+const wishlistItemToRow = (userId: string, item: WishlistItem, sortOrder: number) => ({
+  id: item.id,
+  user_id: userId,
+  name: item.name,
+  target_amount: item.targetAmount,
+  target_date: item.targetDate || null,
+  is_purchased: item.isPurchased ?? false,
+  purchased_date: item.purchasedDate || null,
+  sort_order: sortOrder,
+});
+
+export const fetchWishlistItems = async (): Promise<WishlistItem[]> => {
+  const { data, error } = await supabase.from('wishlist_items').select('*').order('sort_order', { ascending: true });
+  if (error) throw error;
+  return (data as WishlistItemRow[]).map(rowToWishlistItem);
+};
+
+// 整份清單一起 upsert：排列順序本身就是要存的資料，一律連同 index 一起重新寫入 sort_order。
+export const upsertWishlistItems = async (userId: string, items: WishlistItem[]): Promise<void> => {
+  if (items.length === 0) return;
+  const rows = items.map((item, index) => wishlistItemToRow(userId, item, index));
+  const { error } = await supabase.from('wishlist_items').upsert(rows);
+  if (error) throw error;
+};
+
+export const deleteWishlistItem = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('wishlist_items').delete().eq('id', id);
   if (error) throw error;
 };
