@@ -128,13 +128,38 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     return Array.from(names).filter(name => name !== transaction.merchant).sort();
   }, [allTransactions, transaction.merchant]);
 
-  // 同一個帳戶底下用過的付款通道（VISA/方便付/LINE Pay這類），只列同帳戶的，跟別的帳戶混在一起沒意義
+  // 2026-07-22 Ivy要求把填寫順序倒過來：先選付款通道(VISA/LINE Pay/方便付這種)，
+  // 帳戶自動帶出來，使用者要改銀行帳戶才手動改——因為通道比帳戶更好記/更直覺
+  // （同一張卡的通道大多只會對到同一個帳戶）。建議清單改列「全部」通道
+  // (不只同帳戶的)，因為這時候可能還沒選帳戶。
   const paymentChannelSuggestions = useMemo(() => {
-    const channels = new Set(
-      allTransactions.filter(t => t.accountId === accountId && t.paymentChannel).map(t => t.paymentChannel!)
-    );
+    const channels = new Set(allTransactions.filter(t => t.paymentChannel).map(t => t.paymentChannel!));
     return Array.from(channels).sort();
-  }, [allTransactions, accountId]);
+  }, [allTransactions]);
+
+  // 每個付款通道歷史上最常對應到哪個帳戶（多數決），選了通道就自動帶出對應帳戶。
+  const channelToAccountId = useMemo(() => {
+    const counts: Record<string, Record<string, number>> = {};
+    allTransactions.forEach(t => {
+      if (!t.paymentChannel || !t.accountId) return;
+      if (!counts[t.paymentChannel]) counts[t.paymentChannel] = {};
+      counts[t.paymentChannel][t.accountId] = (counts[t.paymentChannel][t.accountId] || 0) + 1;
+    });
+    const result: Record<string, string> = {};
+    Object.entries(counts).forEach(([channel, accountCounts]) => {
+      const [bestAccountId] = Object.entries(accountCounts).sort((a, b) => b[1] - a[1])[0];
+      result[channel] = bestAccountId;
+    });
+    return result;
+  }, [allTransactions]);
+
+  const handlePaymentChannelChange = (value: string) => {
+    setPaymentChannel(value);
+    const knownAccountId = channelToAccountId[value];
+    if (knownAccountId && accounts.some(a => a.id === knownAccountId && !a.isArchived)) {
+      setAccountId(knownAccountId);
+    }
+  };
 
   // Generate L3 suggestions based on selected L2
   const l3Suggestions = useMemo(() => {
@@ -323,9 +348,36 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                 </button>
               </div>
 
-              {/* Account Selector：取代舊的「金融卡/帳戶 vs 現金」二選一 */}
+              {/* 2026-07-22 Ivy要求順序倒過來：先填付款通道，帳戶自動帶出來（通道比帳戶
+                  更好記，同一張卡的通道大多只對應同一個帳戶），使用者要改銀行帳戶再手動改。 */}
               {accounts.length > 0 && (
                 <div className="flex gap-2">
+                  <div className="flex-1 flex flex-col gap-1.5">
+                    <div className="relative">
+                      <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={paymentChannel}
+                        onChange={e => handlePaymentChannelChange(e.target.value)}
+                        placeholder="付款通道(選填，如VISA)"
+                        className="w-full pl-9 pr-3 py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-100 text-slate-600 outline-none focus:border-amber-300 placeholder:font-normal placeholder:text-slate-300"
+                      />
+                    </div>
+                    {paymentChannelSuggestions.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {paymentChannelSuggestions.map(c => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => handlePaymentChannelChange(paymentChannel === c ? '' : c)}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${paymentChannel === c ? 'bg-amber-400 text-white' : 'bg-slate-100 text-slate-500 hover:bg-amber-50 hover:text-amber-600'}`}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div className="relative flex-1">
                     <Wallet className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 pointer-events-none" />
                     <select
@@ -337,32 +389,6 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                         <option key={a.id} value={a.id}>{a.name}</option>
                       ))}
                     </select>
-                  </div>
-                  <div className="flex-1 flex flex-col gap-1.5">
-                    <div className="relative">
-                      <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-300 pointer-events-none" />
-                      <input
-                        type="text"
-                        value={paymentChannel}
-                        onChange={e => setPaymentChannel(e.target.value)}
-                        placeholder="付款通道(選填，如VISA)"
-                        className="w-full pl-9 pr-3 py-2.5 rounded-xl text-xs font-bold bg-white border border-slate-100 text-slate-600 outline-none focus:border-amber-300 placeholder:font-normal placeholder:text-slate-300"
-                      />
-                    </div>
-                    {paymentChannelSuggestions.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {paymentChannelSuggestions.map(c => (
-                          <button
-                            key={c}
-                            type="button"
-                            onClick={() => setPaymentChannel(prev => prev === c ? '' : c)}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition ${paymentChannel === c ? 'bg-amber-400 text-white' : 'bg-slate-100 text-slate-500 hover:bg-amber-50 hover:text-amber-600'}`}
-                          >
-                            {c}
-                          </button>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
