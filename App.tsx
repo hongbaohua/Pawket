@@ -420,13 +420,18 @@ const App: React.FC = () => {
     }
   };
 
-  const handleEditSave = (updatedTx: Transaction) => {
+  const handleEditSave = (updatedTx: Transaction, options?: { openSplitAfter?: boolean }) => {
     setTransactions(prev => prev.some(t => t.id === updatedTx.id) ? prev.map(t => t.id === updatedTx.id ? updatedTx : t) : [updatedTx, ...prev]);
     setEditingTransaction(null);
-    const candidates = findSimilarTransactions(updatedTx, transactions);
-    if (candidates.length > 0) {
-        setBatchSource(updatedTx);
-        setBatchCandidates(candidates);
+    // 新增流程第3步問過「要不要分裝拆帳」，選是的話存檔後直接接著開分裝盤，不用存完再回去找按鈕點。
+    if (options?.openSplitAfter) {
+        setSplittingTransaction(updatedTx);
+    } else {
+        const candidates = findSimilarTransactions(updatedTx, transactions);
+        if (candidates.length > 0) {
+            setBatchSource(updatedTx);
+            setBatchCandidates(candidates);
+        }
     }
     if (userId) upsertTransaction(userId, updatedTx).catch(err => console.error('儲存交易失敗', err));
   };
