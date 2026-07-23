@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { AlertCircle, TrendingUp, Download, Sparkles, TrendingDown, DollarSign, Cat, Smile, Frown, Meh, ArrowRight, PawPrint, Calendar, Settings, X, Check, PiggyBank, ChevronLeft, ChevronRight, ChevronDown, Activity, Zap, Percent, BarChart3, AlertTriangle, Info, ArrowDownRight, ArrowUpRight, Fish, PieChart as PieIcon, Search, Repeat, MousePointer2, Wallet, Target, Rocket, Gavel, Scale, AlertOctagon, Hourglass, Landmark, BrainCircuit, Lightbulb, PartyPopper, Disc, Star, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, TrendingUp, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper } from 'lucide-react';
 import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange } from '../types';
 import { addMonths, format, startOfMonth, endOfMonth, startOfDay, endOfDay, isValid, parseISO } from 'date-fns';
-import { analyzeFinancialHealth, calculateOpportunityCost, getSeasonalTrends, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, calculateWishlistMetrics, WishlistItemMetrics, calculateProjectedPenalty, calculateRunway, calculateTaxEstimation, getDateRange } from '../services/logicService';
+import { analyzeFinancialHealth, getSeasonalTrends, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, getCategoryPieData, detectRecurringExpenses, calculateWishlistMetrics, WishlistItemMetrics, calculateProjectedPenalty, calculateRunway, getDateRange } from '../services/logicService';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { DTI_CAUTION_THRESHOLD, DTI_CRITICAL_THRESHOLD, RUNWAY_WARNING_DAYS } from '../config/financialRules';
@@ -101,7 +101,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const totalIncome = incomes.reduce((acc, curr) => acc + curr.amount, 0);
   const netCashFlow = totalIncome - totalExpense;
   const healthMetrics = useMemo(() => analyzeFinancialHealth(transactions), [transactions]);
-  const opportunityCost = useMemo(() => calculateOpportunityCost(healthMetrics.variableAmount), [healthMetrics.variableAmount]);
+  const pieData = useMemo(() => getCategoryPieData(transactions), [transactions]);
+  const recurringExpenses = useMemo(() => detectRecurringExpenses(allTransactions), [allTransactions]);
   const seasonalData = useMemo(() => getSeasonalTrends(allTransactions), [allTransactions]);
   const anomalies = useMemo(() => analyzeL3Anomalies(transactions, allTransactions), [transactions, allTransactions]);
   const freqAlerts = useMemo(() => analyzeL2Frequency(transactions, allTransactions, currentDate), [transactions, allTransactions, currentDate]);
@@ -114,7 +115,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   );
   const penaltyData = useMemo(() => timeScope === 'all' ? { isOverspent: false, overage: 0, penaltyAmount: 0 } : calculateProjectedPenalty(transactions, budgets, penaltyConfig), [transactions, budgets, penaltyConfig, timeScope]);
   const runwayData = useMemo(() => calculateRunway(allTransactions), [allTransactions]);
-  const taxData = useMemo(() => calculateTaxEstimation(allTransactions), [allTransactions]);
 
   const [expandedL2, setExpandedL2] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -447,10 +447,10 @@ const Dashboard: React.FC<DashboardProps> = ({
           </div>
       </div>
 
-      {/* SECTION 1: Mascot & DTI */}
-      <div data-pdf-section className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-transparent">
+      {/* SECTION 1: Mascot（+預算罰則生效時才並排顯示一張卡，DTI已經改名跟支出結構合併搬到下面） */}
+      <div data-pdf-section className={`grid grid-cols-1 gap-6 bg-transparent ${isPenaltyActive ? 'md:grid-cols-3' : ''}`}>
          <MeowneyMascot status={meowneyStatus} />
-         {isPenaltyActive ? (
+         {isPenaltyActive && (
             <div className="rounded-[40px] p-6 border bg-rose-50 border-rose-100 flex flex-col justify-between relative overflow-hidden group">
                  <div className="absolute top-0 right-0 p-4 opacity-5"><Gavel className="w-32 h-32 text-rose-500" /></div>
                  <div className="flex items-start justify-between z-10">
@@ -462,29 +462,52 @@ const Dashboard: React.FC<DashboardProps> = ({
                  </div>
                  <div className="mt-4 pt-4 border-t border-rose-200 z-10"><p className="text-xs font-bold leading-relaxed text-rose-500">警告：下期預算將強制縮減。</p></div>
             </div>
-         ) : (
-            <div className={`rounded-[40px] p-6 border flex flex-col justify-between ${isDtiHigh ? 'bg-rose-50 border-rose-100' : 'bg-white border-slate-100 shadow-sm'}`}>
-                <div className="flex items-start justify-between">
-                   <div>
-                      <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2"><Zap className={`w-4 h-4 ${isDtiHigh ? 'text-rose-500' : 'text-amber-400'}`} />償債比率 (DTI)</h3>
-                      <div className="mt-2 flex items-baseline gap-2"><span className={`text-4xl font-extrabold ${isDtiHigh ? 'text-rose-600' : healthMetrics.dtiRatio > DTI_CAUTION_THRESHOLD ? 'text-amber-500' : 'text-emerald-500'}`}>{healthMetrics.dtiRatio.toFixed(1)}%</span></div>
-                   </div>
-                   {isDtiHigh && <div className="p-2 bg-rose-200 text-rose-600 rounded-full animate-bounce"><AlertTriangle className="w-6 h-6" /></div>}
-                </div>
-                <div className="mt-4 pt-4 border-t border-slate-100/50"><p className={`text-xs font-bold leading-relaxed ${isDtiHigh ? 'text-rose-500' : 'text-slate-400'}`}>{isDtiHigh ? '警告：固定支出佔比過高。' : '信用狀況健康。'}</p></div>
-            </div>
          )}
+      </div>
+
+      {/* SECTION 1.5: 願望清單 + 分類比率圓餅圖（Ivy要求這兩個放最前面） */}
+      <div data-pdf-section className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-6 rounded-[40px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增願望清單</div>}
+          <div className="bg-white p-6 rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 flex flex-col">
+              <h4 className="font-bold text-slate-700 flex items-center gap-2"><PieIcon className="w-5 h-5 text-amber-400" />本期消費分類比率</h4>
+              <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：本期全部支出依次分類(L2)加總；如果某個細項(L3)單獨超過總支出15%會拆成獨立一塊（例如飲料）。</p>
+              {pieData.length === 0 ? (
+                <p className="text-sm text-slate-300 font-medium py-6 text-center flex-1 flex items-center justify-center">這期間還沒有支出紀錄喵～</p>
+              ) : (
+                <div className="flex-1 flex flex-col sm:flex-row items-center gap-4">
+                    <div className="w-full sm:w-1/2 h-48">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                                <Pie data={pieData} dataKey="amount" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
+                                    {pieData.map((_, idx) => <Cell key={idx} fill={COLORS[idx % COLORS.length]} />)}
+                                </Pie>
+                                <Tooltip formatter={(value: number, name: string) => [`$${Math.round(value).toLocaleString()}`, name]} />
+                            </PieChart>
+                        </ResponsiveContainer>
+                    </div>
+                    <div className="w-full sm:w-1/2 space-y-2">
+                        {pieData.slice(0, 6).map((slice, idx) => (
+                            <div key={slice.name} className="flex items-center justify-between gap-2 text-xs">
+                                <span className="flex items-center gap-1.5 font-bold text-slate-600 truncate"><span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[idx % COLORS.length] }}></span>{slice.name}</span>
+                                <span className="text-slate-400 font-mono shrink-0">{slice.percent.toFixed(0)}%</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+              )}
+          </div>
       </div>
 
       {/* SECTION 2: Alerts */}
       {timeScope !== 'all' && alerts.length > 0 && (
           <div data-pdf-section className="bg-white p-6 rounded-[30px] border border-amber-100 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-500 flex items-center gap-2 mb-4 uppercase tracking-wider"><AlertCircle className="w-4 h-4 text-rose-400" />需立即關注的項目</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {alerts.slice(0, 3).map(alert => (
-                    <div key={alert.id} className={`p-4 rounded-2xl border flex items-center gap-3 ${alert.level === 'critical' ? 'bg-rose-50 border-rose-100' : 'bg-amber-50 border-amber-100'}`}>
-                        <div className={`p-2 rounded-full ${alert.level === 'critical' ? 'bg-rose-200 text-rose-600' : 'bg-amber-200 text-amber-600'}`}>{alert.level === 'critical' ? <AlertTriangle className="w-4 h-4" /> : <Info className="w-4 h-4" />}</div>
-                        <div className="flex-1"><p className="font-bold text-slate-700 text-sm">{alert.metric}</p><p className="text-xs text-slate-500 mt-0.5 font-medium line-clamp-1">{alert.message}</p></div>
+            <h3 className="text-sm font-bold text-slate-500 flex items-center gap-2 uppercase tracking-wider"><AlertCircle className="w-4 h-4 text-rose-400" />需立即關注的項目</h3>
+            <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：拿這個次分類過去每個月實際花費的中位數當基準，依本期已過天數算出「到今天應該花多少」，實際花費明顯超過才會列在這裡。</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {alerts.slice(0, 4).map(alert => (
+                    <div key={alert.id} className={`p-4 rounded-2xl border flex items-start gap-3 ${alert.level === 'critical' ? 'bg-rose-50 border-rose-100' : 'bg-amber-50 border-amber-100'}`}>
+                        <div className={`p-2 rounded-full shrink-0 ${alert.level === 'critical' ? 'bg-rose-200 text-rose-600' : 'bg-amber-200 text-amber-600'}`}>{alert.level === 'critical' ? <AlertTriangle className="w-4 h-4" /> : <Info className="w-4 h-4" />}</div>
+                        <div className="flex-1 min-w-0"><p className="font-bold text-slate-700 text-sm">{alert.metric}</p><p className="text-xs text-slate-500 mt-0.5 font-medium leading-relaxed">{alert.message}</p></div>
                     </div>
                 ))}
             </div>
@@ -493,11 +516,19 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       {/* SECTION 3: Financial Structure */}
       <div data-pdf-section>
-          <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-2 mt-4 mb-4"><BarChart3 className="w-6 h-6 text-amber-400" />財務結構分析</h3>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div className="bg-white p-6 rounded-[30px] shadow-xl shadow-orange-50/50 border border-orange-50 flex flex-col justify-between">
-                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-6">支出佔比分配</h4>
-                  <div className="space-y-6">
+          <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-2 mt-4 mb-1"><BarChart3 className="w-6 h-6 text-amber-400" />財務結構分析</h3>
+          <p className="text-[10px] text-slate-300 mb-4">2026-07-23：原本這裡有「潛在財富機會」（純假設性試算，跟實際投資無關）已移除；「償債比率(DTI)」名不符實（沒有貸款資料，實際算的是固定支出佔比），改名後跟下面的佔比長條圖合併成一張卡。</p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className={`p-6 rounded-[30px] shadow-xl shadow-orange-50/50 border flex flex-col justify-between ${isDtiHigh ? 'bg-rose-50 border-rose-100' : 'bg-white border-orange-50'}`}>
+                  <div className="flex items-start justify-between mb-4">
+                      <div>
+                          <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2"><Zap className={`w-4 h-4 ${isDtiHigh ? 'text-rose-500' : 'text-amber-400'}`} />固定支出負擔比 + 支出結構</h4>
+                          <p className="text-[10px] text-slate-300 mt-1">來源：固定支出負擔比＝固定支出÷收入；下面三條是固定/變動/投資分別佔收入的%。</p>
+                      </div>
+                      {isDtiHigh && <div className="p-2 bg-rose-200 text-rose-600 rounded-full animate-bounce shrink-0"><AlertTriangle className="w-5 h-5" /></div>}
+                  </div>
+                  <div className="flex items-baseline gap-2 mb-4"><span className={`text-4xl font-extrabold ${isDtiHigh ? 'text-rose-600' : healthMetrics.dtiRatio > DTI_CAUTION_THRESHOLD ? 'text-amber-500' : 'text-emerald-500'}`}>{healthMetrics.dtiRatio.toFixed(1)}%</span><span className={`text-xs font-bold ${isDtiHigh ? 'text-rose-500' : 'text-slate-400'}`}>{isDtiHigh ? '固定支出佔比過高' : '固定支出負擔健康'}</span></div>
+                  <div className="space-y-4">
                       {['Fixed', 'Variable', 'Investment'].map(k => {
                         const val = healthMetrics.ratios[k.toLowerCase() as keyof typeof healthMetrics.ratios];
                         const labels = { Fixed: '固定支出', Variable: '變動支出', Investment: '儲蓄投資' };
@@ -511,20 +542,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                       })}
                   </div>
               </div>
-              <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-8 rounded-[30px] shadow-xl shadow-indigo-200 text-white flex flex-col justify-between relative overflow-hidden">
-                   <div className="absolute top-0 right-0 p-6 opacity-10"><TrendingUp className="w-32 h-32 text-white" /></div>
-                   <div className="relative z-10">
-                       <h4 className="text-sm font-bold text-indigo-100 uppercase tracking-wider mb-2 flex items-center gap-2"><Sparkles className="w-4 h-4" /> 潛在財富機會</h4>
-                       <p className="text-indigo-100 text-xs font-medium mb-6 opacity-80">將本期「非必要支出」投入年化 7% 理財...</p>
-                       <div className="p-4 bg-white/10 backdrop-blur-md rounded-2xl border border-white/20">
-                           <p className="text-xs font-bold text-yellow-300 uppercase mb-1">10 年後將額外獲利</p>
-                           <p className="text-3xl font-extrabold tracking-tight">+${Math.round(opportunityCost).toLocaleString()}</p>
-                       </div>
-                   </div>
-              </div>
               <div className="bg-white p-6 rounded-[30px] shadow-xl shadow-orange-50/50 border border-orange-50 flex flex-col items-center justify-center text-center relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-400 to-emerald-400"></div>
-                    <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">本期淨現金流</h4>
+                    <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">本期淨現金流</h4>
+                    <p className="text-[10px] text-slate-300 mb-4">來源：本期收入總額－本期支出總額</p>
                     <p className={`text-4xl font-black mb-2 ${netCashFlow >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{netCashFlow >= 0 ? '+' : ''}{netCashFlow.toLocaleString()}</p>
               </div>
           </div>
@@ -535,15 +556,18 @@ const Dashboard: React.FC<DashboardProps> = ({
           <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-2 mt-4 mb-4"><Search className="w-6 h-6 text-amber-400" />分類洞察</h3>
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
-                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><Wallet className="w-4 h-4 text-emerald-400" /> 收入來源分析</h4>
+                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><Wallet className="w-4 h-4 text-emerald-400" /> 收入來源分析</h4>
+                  <p className="text-[10px] text-slate-300 mb-3">來源：本期收入依次分類(L2)加總，取前3高</p>
                   <div className="space-y-3">{incomeBreakdown.slice(0, 3).map((item, idx) => (<div key={idx} className="flex justify-between items-center p-3 rounded-2xl bg-emerald-50/50"><span className="font-bold text-slate-700">{item.l2}</span><p className="font-bold text-emerald-600">${item.amount.toLocaleString()}</p></div>))}</div>
               </div>
               <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-lg shadow-orange-50/50 flex flex-col">
-                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><TrendingDown className="w-4 h-4 text-rose-400" /> 支出排行榜</h4>
+                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><TrendingDown className="w-4 h-4 text-rose-400" /> 支出排行榜</h4>
+                  <p className="text-[10px] text-slate-300 mb-3">來源：本期支出依次分類(L2)加總，取前3高</p>
                   <div className="flex-1 space-y-4">{expenseBreakdown.slice(0, 3).map((l2Item, idx) => (<div key={l2Item.l2} className="p-4 rounded-2xl border-2 border-slate-50 flex items-center justify-between"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-slate-400">{idx+1}</div><p className="font-bold text-slate-700">{l2Item.l2}</p></div><p className="font-bold text-slate-700">${l2Item.amount.toLocaleString()}</p></div>))}</div>
               </div>
               <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
-                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><AlertCircle className="w-4 h-4 text-pink-500" /> 異常消費偵測</h4>
+                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><AlertCircle className="w-4 h-4 text-pink-500" /> 異常消費偵測</h4>
+                  <p className="text-[10px] text-slate-300 mb-3">來源：單筆金額跟同次分類(L3)歷史平均比，超過2.2倍且該次分類有5筆以上歷史紀錄才提醒（這是單筆金額異常，跟上面「需立即關注」的整月配速異常是不同角度）</p>
                   {anomalies.length === 0 ? (
                     <p className="text-sm text-slate-300 font-medium py-2">這期間的消費都跟平常差不多，沒有明顯異常喵～</p>
                   ) : (
@@ -553,24 +577,37 @@ const Dashboard: React.FC<DashboardProps> = ({
           </div>
       </div>
 
-      {/* SECTION 5: Heatmap & Goal */}
-      <div data-pdf-section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="md:col-span-2 bg-white p-6 rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50">
-              <h4 className="font-bold text-slate-700 flex items-center gap-2 mb-6"><TrendingUp className="w-5 h-5 text-amber-400" />季節性支出趨勢 (24個月)</h4>
-              <div className="grid grid-cols-6 sm:grid-cols-12 gap-1.5">{seasonalData.slice(-12).map((data, idx) => (<div key={idx} className="flex flex-col items-center gap-2"><div className="w-full bg-slate-50 rounded-lg h-32 relative flex items-end overflow-hidden"><div className="w-full rounded-t-lg" style={{ height: `${Math.max(data.intensity * 100, 5)}%`, backgroundColor: `rgba(251, 191, 36, ${Math.max(data.intensity, 0.2)})` }}></div></div><span className="text-[10px] font-bold text-slate-400">{data.label}</span></div>))}</div>
-          </div>
-          {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-6 rounded-[40px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增願望清單</div>}
+      {/* SECTION 5: 固定週期性支出清單 */}
+      <div data-pdf-section className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
+          <h3 className="text-sm font-bold text-slate-500 flex items-center gap-2 uppercase tracking-wider"><Repeat className="w-4 h-4 text-amber-400" />固定週期性支出</h3>
+          <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：不是看你選的分類（分類是固定支出的不一定每月出現），而是看行為模式——同一個商家至少連續出現過3個月、且從第一次出現到現在的月份裡有75%以上都有出現，就列在這裡（例如訂閱制的遊戲特權卡），金額是那幾個月的中位數。</p>
+          {recurringExpenses.length === 0 ? (
+            <p className="text-sm text-slate-300 font-medium py-2">目前的資料還看不出有固定每月出現的商家喵～</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {recurringExpenses.slice(0, 9).map(item => (
+                    <div key={item.merchant} className="p-4 rounded-2xl border-2 border-slate-50 flex items-center justify-between gap-2">
+                        <div className="min-w-0"><p className="font-bold text-slate-700 text-sm truncate">{item.merchant}</p><p className="text-[10px] text-slate-400 mt-0.5">近{item.monthsSpan}個月裡出現過{item.monthsPresent}次</p></div>
+                        <p className="font-bold text-slate-700 shrink-0">${Math.round(item.medianAmount).toLocaleString()}</p>
+                    </div>
+                ))}
+            </div>
+          )}
       </div>
 
-      {/* SECTION 6: Forecasting */}
-      <div data-pdf-section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className={`p-6 rounded-[30px] border shadow-sm flex items-center gap-6 ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-50 border-rose-100' : 'bg-white border-emerald-50'}`}>
-              <div className={`p-4 rounded-full ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-200 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}><Hourglass className="w-8 h-8" /></div>
-              <div><h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">現金緩衝耗盡預警</h4><div className="flex items-baseline gap-2"><span className={`text-2xl font-black ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'text-rose-600' : 'text-slate-700'}`}>{runwayData.daysRemaining > 3650 ? '> 10 年' : `${runwayData.daysRemaining} 天`}</span></div></div>
+      {/* SECTION 6: 季節性趨勢 + 現金緩衝耗盡預警 */}
+      <div data-pdf-section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="md:col-span-2 bg-white p-6 rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50">
+              <h4 className="font-bold text-slate-700 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-amber-400" />季節性支出趨勢 (12個月)</h4>
+              <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：只算變動支出，最近12個月每月加總，長條高度是相對這12個月裡最高的那個月的比例</p>
+              <div className="grid grid-cols-6 sm:grid-cols-12 gap-1.5">{seasonalData.map((data, idx) => (<div key={idx} className="flex flex-col items-center gap-2"><div className="w-full bg-slate-50 rounded-lg h-32 relative flex items-end overflow-hidden"><div className="w-full rounded-t-lg" style={{ height: `${Math.max(data.intensity * 100, 5)}%`, backgroundColor: `rgba(251, 191, 36, ${Math.max(data.intensity, 0.2)})` }}></div></div><span className="text-[10px] font-bold text-slate-400">{data.label}</span></div>))}</div>
           </div>
-          <div className="p-6 bg-white rounded-[30px] border border-blue-50 shadow-sm flex items-center gap-6">
-              <div className="p-4 bg-blue-50 text-blue-500 rounded-full"><Landmark className="w-8 h-8" /></div>
-              <div><h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">年度稅務抵扣估算</h4><span className="text-2xl font-black text-blue-600">${taxData.totalDeductible.toLocaleString()}</span></div>
+          <div className={`p-6 rounded-[40px] border shadow-sm flex flex-col justify-center gap-3 ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-50 border-rose-100' : 'bg-white border-emerald-50'}`}>
+              <div className="flex items-center gap-4">
+                <div className={`p-4 rounded-full shrink-0 ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-200 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}><Hourglass className="w-8 h-8" /></div>
+                <div><h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">現金緩衝耗盡預警</h4><span className={`text-2xl font-black ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'text-rose-600' : 'text-slate-700'}`}>{runwayData.daysRemaining > 3650 ? '> 10 年' : `${runwayData.daysRemaining} 天`}</span></div>
+              </div>
+              <p className="text-[10px] text-slate-300">來源：（全部收入－全部支出，多帳戶混算，並非真實單一帳戶餘額）÷最近90天變動支出日均，估算照這個燒錢速度還能撐幾天，不含固定支出，僅供參考</p>
           </div>
       </div>
     </div>

@@ -13,7 +13,7 @@ import Auth from './components/Auth';
 import AccountsModal from './components/AccountsModal';
 import TransferModal from './components/TransferModal';
 import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag } from './types';
-import { generateTimeWeightedAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
+import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 import {
@@ -315,12 +315,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (timeScope !== 'all') {
-        const newAlerts = generateTimeWeightedAlerts(filteredTransactions, budgets, dateRange.startDate, dateRange.endDate);
+        const newAlerts = generateMonthlyPacingAlerts(transactions, filteredTransactions, dateRange.startDate, dateRange.endDate);
         setAlerts(newAlerts);
     } else {
         setAlerts([]);
     }
-  }, [filteredTransactions, budgets, dateRange, timeScope]);
+  }, [transactions, filteredTransactions, dateRange, timeScope]);
 
   useEffect(() => {
     const click = (e: MouseEvent) => { if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setIsAddMenuOpen(false); };

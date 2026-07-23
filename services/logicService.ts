@@ -2,13 +2,13 @@
 import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig } from '../types';
 import { format, getDaysInMonth, getDate, startOfMonth, endOfMonth, addMonths, subMonths, differenceInDays, isAfter, isBefore, startOfDay, endOfDay, parseISO, startOfYear, getMonth, getYear, isSameMonth, differenceInMonths, subDays, addDays } from 'date-fns';
 import {
-  ALERT_K_FACTOR, ALERT_CRITICAL_THRESHOLD_PERCENT,
-  OPPORTUNITY_COST_ANNUAL_RETURN, OPPORTUNITY_COST_YEARS,
   RUNWAY_ANALYSIS_WINDOW_DAYS,
   ANOMALY_MIN_HISTORY_COUNT, ANOMALY_AMOUNT_MULTIPLIER, ANOMALY_MIN_AMOUNT,
   FREQUENCY_HISTORY_MONTHS, FREQUENCY_MULTIPLIER, FREQUENCY_MIN_COUNT,
   CASH_DUPLICATE_CHECK_DAYS, CASH_WITHDRAWAL_KEYWORDS,
-  TAX_DEDUCTIBLE_KEYWORDS,
+  PIE_L3_PROMOTE_THRESHOLD,
+  PACING_MIN_HISTORY_MONTHS, PACING_WARNING_MULTIPLIER, PACING_CRITICAL_MULTIPLIER, PACING_MIN_AMOUNT,
+  RECURRING_MIN_HISTORY_MONTHS, RECURRING_MONTH_COVERAGE_RATIO,
 } from '../config/financialRules';
 
 // Precision helper to avoid floating point errors
@@ -78,77 +78,87 @@ export const getDateRange = (
 };
 
 /**
- * Module III.2: Dynamic Time-Weighted Alert Logic
+ * 月度花費配速警示：取代舊的generateTimeWeightedAlerts（那個是跟寫死的budgets比較，
+ * budgets從App做出來就沒被真實資料校準過，一直在跟假數字比對）。
+ * 這裡改成用「這個L2次分類過去每個月實際花多少」的中位數當基準，
+ * 依照這個月已經過了幾天算出「到今天應該花到多少才算正常」，
+ * 實際花費超過這個基準的倍數才觸發警示，訊息直接給「還剩幾天、建議接下來怎麼控制」的具體建議。
  */
-export const generateTimeWeightedAlerts = (
-  transactions: Transaction[], 
-  budgets: Budget[],
+export const generateMonthlyPacingAlerts = (
+  allTransactions: Transaction[],
+  currentPeriodTransactions: Transaction[],
   periodStart: Date,
-  periodEnd: Date,
-  kFactor: number = ALERT_K_FACTOR
+  periodEnd: Date
 ): Alert[] => {
   const alerts: Alert[] = [];
   const now = new Date();
-  
-  const totalDaysInPeriod = differenceInDays(periodEnd, periodStart) + 1;
-  
-  let daysPassed: number;
 
+  const totalDaysInPeriod = differenceInDays(periodEnd, periodStart) + 1;
+  let daysPassed: number;
   if (isBefore(periodEnd, now)) {
       daysPassed = totalDaysInPeriod;
   } else if (isAfter(periodStart, now)) {
-      daysPassed = 1; 
+      daysPassed = 1;
   } else {
       daysPassed = differenceInDays(now, periodStart) + 1;
   }
-  
   if (daysPassed <= 0) daysPassed = 1;
+  const daysRemaining = Math.max(totalDaysInPeriod - daysPassed, 0);
 
-  const spendingByL1: Record<string, number> = {
-    [L1Category.FIXED]: 0,
-    [L1Category.VARIABLE]: 0,
-    [L1Category.INVESTMENT]: 0,
-    [L1Category.INCOME]: 0,
-  };
-
-  transactions.forEach(t => {
-    if (t.type === 'expense') {
-      spendingByL1[t.category.l1] = fromCents(toCents(spendingByL1[t.category.l1]) + toCents(t.amount));
-    }
+  // 用全部歷史資料，算每個L2次分類「每個有出現過的月份」花了多少，取中位數當合理月度基準
+  // （中位數比平均值更不受單月爆買影響，跟願望清單安全水位建議值用同一套邏輯）。
+  const monthlyByL2: Record<string, Record<string, number>> = {}; // l2 -> yyyy-MM -> amount
+  allTransactions.forEach(t => {
+    if (t.type !== 'expense') return;
+    const l2 = t.category.l2;
+    if (!l2) return;
+    const monthKey = format(parseISO(t.date), 'yyyy-MM');
+    if (!monthlyByL2[l2]) monthlyByL2[l2] = {};
+    monthlyByL2[l2][monthKey] = (monthlyByL2[l2][monthKey] || 0) + t.amount;
   });
 
-  budgets.forEach(budget => {
-    if (budget.l1 === L1Category.INCOME) return;
-
-    const currentSpent = spendingByL1[budget.l1];
-    const totalBudget = budget.amount;
-    const categoryName = CATEGORY_LABELS[budget.l1];
-
-    if (totalBudget <= 0) return;
-
-    const currentDailyRate = currentSpent / daysPassed;
-    const budgetDailyRate = totalBudget / totalDaysInPeriod;
-    
-    const threshold = budgetDailyRate * kFactor;
-
-    if (currentDailyRate > threshold) {
-      const excessRate = ((currentDailyRate - threshold) / threshold) * 100;
-      const isCritical = excessRate > ALERT_CRITICAL_THRESHOLD_PERCENT;
-      
-      alerts.push({
-        id: `alert-${budget.l1}-${Date.now()}`,
-        level: isCritical ? 'critical' : 'warning',
-        message: isCritical 
-          ? `哎呀！${categoryName}的花費速度太快了，目前超標 ${(excessRate).toFixed(1)}%，建議立刻檢視開銷！` 
-          : `注意喔，${categoryName}的支出速度比預期快了 ${(excessRate).toFixed(1)}%，要稍微控制一下囉。`,
-        metric: categoryName,
-        value: currentDailyRate * totalDaysInPeriod, 
-        threshold: totalBudget
-      });
-    }
+  const currentSpentByL2: Record<string, number> = {};
+  currentPeriodTransactions.forEach(t => {
+    if (t.type !== 'expense') return;
+    const l2 = t.category.l2;
+    if (!l2) return;
+    currentSpentByL2[l2] = (currentSpentByL2[l2] || 0) + t.amount;
   });
 
-  return alerts;
+  Object.entries(monthlyByL2).forEach(([l2, months]) => {
+    const monthAmounts = Object.values(months);
+    if (monthAmounts.length < PACING_MIN_HISTORY_MONTHS) return; // 歷史月份太少，基準不可信
+
+    const sorted = [...monthAmounts].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+
+    const expectedToDate = median * (daysPassed / totalDaysInPeriod);
+    if (expectedToDate < PACING_MIN_AMOUNT) return; // 太小的類別不列入偵測
+
+    const actual = currentSpentByL2[l2] || 0;
+    if (actual <= expectedToDate * PACING_WARNING_MULTIPLIER) return;
+
+    const percent = (actual / expectedToDate) * 100;
+    const isCritical = actual > expectedToDate * PACING_CRITICAL_MULTIPLIER;
+    const remainingBudget = Math.max(median - actual, 0);
+    const suggestionText = daysRemaining > 0
+      ? (remainingBudget > 0
+          ? `本月剩${daysRemaining}天，照平常水準還可以花$${Math.round(remainingBudget).toLocaleString()}，建議接下來每天控制在$${Math.round(remainingBudget / daysRemaining).toLocaleString()}以內。`
+          : `本月剩${daysRemaining}天，已經超過平常整個月的水準了，建議這個類別先暫停消費。`)
+      : `這期間已經結束，實際花了平常的${Math.round(percent)}%。`;
+
+    alerts.push({
+      id: `pacing-${l2}`,
+      level: isCritical ? 'critical' : 'warning',
+      message: `${l2}這個月已經花到平常同期的${Math.round(percent)}%（$${Math.round(actual).toLocaleString()}，平常整個月約$${Math.round(median).toLocaleString()}）。${suggestionText}`,
+      metric: l2,
+      value: actual,
+      threshold: expectedToDate,
+    });
+  });
+
+  return alerts.sort((a, b) => (b.value / b.threshold) - (a.value / a.threshold));
 };
 
 export const calculateProjectedPenalty = (
@@ -233,16 +243,14 @@ export const analyzeFinancialHealth = (transactions: Transaction[]) => {
   };
 };
 
-export const calculateOpportunityCost = (variableSpending: number): number => {
-  const r = OPPORTUNITY_COST_ANNUAL_RETURN;
-  const n = OPPORTUNITY_COST_YEARS;
-  const futureValue = variableSpending * Math.pow((1 + r), n);
-  return futureValue - variableSpending;
-};
-
+// 季節性支出趨勢：只算「變動支出」，回傳最近12個月，每個月的金額+相對強度(0~1)。
+// 2026-07-23 修好一個bug：intensity（長條高度）原本是拿最近24個月裡最高的那個月當基準，
+// 但畫面只顯示最近12個月——如果真正的最高月份剛好在13~24個月前（畫面外），
+// 顯示出來的12條長條全部會被壓得偏矮，看起來都不嚴重。改成直接只算最近12個月，
+// 基準值跟顯示範圍一致。
 export const getSeasonalTrends = (allTransactions: Transaction[]) => {
   const monthlyData: Record<string, number> = {};
-  
+
   const variableTxs = allTransactions.filter(
     t => t.type === 'expense' && t.category.l1 === L1Category.VARIABLE
   );
@@ -257,18 +265,18 @@ export const getSeasonalTrends = (allTransactions: Transaction[]) => {
   const now = new Date();
   let maxAmount = 0;
 
-  for (let i = 23; i >= 0; i--) {
+  for (let i = 11; i >= 0; i--) {
     const d = subMonths(now, i);
     const key = format(d, 'yyyy-MM');
     const amount = monthlyData[key] || 0;
     if (amount > maxAmount) maxAmount = amount;
-    
+
     result.push({
       date: d,
       label: format(d, 'M'),
       fullLabel: format(d, 'yyyy年M月'),
       amount,
-      intensity: 0 
+      intensity: 0
     });
   }
 
@@ -399,6 +407,88 @@ export const getCategoryBreakdown = (transactions: Transaction[], type: 'income'
                 .sort((a, b) => b.amount - a.amount)
         }))
         .sort((a, b) => b.amount - a.amount);
+};
+
+export interface CategoryPieSlice {
+  name: string;
+  amount: number;
+  percent: number; // 0~100
+}
+
+// 貓咪指揮中心開頭的分類比率圓餅圖：用L2次分類分塊（不是Fixed/Variable/Investment那個大類），
+// 如果某個L3細項自己就佔了全部支出很大一塊（超過PIE_L3_PROMOTE_THRESHOLD），
+// 從它所屬的L2塊拆出來單獨顯示一塊，方便看出「其實是某個具體東西買太多」，
+// 而不是被埋在一個大分類裡看不出來（例如「飲料」從「餐飲食品」拆出來）。
+export const getCategoryPieData = (transactions: Transaction[]): CategoryPieSlice[] => {
+  const breakdown = getCategoryBreakdown(transactions, 'expense');
+  const total = breakdown.reduce((sum, item) => sum + item.amount, 0);
+  if (total <= 0) return [];
+
+  const slices: CategoryPieSlice[] = [];
+
+  breakdown.forEach(({ l2, amount, l3Breakdown }) => {
+    let remaining = amount;
+    l3Breakdown.forEach(({ l3, amount: l3Amount }) => {
+      if (l3 && l3Amount / total >= PIE_L3_PROMOTE_THRESHOLD) {
+        slices.push({ name: l3, amount: l3Amount, percent: (l3Amount / total) * 100 });
+        remaining -= l3Amount;
+      }
+    });
+    if (remaining > 0) {
+      slices.push({ name: l2, amount: remaining, percent: (remaining / total) * 100 });
+    }
+  });
+
+  return slices.sort((a, b) => b.amount - a.amount);
+};
+
+export interface RecurringExpense {
+  merchant: string;
+  monthsPresent: number;
+  monthsSpan: number;
+  medianAmount: number;
+  lastDate: string;
+}
+
+// 固定週期性支出偵測：不是看「分類=固定支出」（那是使用者手動選的），
+// 而是看「行為模式」——這個商家幾乎每個月都出現一次，就算分類是變動支出
+// （例如訂閱制的遊戲特權卡）也算，抓出來給使用者一個「這些錢幾乎跑不掉」的清單參考。
+export const detectRecurringExpenses = (allTransactions: Transaction[]): RecurringExpense[] => {
+  const byMerchant: Record<string, { months: Record<string, number>; lastDate: string }> = {};
+
+  allTransactions.forEach(t => {
+    if (t.type !== 'expense' || !t.merchant) return;
+    const monthKey = format(parseISO(t.date), 'yyyy-MM');
+    if (!byMerchant[t.merchant]) byMerchant[t.merchant] = { months: {}, lastDate: t.date };
+    byMerchant[t.merchant].months[monthKey] = (byMerchant[t.merchant].months[monthKey] || 0) + t.amount;
+    if (t.date > byMerchant[t.merchant].lastDate) byMerchant[t.merchant].lastDate = t.date;
+  });
+
+  const results: RecurringExpense[] = [];
+
+  const currentMonthKey = format(new Date(), 'yyyy-MM');
+
+  Object.entries(byMerchant).forEach(([merchant, data]) => {
+    const monthKeys = Object.keys(data.months).sort();
+    if (monthKeys.length < RECURRING_MIN_HISTORY_MONTHS) return;
+
+    // 最近2個月都沒出現過，就不算「還在持續」的週期性支出（避免已經停掉的訂閱還被列出來）。
+    const monthsSinceLast = differenceInMonths(parseISO(currentMonthKey + '-01'), parseISO(monthKeys[monthKeys.length - 1] + '-01'));
+    if (monthsSinceLast > 1) return;
+
+    const firstMonth = monthKeys[0];
+    const monthsSpan = differenceInMonths(parseISO(currentMonthKey + '-01'), parseISO(firstMonth + '-01')) + 1;
+    const coverage = monthKeys.length / Math.max(monthsSpan, 1);
+    if (coverage < RECURRING_MONTH_COVERAGE_RATIO) return;
+
+    const amounts = Object.values(data.months).sort((a, b) => a - b);
+    const mid = Math.floor(amounts.length / 2);
+    const median = amounts.length % 2 === 0 ? (amounts[mid - 1] + amounts[mid]) / 2 : amounts[mid];
+
+    results.push({ merchant, monthsPresent: monthKeys.length, monthsSpan, medianAmount: median, lastDate: data.lastDate });
+  });
+
+  return results.sort((a, b) => b.medianAmount - a.medianAmount);
 };
 
 export const findSimilarTransactions = (
@@ -610,17 +700,4 @@ export const calculateAccountBalances = (accounts: Account[], allTransactions: T
   });
 
   return balances;
-};
-
-export const calculateTaxEstimation = (allTransactions: Transaction[]) => {
-    const currentYear = new Date().getFullYear();
-    const deductibleTxs = allTransactions.filter(t => {
-        const tDate = parseISO(t.date);
-        if (getYear(tDate) !== currentYear) return false;
-        if (t.type !== 'expense') return false;
-        const combinedText = (t.merchant + t.category.l2 + t.category.l3).toLowerCase();
-        return TAX_DEDUCTIBLE_KEYWORDS.some(k => combinedText.includes(k));
-    });
-    const totalDeductible = deductibleTxs.reduce((sum, t) => sum + t.amount, 0);
-    return { year: currentYear, totalDeductible, count: deductibleTxs.length };
 };

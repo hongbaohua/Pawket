@@ -19,24 +19,9 @@ export const INITIAL_BUDGETS: Budget[] = [
   { l1: L1Category.INVESTMENT, amount: 800 },
 ];
 
-// ── 2. 動態時間加權警示（貓咪指揮中心的紅／黃燈邏輯） ──
-// 公式：目前日均花費 > (預算日均 × ALERT_K_FACTOR) 就開始出現警示。
-// K 值越大，代表允許「花得比預算快」的空間越大，警示會比較晚出現；
-// K = 1.0 代表完全不給緩衝，只要花費速度略快於預算就會警示。
-export const ALERT_K_FACTOR = 1.15;
-
-// 超標率（花費速度超過門檻的百分比）超過這個數字，
-// 就從「黃色警告 (warning)」升級成「紅色危急 (critical)」。
-export const ALERT_CRITICAL_THRESHOLD_PERCENT = 20;
-
 // ── 3. DTI 償債比率警戒線（固定支出 ÷ 收入 的百分比） ──
 export const DTI_CAUTION_THRESHOLD = 30;   // 超過這個百分比，介面轉黃色提醒
 export const DTI_CRITICAL_THRESHOLD = 35;  // 超過這個百分比，介面轉紅色警戒
-
-// ── 4. 機會成本試算 ──
-// 「這筆變動支出如果拿去投資，幾年後會變多少」的估算參數，純粹是財務教育性質的試算，不是真實投資建議。
-export const OPPORTUNITY_COST_ANNUAL_RETURN = 0.07; // 假設年化報酬率 7%
-export const OPPORTUNITY_COST_YEARS = 10;           // 試算幾年後的複利結果
 
 // ── 5. 現金緩衝耗盡預警（Runway，估算「照目前花錢速度還能撐幾天」） ──
 export const RUNWAY_ANALYSIS_WINDOW_DAYS = 90; // 用「最近幾天」的變動支出來估算平均燒錢速度
@@ -59,16 +44,25 @@ export const FREQUENCY_MIN_COUNT = 3;       // 次數低於這個數字不列入
 export const CASH_DUPLICATE_CHECK_DAYS = 7; // 往前找幾天內的提款紀錄
 export const CASH_WITHDRAWAL_KEYWORDS = ['atm', 'withdrawal', '提款', '領錢', 'cash'];
 
-// ── 9. 年度稅務可能抵扣項目關鍵字 ──
-// 僅供初步篩選參考用（例如提醒「這些支出報稅時可能用得到」），不是正式的稅務建議，實際申報請以官方規定為準。
-export const TAX_DEDUCTIBLE_KEYWORDS = [
-  '醫療', '診所', '掛號', '醫院', 'medical', 'clinic', 'hospital',
-  '保險', '壽險', 'insurance',
-  '捐款', '公益', 'donation', 'charity',
-  '學費', 'education', 'tuition'
-];
+// ── 9. 分類比率圓餅圖（貓咪指揮中心開頭卡片） ──
+// 預設用L2次分類分塊；如果某個L3細項單獨佔全部支出的比例超過這個門檻，
+// 就從它所屬的L2塊拆出來單獨顯示一塊（例如「飲料」從「餐飲食品」裡拆出來）。
+export const PIE_L3_PROMOTE_THRESHOLD = 0.15; // 15%
 
-// ── 11. 預算罰則系統（Beta）預設值 ──
+// ── 10. 月度花費配速警示（取代舊的、跟寫死budgets比較的generateTimeWeightedAlerts） ──
+// 用「這個L2次分類過去每個月實際花多少」的中位數當作合理基準，
+// 依照這個月已經過了幾天算出「到今天應該花到多少才正常」，
+// 實際花費超過這個「到今天應該花多少」的倍數才觸發警示。
+export const PACING_MIN_HISTORY_MONTHS = 3;      // 這個L2次分類至少要有幾個月的歷史紀錄，才有可信的「合理基準」可比較
+export const PACING_WARNING_MULTIPLIER = 1.3;    // 超過「到今天應該花多少」的幾倍，變黃色提醒
+export const PACING_CRITICAL_MULTIPLIER = 1.6;   // 超過「到今天應該花多少」的幾倍，變紅色警戒
+export const PACING_MIN_AMOUNT = 200;            // 「到今天應該花多少」低於這個數字不列入偵測，避免小額類別的正常波動也被標記
+
+// ── 11. 固定週期性支出偵測（例如訂閱制，不一定分類是「固定支出」，但行為模式每月固定出現） ──
+export const RECURRING_MIN_HISTORY_MONTHS = 3;     // 這個商家至少要出現過幾個不同月份才夠判斷是不是「幾乎每月都有」
+export const RECURRING_MONTH_COVERAGE_RATIO = 0.75; // 從第一次出現到現在的月份區間裡，至少要有這個比例的月份有出現，才算「幾乎每月都有」
+
+// ── 12. 預算罰則系統（Beta）預設值 ──
 // 使用者可在「設定」畫面手動開關/調整，這裡只是預設值。
 export const DEFAULT_PENALTY_CONFIG = {
   enabled: false,
