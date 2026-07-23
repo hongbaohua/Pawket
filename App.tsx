@@ -424,8 +424,11 @@ const App: React.FC = () => {
     }
   };
 
-  const handleEditSave = (updatedTx: Transaction, options?: { openSplitAfter?: boolean }) => {
-    setTransactions(prev => prev.some(t => t.id === updatedTx.id) ? prev.map(t => t.id === updatedTx.id ? updatedTx : t) : [updatedTx, ...prev]);
+  const handleEditSave = (updatedTx: Transaction, options?: { openSplitAfter?: boolean; additionalTransfer?: Transaction }) => {
+    setTransactions(prev => {
+      const next = prev.some(t => t.id === updatedTx.id) ? prev.map(t => t.id === updatedTx.id ? updatedTx : t) : [updatedTx, ...prev];
+      return options?.additionalTransfer ? [options.additionalTransfer, ...next] : next;
+    });
     setEditingTransaction(null);
     // 新增流程第3步問過「要不要分裝拆帳」，選是的話存檔後直接接著開分裝盤，不用存完再回去找按鈕點。
     if (options?.openSplitAfter) {
@@ -437,7 +440,13 @@ const App: React.FC = () => {
             setBatchCandidates(candidates);
         }
     }
-    if (userId) upsertTransaction(userId, updatedTx).catch(err => console.error('儲存交易失敗', err));
+    if (userId) {
+      upsertTransaction(userId, updatedTx).catch(err => console.error('儲存交易失敗', err));
+      // 當場儲值：連帶產生的那筆帳戶互轉也要一併存進資料庫，不然重整頁面就消失了。
+      if (options?.additionalTransfer) {
+        upsertTransaction(userId, options.additionalTransfer).catch(err => console.error('儲存儲值交易失敗', err));
+      }
+    }
   };
 
   const handleTransferSave = (tx: Transaction) => {

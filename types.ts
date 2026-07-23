@@ -43,7 +43,7 @@ export interface Discount {
 // 功能的範圍，這裡只負責讓這幾筆在畫面上跟一般支出區分開來。
 export interface SpecialTag {
   type: 'proxy_purchase' | 'work_advance'; // 代購 / 工作代墊
-  counterparty: string; // 代購人是誰／之後要跟誰報帳
+  counterparty?: string; // 代購人是誰／之後要跟誰報帳（選填，代購者不重要時可以不寫）
   note?: string; // 額外說明，例如「已打統編」「0313批次」
 }
 

@@ -45,7 +45,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 IMPORTED_PATH = os.path.join(ROOT, '匯入_中信對帳_775筆.json')
 DISCOUNT_CORRECTIONS_PATH = os.path.join(HERE, 'discount_corrections.json')
-XLSX_PATH = os.path.join(os.path.dirname(ROOT), '對帳資料', '訓練資料包', '中信餘額_正確答案.xlsx')
+XLSX_PATH = os.path.join(os.path.dirname(ROOT), '對帳資料', '中國信託', '中信餘額_正確答案.xlsx')
 OUT_PATH = os.path.join(HERE, 'reparse_corrections.json')
 REVIEW_PATH = os.path.join(HERE, 'reparse_review.txt')
 

@@ -1,7 +1,9 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account, Discount, SpecialTag, TransactionItem } from '../types';
-import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, ChevronLeft, ChevronRight, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard, Calculator, Divide } from 'lucide-react';
+import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, ChevronLeft, ChevronRight, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard, Calculator, Divide, Zap } from 'lucide-react';
+import { calculateAccountBalances } from '../services/logicService';
+import { v4 as uuidv4 } from 'uuid';
 
 // 2026-07-22 Ivy反應金額欄位太死板：原價/折扣/代購費/匯率/進位規則每家代購都不一樣，
 // 原本用Excel試算表可以直接打公式，現在被拆成好幾個獨立欄位反而更亂。
@@ -69,7 +71,7 @@ interface EditTransactionModalProps {
   customCategoryHistory?: Record<string, string[]>;
   onTagAction?: (action: 'rename' | 'delete', l1: L1Category, oldName: string, newName?: string) => void;
   onClose: () => void;
-  onSave: (updatedTransaction: Transaction, options?: { openSplitAfter?: boolean }) => void;
+  onSave: (updatedTransaction: Transaction, options?: { openSplitAfter?: boolean; additionalTransfer?: Transaction }) => void;
 }
 
 const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
@@ -91,6 +93,17 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   const [l1, setL1] = useState<L1Category>(transaction.category.l1);
   const [l2, setL2] = useState(transaction.category.l2);
   const [l3, setL3] = useState(transaction.category.l3);
+
+  // 電子錢包/儲值卡「當場儲值」：選到這類帳戶時顯示目前餘額(夠不夠付這筆)，
+  // 並可以順便勾「這筆有儲值」，儲存時額外產生一筆「帳戶互轉」把儲值也記錄下來，
+  // 使用者只需要填一次表單，不用分開新增兩筆交易。
+  const accountBalances = useMemo(() => calculateAccountBalances(accounts, allTransactions), [accounts, allTransactions]);
+  const selectedAccount = useMemo(() => accounts.find(a => a.id === accountId), [accounts, accountId]);
+  const isWalletAccount = selectedAccount?.type === 'e_wallet' || selectedAccount?.type === 'stored_value';
+  const walletBalance = selectedAccount ? (accountBalances[selectedAccount.id] || 0) : 0;
+  const [showTopUp, setShowTopUp] = useState(false);
+  const [topUpAmount, setTopUpAmount] = useState<number | undefined>(undefined);
+  const [topUpFromAccountId, setTopUpFromAccountId] = useState<string>('');
 
   // 金額拆分（原始金額／折扣明細／實付金額）：預設收合，展開後實付金額改成自動計算
   const [showBreakdown, setShowBreakdown] = useState(!!transaction.discounts && transaction.discounts.length > 0);
@@ -398,6 +411,25 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
         return;
     }
 
+    // 當場儲值：選了電子錢包/儲值卡帳戶+勾了「有儲值」+填了金額跟來源帳戶，
+    // 額外產生一筆帳戶互轉交易，把儲值本身也記錄下來(跟悠遊卡/MyCard儲值的既有處理方式一致)。
+    const additionalTransfer: Transaction | undefined = (isWalletAccount && showTopUp && topUpAmount && topUpAmount > 0 && topUpFromAccountId)
+      ? {
+          id: uuidv4(),
+          date,
+          merchant: `帳戶互轉：${accounts.find(a => a.id === topUpFromAccountId)?.name || ''} → ${selectedAccount?.name || ''}`,
+          originalText: 'Manual Top-up',
+          amount: topUpAmount,
+          type: 'transfer',
+          fromAccountId: topUpFromAccountId,
+          toAccountId: accountId,
+          category: { l1: L1Category.VARIABLE, l2: '轉帳', l3: '' },
+          confidence: 1.0,
+          isVerified: true,
+          isSplit: false,
+        }
+      : undefined;
+
     onSave({
       ...transaction,
       date,
@@ -412,15 +444,15 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
       paymentChannel: paymentChannel.trim() || undefined,
       grossAmount: showBreakdown ? grossAmount : undefined,
       discounts: showBreakdown ? discounts.filter(d => d.label.trim() || d.amount) : undefined,
-      specialTag: specialTagType !== 'none' && specialTagCounterparty.trim()
-        ? { type: specialTagType, counterparty: specialTagCounterparty.trim(), note: specialTagNote.trim() || undefined }
+      specialTag: specialTagType !== 'none'
+        ? { type: specialTagType, counterparty: specialTagCounterparty.trim() || undefined, note: specialTagNote.trim() || undefined }
         : undefined,
       category: {
         l1,
         l2,
         l3: l3 || '' // Allow empty
       }
-    }, { openSplitAfter: isNew && wantsSplitAfterSave });
+    }, { openSplitAfter: isNew && wantsSplitAfterSave, additionalTransfer });
     onClose();
   };
 
@@ -558,6 +590,51 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                 </div>
               </div>
             )}
+
+            {/* 電子錢包/儲值卡帳戶：顯示目前餘額(夠不夠付這筆)，並可以順便勾選「這筆有儲值」，
+                儲存時會另外產生一筆帳戶互轉，記錄儲值的來源跟金額。 */}
+            {isWalletAccount && type === 'expense' && (
+              <div className="p-4 bg-sky-50/50 border border-sky-100 rounded-2xl space-y-3 animate-in slide-in-from-top-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-bold text-sky-600 flex items-center gap-1"><Wallet className="w-4 h-4" /> {selectedAccount?.name} 目前餘額</span>
+                  <span className={`font-extrabold ${walletBalance < amount ? 'text-rose-500' : 'text-sky-600'}`}>${walletBalance.toFixed(0)}</span>
+                </div>
+                {walletBalance < amount && (
+                  <p className="text-xs font-bold text-rose-500">餘額可能不夠付這筆（差 ${(amount - walletBalance).toFixed(0)}），要不要順便儲值？</p>
+                )}
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-bold text-slate-500 flex items-center gap-1"><Zap className="w-3.5 h-3.5" /> 這筆當下有順便儲值嗎？</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowTopUp(v => !v)}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition ${showTopUp ? 'bg-sky-500 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}
+                  >
+                    {showTopUp ? '有儲值' : '沒有儲值'}
+                  </button>
+                </div>
+                {showTopUp && (
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-sky-100 animate-in slide-in-from-top-1">
+                    <div>
+                      <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">儲值金額(可打算式)</label>
+                      <CalcInput value={topUpAmount} onCommit={n => setTopUpAmount(n)} className="w-full p-2.5 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">從哪個帳戶儲值</label>
+                      <select
+                        value={topUpFromAccountId}
+                        onChange={e => setTopUpFromAccountId(e.target.value)}
+                        className="w-full p-2.5 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300"
+                      >
+                        <option value="">請選擇</option>
+                        {accounts.filter(a => !a.isArchived && a.id !== accountId).map(a => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* STEP 2：性質／品項／金額（所有計算） */}
@@ -589,7 +666,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                     type="text"
                     value={specialTagCounterparty}
                     onChange={(e) => setSpecialTagCounterparty(e.target.value)}
-                    placeholder={specialTagType === 'proxy_purchase' ? '代購人是誰？' : '之後要跟誰報帳？'}
+                    placeholder={specialTagType === 'proxy_purchase' ? '代購人是誰？（不重要可以不填）' : '之後要跟誰報帳？'}
                     className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-purple-300"
                   />
                   <input

@@ -15,7 +15,7 @@
 import json, re, openpyxl
 
 ROOT = r'C:\Users\Master\Projects\Pawket\Pawket'
-XLSX = r'C:\Users\Master\Projects\Pawket\對帳資料\新增\2023-2024現金支出.xlsx'
+XLSX = r'C:\Users\Master\Projects\Pawket\對帳資料\現金支出與悠遊卡\2023-2024現金支出.xlsx'
 
 PAY_TO_ACCOUNT = {
     '悠遊卡': '二技悠遊卡',

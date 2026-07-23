@@ -35,12 +35,12 @@ data-import/easycard_review.txt
 data-import/ctbc_final_merged.json
 匯入_統整全部.json
 data-import/opening_balance_adjustments.json
-supabase/fix_001_currency_jpy_to_cny.sql
-supabase/fix_002_backfill_payment_channel.sql
-supabase/fix_003_backfill_transfer_channel.sql
-supabase/fix_004_fill_zhanmenghuajian_items.sql
-supabase/fix_005_reword_discount_note.sql
-supabase/fix_006_batch_corrections_20260723.sql
+data-import/merchant_audit_list.json
+data-import/全面資料查核表_2026-07-23.xlsx
+# supabase/fix_NNN_*.sql 這類一次性資料修正腳本，內容通常直接寫死真實商家名稱/金額/id，
+# 一律不進git（跟schema.sql/migration_NNN_*.sql不一樣，那兩種是純結構定義，沒有真實資料）。
+# 用萬用字元而不是逐一列檔名，避免每次新增fix檔案都要記得手動加一行（fix_010那次就忘記過一次）。
+supabase/fix_*.sql
 
 # Vercel CLI 專案連結資訊（本機自動產生，不用進版本控制）
 .vercel

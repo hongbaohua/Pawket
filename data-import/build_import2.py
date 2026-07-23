@@ -2,8 +2,8 @@ import openpyxl, re, math, json, sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from categorize_rules import apply_rules, special_case, is_low_confidence
 
-XLSX_PATH = r'C:\Users\Master\Projects\Pawket\對帳資料\訓練資料包\中信餘額_正確答案.xlsx'
-JSON_PATH = r'C:\Users\Master\Projects\Pawket\對帳資料\實際對帳_早期草稿\4-9.json'
+XLSX_PATH = r'C:\Users\Master\Projects\Pawket\對帳資料\中國信託\中信餘額_正確答案.xlsx'
+JSON_PATH = r'C:\Users\Master\Projects\Pawket\對帳資料\Ivy手標歷史分類參考\4-9.json'
 OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def safe_eval(formula):
