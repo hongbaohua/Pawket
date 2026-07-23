@@ -6,7 +6,7 @@ import {
   ANOMALY_MIN_HISTORY_COUNT, ANOMALY_AMOUNT_MULTIPLIER, ANOMALY_MIN_AMOUNT,
   FREQUENCY_HISTORY_MONTHS, FREQUENCY_MULTIPLIER, FREQUENCY_MIN_COUNT,
   CASH_DUPLICATE_CHECK_DAYS, CASH_WITHDRAWAL_KEYWORDS,
-  PIE_L3_PROMOTE_THRESHOLD,
+  PIE_L3_PROMOTE_THRESHOLD, PIE_MAX_SLICES,
   PACING_MIN_HISTORY_MONTHS, PACING_WARNING_MULTIPLIER, PACING_CRITICAL_MULTIPLIER, PACING_MIN_AMOUNT,
   RECURRING_MIN_HISTORY_MONTHS, RECURRING_MONTH_COVERAGE_RATIO,
 } from '../config/financialRules';
@@ -107,9 +107,14 @@ export const generateMonthlyPacingAlerts = (
 
   // 用全部歷史資料，算每個L2次分類「每個有出現過的月份」花了多少，取中位數當合理月度基準
   // （中位數比平均值更不受單月爆買影響，跟願望清單安全水位建議值用同一套邏輯）。
+  // 只看「變動支出」——固定支出(房租/電信/保費...)本來就是每月幾乎固定的已知數字，
+  // 而且常常是月初一次整筆扣款(不是分散在整個月慢慢花)，用「到今天應該花多少」這種
+  // 按天數比例推算的邏輯去比對，扣款當天就會被誤判成大幅超支，這不是真的異常，
+  // 只是這套配速邏輯本來就不適合用在「一次整筆扣款」的固定支出上（2026-07-23 Ivy
+  // 實測時發現電信費多收$1，順勢指出這點——固定支出不需要列入這裡的超支提醒）。
   const monthlyByL2: Record<string, Record<string, number>> = {}; // l2 -> yyyy-MM -> amount
   allTransactions.forEach(t => {
-    if (t.type !== 'expense') return;
+    if (t.type !== 'expense' || t.category.l1 !== L1Category.VARIABLE) return;
     const l2 = t.category.l2;
     if (!l2) return;
     const monthKey = format(parseISO(t.date), 'yyyy-MM');
@@ -119,7 +124,7 @@ export const generateMonthlyPacingAlerts = (
 
   const currentSpentByL2: Record<string, number> = {};
   currentPeriodTransactions.forEach(t => {
-    if (t.type !== 'expense') return;
+    if (t.type !== 'expense' || t.category.l1 !== L1Category.VARIABLE) return;
     const l2 = t.category.l2;
     if (!l2) return;
     currentSpentByL2[l2] = (currentSpentByL2[l2] || 0) + t.amount;
@@ -413,33 +418,99 @@ export interface CategoryPieSlice {
   name: string;
   amount: number;
   percent: number; // 0~100
+  topMerchant: string | null;   // 這一塊裡面金額最高的商家/店家（"其他"整併塊沒有這個資訊，會是null）
+  topMerchantAmount: number;
+  topMerchantCount: number;     // 那個商家在這一塊裡出現幾筆
 }
+
+type MerchantTally = Record<string, { amount: number; count: number }>;
+
+const addToMerchantTally = (tally: MerchantTally, merchant: string, amount: number) => {
+  if (!tally[merchant]) tally[merchant] = { amount: 0, count: 0 };
+  tally[merchant].amount += amount;
+  tally[merchant].count += 1;
+};
+
+const topMerchantFrom = (tally: MerchantTally) => {
+  let top: { name: string; amount: number; count: number } | null = null;
+  Object.entries(tally).forEach(([name, data]) => {
+    if (!top || data.amount > top.amount) top = { name, amount: data.amount, count: data.count };
+  });
+  return top;
+};
+
+const mergeMerchantTally = (target: MerchantTally, source: MerchantTally) => {
+  Object.entries(source).forEach(([name, data]) => {
+    if (!target[name]) target[name] = { amount: 0, count: 0 };
+    target[name].amount += data.amount;
+    target[name].count += data.count;
+  });
+};
 
 // 貓咪指揮中心開頭的分類比率圓餅圖：用L2次分類分塊（不是Fixed/Variable/Investment那個大類），
 // 如果某個L3細項自己就佔了全部支出很大一塊（超過PIE_L3_PROMOTE_THRESHOLD），
 // 從它所屬的L2塊拆出來單獨顯示一塊，方便看出「其實是某個具體東西買太多」，
 // 而不是被埋在一個大分類裡看不出來（例如「飲料」從「餐飲食品」拆出來）。
+// 每一塊都會標出裡面金額最高的商家/店家（連同出現次數），讓Ivy一眼看出這塊主要是被
+// 什麼撐起來的。塊數超過PIE_MAX_SLICES會把剩下的合併成「其他」，一方面避免圓餅圖
+// 被塞成幾十塊看不清楚，一方面確保配色不會重複用完。
 export const getCategoryPieData = (transactions: Transaction[]): CategoryPieSlice[] => {
-  const breakdown = getCategoryBreakdown(transactions, 'expense');
-  const total = breakdown.reduce((sum, item) => sum + item.amount, 0);
+  const expenseTxs = transactions.filter(t => t.type === 'expense');
+  const total = expenseTxs.reduce((sum, t) => sum + t.amount, 0);
   if (total <= 0) return [];
+
+  // 三層彙總：L2 -> L3 -> 商家，才能同時判斷「L3要不要拆出來」跟「這一塊裡面誰花最多」。
+  const l2Map: Record<string, { amount: number; l3Map: Record<string, { amount: number; merchants: MerchantTally }> }> = {};
+
+  expenseTxs.forEach(t => {
+    const l2 = t.category.l2 || '未分類';
+    const l3 = t.category.l3 || '';
+    const merchant = t.merchant || '未知商家';
+    if (!l2Map[l2]) l2Map[l2] = { amount: 0, l3Map: {} };
+    l2Map[l2].amount += t.amount;
+    if (!l2Map[l2].l3Map[l3]) l2Map[l2].l3Map[l3] = { amount: 0, merchants: {} };
+    l2Map[l2].l3Map[l3].amount += t.amount;
+    addToMerchantTally(l2Map[l2].l3Map[l3].merchants, merchant, t.amount);
+  });
 
   const slices: CategoryPieSlice[] = [];
 
-  breakdown.forEach(({ l2, amount, l3Breakdown }) => {
-    let remaining = amount;
-    l3Breakdown.forEach(({ l3, amount: l3Amount }) => {
-      if (l3 && l3Amount / total >= PIE_L3_PROMOTE_THRESHOLD) {
-        slices.push({ name: l3, amount: l3Amount, percent: (l3Amount / total) * 100 });
-        remaining -= l3Amount;
+  Object.entries(l2Map).forEach(([l2, l2Data]) => {
+    const remainderMerchants: MerchantTally = {};
+    let remainderAmount = 0;
+
+    Object.entries(l2Data.l3Map).forEach(([l3, l3Data]) => {
+      if (l3 && l3Data.amount / total >= PIE_L3_PROMOTE_THRESHOLD) {
+        const top = topMerchantFrom(l3Data.merchants);
+        slices.push({
+          name: l3, amount: l3Data.amount, percent: (l3Data.amount / total) * 100,
+          topMerchant: top?.name ?? null, topMerchantAmount: top?.amount ?? 0, topMerchantCount: top?.count ?? 0,
+        });
+      } else {
+        remainderAmount += l3Data.amount;
+        mergeMerchantTally(remainderMerchants, l3Data.merchants);
       }
     });
-    if (remaining > 0) {
-      slices.push({ name: l2, amount: remaining, percent: (remaining / total) * 100 });
+
+    if (remainderAmount > 0) {
+      const top = topMerchantFrom(remainderMerchants);
+      slices.push({
+        name: l2, amount: remainderAmount, percent: (remainderAmount / total) * 100,
+        topMerchant: top?.name ?? null, topMerchantAmount: top?.amount ?? 0, topMerchantCount: top?.count ?? 0,
+      });
     }
   });
 
-  return slices.sort((a, b) => b.amount - a.amount);
+  slices.sort((a, b) => b.amount - a.amount);
+
+  if (slices.length > PIE_MAX_SLICES) {
+    const visible = slices.slice(0, PIE_MAX_SLICES);
+    const restAmount = slices.slice(PIE_MAX_SLICES).reduce((sum, s) => sum + s.amount, 0);
+    visible.push({ name: '其他', amount: restAmount, percent: (restAmount / total) * 100, topMerchant: null, topMerchantAmount: 0, topMerchantCount: 0 });
+    return visible;
+  }
+
+  return slices;
 };
 
 export interface RecurringExpense {

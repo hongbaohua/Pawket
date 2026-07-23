@@ -48,6 +48,9 @@ export const CASH_WITHDRAWAL_KEYWORDS = ['atm', 'withdrawal', '提款', '領錢'
 // 預設用L2次分類分塊；如果某個L3細項單獨佔全部支出的比例超過這個門檻，
 // 就從它所屬的L2塊拆出來單獨顯示一塊（例如「飲料」從「餐飲食品」裡拆出來）。
 export const PIE_L3_PROMOTE_THRESHOLD = 0.15; // 15%
+// 最多顯示幾塊，超過的細項合併成「其他」——避免類別一多圓餅圖被塞成幾十塊看不清楚，
+// 也確保顏色不會重複用完（配色數量要跟這個數字對得上，見Dashboard.tsx的COLORS）。
+export const PIE_MAX_SLICES = 9;
 
 // ── 10. 月度花費配速警示（取代舊的、跟寫死budgets比較的generateTimeWeightedAlerts） ──
 // 用「這個L2次分類過去每個月實際花多少」的中位數當作合理基準，

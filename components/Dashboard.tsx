@@ -33,7 +33,11 @@ interface DashboardProps {
   setCustomRange: (range: {start: Date, end: Date}) => void;
 }
 
-const COLORS = ['#FBBF24', '#34D399', '#F472B6', '#A78BFA', '#60A5FA'];
+// 分類比率圓餅圖用的配色——9種（配合financialRules.ts的PIE_MAX_SLICES=9），
+// 顏色數量跟最多顯示塊數對得上，所以正常狀況下不會重複用到同一色。
+// 「其他」整併塊固定用灰色(見OTHER_SLICE_COLOR)，不吃這個陣列，跟其他塊視覺上明顯區分。
+const COLORS = ['#FBBF24', '#34D399', '#F472B6', '#A78BFA', '#60A5FA', '#FB923C', '#4ADE80', '#F87171', '#38BDF8'];
+const OTHER_SLICE_COLOR = '#CBD5E1';
 const MONTH_NAMES = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 
 // 願望清單卡片（2026-07-21重新設計，取代舊的「夢想目標」存錢進度條）：
@@ -470,7 +474,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-6 rounded-[40px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增願望清單</div>}
           <div className="bg-white p-6 rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 flex flex-col">
               <h4 className="font-bold text-slate-700 flex items-center gap-2"><PieIcon className="w-5 h-5 text-amber-400" />本期消費分類比率</h4>
-              <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：本期全部支出依次分類(L2)加總；如果某個細項(L3)單獨超過總支出15%會拆成獨立一塊（例如飲料）。</p>
+              <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：本期全部支出依次分類(L2)加總；如果某個細項(L3)單獨超過總支出15%會拆成獨立一塊（例如飲料）；每塊列出裡面金額最高的商家/店家；超過9塊時，剩下的合併成灰色的「其他」。</p>
               {pieData.length === 0 ? (
                 <p className="text-sm text-slate-300 font-medium py-6 text-center flex-1 flex items-center justify-center">這期間還沒有支出紀錄喵～</p>
               ) : (
@@ -479,16 +483,22 @@ const Dashboard: React.FC<DashboardProps> = ({
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
                                 <Pie data={pieData} dataKey="amount" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
-                                    {pieData.map((_, idx) => <Cell key={idx} fill={COLORS[idx % COLORS.length]} />)}
+                                    {pieData.map((slice, idx) => <Cell key={idx} fill={slice.name === '其他' ? OTHER_SLICE_COLOR : COLORS[idx % COLORS.length]} />)}
                                 </Pie>
                                 <Tooltip formatter={(value: number, name: string) => [`$${Math.round(value).toLocaleString()}`, name]} />
                             </PieChart>
                         </ResponsiveContainer>
                     </div>
-                    <div className="w-full sm:w-1/2 space-y-2">
-                        {pieData.slice(0, 6).map((slice, idx) => (
-                            <div key={slice.name} className="flex items-center justify-between gap-2 text-xs">
-                                <span className="flex items-center gap-1.5 font-bold text-slate-600 truncate"><span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[idx % COLORS.length] }}></span>{slice.name}</span>
+                    <div className="w-full sm:w-1/2 space-y-2.5">
+                        {pieData.map((slice, idx) => (
+                            <div key={slice.name} className="flex items-start justify-between gap-2 text-xs">
+                                <span className="flex items-start gap-1.5 font-bold text-slate-600 min-w-0">
+                                    <span className="w-2.5 h-2.5 rounded-full shrink-0 mt-0.5" style={{ backgroundColor: slice.name === '其他' ? OTHER_SLICE_COLOR : COLORS[idx % COLORS.length] }}></span>
+                                    <span className="flex flex-col min-w-0">
+                                        <span className="truncate">{slice.name}</span>
+                                        {slice.topMerchant && <span className="text-[10px] font-normal text-slate-400 truncate">最多：{slice.topMerchant}（{slice.topMerchantCount}筆）</span>}
+                                    </span>
+                                </span>
                                 <span className="text-slate-400 font-mono shrink-0">{slice.percent.toFixed(0)}%</span>
                             </div>
                         ))}
@@ -502,7 +512,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       {timeScope !== 'all' && alerts.length > 0 && (
           <div data-pdf-section className="bg-white p-6 rounded-[30px] border border-amber-100 shadow-sm">
             <h3 className="text-sm font-bold text-slate-500 flex items-center gap-2 uppercase tracking-wider"><AlertCircle className="w-4 h-4 text-rose-400" />需立即關注的項目</h3>
-            <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：拿這個次分類過去每個月實際花費的中位數當基準，依本期已過天數算出「到今天應該花多少」，實際花費明顯超過才會列在這裡。</p>
+            <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：只看變動支出（固定支出通常是每月固定金額、整筆扣款，不適合用「按天數配速」比較），拿這個次分類過去每個月實際花費的中位數當基準，依本期已過天數算出「到今天應該花多少」，實際花費明顯超過才會列在這裡。</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {alerts.slice(0, 4).map(alert => (
                     <div key={alert.id} className={`p-4 rounded-2xl border flex items-start gap-3 ${alert.level === 'critical' ? 'bg-rose-50 border-rose-100' : 'bg-amber-50 border-amber-100'}`}>
