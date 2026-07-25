@@ -136,7 +136,8 @@ def fmt_discounts(discounts):
 COLUMNS = ['id', 'date', 'merchant', 'type', 'amount', 'grossAmount', 'discounts',
            'l1', 'l2', 'l3', 'paymentChannel', 'items', 'note',
            'specialTag_type', 'specialTag_counterparty', 'specialTag_note',
-           'fromAccountId', 'toAccountId', 'originalText', 'AI查核備註']
+           'fromAccountId', 'toAccountId', 'originalText', 'AI查核備註', 'Ivy的備註']
+IVY_NOTE_COL = len(COLUMNS)  # 給Ivy自己填的欄位，一律空白，跟AI查核備註區分開
 
 wb = openpyxl.Workbook()
 ws = wb.active
@@ -146,6 +147,8 @@ header_font = Font(name='Arial', bold=True, color='FFFFFF')
 header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
 normal_font = Font(name='Arial', size=10)
 remark_fill = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
+# Ivy自己要填的那一欄用淺藍色打底(跟AI查核備註的黃色區分開)，一看就知道這欄是留給她寫的。
+ivy_note_fill = PatternFill(start_color='DDEBF7', end_color='DDEBF7', fill_type='solid')
 
 for ci, col in enumerate(COLUMNS, start=1):
     cell = ws.cell(row=1, column=ci, value=col)
@@ -171,16 +174,18 @@ for tx in sorted(txs, key=lambda t: (t['date'], t['id'])):
         tx.get('paymentChannel', ''), fmt_items(tx.get('items')), tx.get('note', ''),
         st.get('type', ''), st.get('counterparty', ''), st.get('note', ''),
         tx.get('fromAccountId', ''), tx.get('toAccountId', ''),
-        tx.get('originalText', ''), remark,
+        tx.get('originalText', ''), remark, '',
     ]
     for ci, v in enumerate(values, start=1):
         cell = ws.cell(row=row_i, column=ci, value=v)
         cell.font = normal_font
-        if ci == len(COLUMNS) and remark:
+        if ci == len(COLUMNS) - 1 and remark:
             cell.fill = remark_fill
+        if ci == IVY_NOTE_COL:
+            cell.fill = ivy_note_fill
     row_i += 1
 
-widths = [10, 11, 18, 9, 8, 10, 16, 10, 10, 10, 12, 30, 20, 12, 14, 14, 10, 10, 40, 55]
+widths = [10, 11, 18, 9, 8, 10, 16, 10, 10, 10, 12, 30, 20, 12, 14, 14, 10, 10, 40, 55, 40]
 for ci, w in enumerate(widths, start=1):
     ws.column_dimensions[get_column_letter(ci)].width = w
 

@@ -1,11 +1,20 @@
 
 import React, { useState, useRef, useMemo, useEffect } from 'react';
-import { Upload, Check, Loader2, X, Sparkles, FileText, ArrowUpCircle, ArrowDownCircle, Plus, PawPrint, ScanLine, Trash2, RotateCcw, Calendar, DollarSign, Store, Calculator, ChevronRight, Tag, History, Receipt, CornerDownRight, Coins, AlertTriangle, Divide } from 'lucide-react';
-import { analyzeStatementImage } from '../services/geminiService';
+import { Upload, Check, Loader2, X, Sparkles, FileText, ArrowUpCircle, ArrowDownCircle, Plus, PawPrint, ScanLine, Trash2, RotateCcw, Calendar, DollarSign, Store, Calculator, ChevronRight, Tag, History, Receipt, CornerDownRight, Coins, AlertTriangle, Divide, Lock, FileSearch } from 'lucide-react';
+import { analyzeStatementImage, analyzeStatementText } from '../services/geminiService';
+import { extractPdfText, looksLikeScannedPdf, PdfPasswordRequiredError } from '../services/pdfTextExtractor';
 import { Transaction, L1Category, TransactionType, STANDARD_CATEGORIES, CATEGORY_LABELS } from '../types';
 import { applyHistoricalCategory, checkCashDuplicate } from '../services/logicService';
 import { v4 as uuidv4 } from 'uuid';
 import SplitModal from './SplitModal';
+
+const dataUrlToArrayBuffer = (dataUrl: string): ArrayBuffer => {
+  const base64 = dataUrl.split(',')[1] || '';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+};
 
 interface ScannerProps {
   onTransactionsAdded: (transactions: Transaction[]) => void;
@@ -20,6 +29,8 @@ const Scanner: React.FC<ScannerProps> = ({ onTransactionsAdded, history }) => {
 
   const [lastDeleted, setLastDeleted] = useState<{ item: Transaction, index: number } | null>(null);
   const undoTimeoutRef = useRef<number | null>(null);
+  const [scanSummary, setScanSummary] = useState<string | null>(null);
+  const scanSummaryTimeoutRef = useRef<number | null>(null);
   
   const [activeSelectorId, setActiveSelectorId] = useState<string | null>(null);
   const [selectorTab, setSelectorTab] = useState<L1Category | null>(null);
@@ -33,6 +44,55 @@ const Scanner: React.FC<ScannerProps> = ({ onTransactionsAdded, history }) => {
     date: string; merchant: string; amount: string; type: TransactionType;
   }>({ date: '', merchant: '', amount: '', type: 'expense' });
   const [cashDupeWarning, setCashDupeWarning] = useState(false);
+
+  // PDF結構化解析用：處理到需要密碼的PDF時跳出這個提示框，resolve帶回使用者輸入的密碼
+  // (或null代表使用者選擇跳過，改走原本的圖片OCR備援)。
+  const [pdfPasswordPrompt, setPdfPasswordPrompt] = useState<{ isRetry: boolean; resolve: (pw: string | null) => void } | null>(null);
+  const [pdfPasswordInput, setPdfPasswordInput] = useState('');
+  const rememberedPdfPassword = useRef<string | null>(null);
+
+  const askForPdfPassword = (isRetry: boolean): Promise<string | null> => {
+    setPdfPasswordInput('');
+    return new Promise(resolve => setPdfPasswordPrompt({ isRetry, resolve }));
+  };
+
+  // 每一份上傳的檔案怎麼被辨識：PDF先試著直接抽文字(結構化解析，快又免費又不會看錯字)，
+  // 有密碼保護就跳窗問一次(同一批PDF通常共用同一組密碼，答對一次後面就不用再問)；
+  // 如果抽出來的文字太少(代表是掃描圖片型PDF，不是文字型)，或密碼一直不對、使用者選擇跳過，
+  // 就退回原本「整份當圖片丟給AI辨識」的做法保底，不會讓整批處理卡住。
+  // 回傳實際用到的辨識方式，讓呼叫端可以統計這次掃描裡有幾份是走(免費快速的)文字解析。
+  const processOnePreview = async (src: string): Promise<{ transactions: Transaction[]; method: 'pdf-text' | 'image-ocr' }> => {
+    const isPdf = src.startsWith('data:application/pdf');
+    if (!isPdf) {
+      return { transactions: await analyzeStatementImage(src), method: 'image-ocr' };
+    }
+
+    const buffer = dataUrlToArrayBuffer(src);
+    let password = rememberedPdfPassword.current || undefined;
+
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const result = await extractPdfText(buffer, password);
+        if (looksLikeScannedPdf(result)) {
+          return { transactions: await analyzeStatementImage(src), method: 'image-ocr' }; // 掃描圖片型PDF，文字層幾乎是空的，退回圖片OCR
+        }
+        if (password) rememberedPdfPassword.current = password;
+        return { transactions: await analyzeStatementText(result.text), method: 'pdf-text' };
+      } catch (err) {
+        if (err instanceof PdfPasswordRequiredError) {
+          const input = await askForPdfPassword(err.isRetry);
+          if (input === null) {
+            return { transactions: await analyzeStatementImage(src), method: 'image-ocr' }; // 使用者放棄輸入密碼，退回圖片OCR
+          }
+          password = input;
+          continue;
+        }
+        // 其他解析錯誤(檔案損毀等)，退回圖片OCR保底，不讓整批處理中斷
+        return { transactions: await analyzeStatementImage(src), method: 'image-ocr' };
+      }
+    }
+    return { transactions: await analyzeStatementImage(src), method: 'image-ocr' };
+  };
 
   const summaries = useMemo(() => {
     const income = draftTransactions.filter(t => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
@@ -96,12 +156,23 @@ const Scanner: React.FC<ScannerProps> = ({ onTransactionsAdded, history }) => {
     if (previews.length === 0) return;
     setIsProcessing(true);
     try {
-      const analysisPromises = previews.map(img => analyzeStatementImage(img));
-      const resultsArray = await Promise.all(analysisPromises);
-      const combinedResults = resultsArray.flat();
+      // PDF可能需要跳窗問密碼，必須一份一份處理(不能像圖片那樣直接平行送出)。
+      const combinedResults: Transaction[] = [];
+      let pdfTextCount = 0, imageOcrCount = 0;
+      for (const src of previews) {
+        const { transactions, method } = await processOnePreview(src);
+        combinedResults.push(...transactions);
+        if (method === 'pdf-text') pdfTextCount++; else imageOcrCount++;
+      }
       const smartResults = combinedResults.map(tx => applyHistoricalCategory(tx, history));
       setDraftTransactions(prev => [...prev, ...smartResults]);
-      setPreviews([]); 
+      setPreviews([]);
+
+      if (pdfTextCount > 0) {
+        setScanSummary(`✨ ${pdfTextCount}份PDF直接用文字解析(快速免費)${imageOcrCount > 0 ? `，${imageOcrCount}份用AI圖片辨識` : ''}`);
+        if (scanSummaryTimeoutRef.current) clearTimeout(scanSummaryTimeoutRef.current);
+        scanSummaryTimeoutRef.current = window.setTimeout(() => setScanSummary(null), 5000);
+      }
     } catch (error) {
       console.error(error); alert("部分檔案掃描發生錯誤，請檢查圖片清晰度 😿");
     } finally { setIsProcessing(false); }
@@ -172,7 +243,7 @@ const Scanner: React.FC<ScannerProps> = ({ onTransactionsAdded, history }) => {
 
   const handleCommit = () => { onTransactionsAdded(draftTransactions); setDraftTransactions([]); setPreviews([]); setLastDeleted(null); };
 
-  useEffect(() => { return () => { if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current); }; }, []);
+  useEffect(() => { return () => { if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current); if (scanSummaryTimeoutRef.current) clearTimeout(scanSummaryTimeoutRef.current); }; }, []);
 
   const renderCategorySelector = (t: Transaction) => (
     <div className="relative">
@@ -309,10 +380,46 @@ const Scanner: React.FC<ScannerProps> = ({ onTransactionsAdded, history }) => {
       )}
     </div>
     {lastDeleted && (<div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-bottom-4"><div className="bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-4"><span className="text-sm font-medium">已移除 1 筆交易</span><button onClick={handleUndo} className="text-amber-400 font-bold text-sm hover:text-amber-300 flex items-center gap-1"><RotateCcw className="w-4 h-4" /> 復原 (Undo)</button></div></div>)}
+    {scanSummary && (<div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-bottom-4"><div className="bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-2"><FileSearch className="w-4 h-4 text-amber-400 shrink-0" /><span className="text-sm font-medium">{scanSummary}</span></div></div>)}
     {isAddModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center"><div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity" onClick={() => setIsAddModalOpen(false)}></div><div className="relative bg-[#FFFBF5] w-full max-w-lg sm:rounded-[40px] rounded-t-[40px] shadow-2xl overflow-hidden animate-in slide-in-from-bottom-10 duration-300 flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()} ><div className="p-6 border-b border-amber-100 bg-white/50 flex justify-between items-center shrink-0"><h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-2"><div className="p-2 bg-amber-100 text-amber-500 rounded-xl"><Coins className="w-5 h-5" /></div>現金記帳 (Cash Entry)</h3><button onClick={() => setIsAddModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition"><X className="w-6 h-6 text-slate-400" /></button></div><div className="p-6 space-y-6 overflow-y-auto"><div className="flex p-1 bg-white rounded-2xl border border-slate-100"><button onClick={() => setNewTxData({...newTxData, type: 'expense'})} className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all ${newTxData.type === 'expense' ? 'bg-rose-50 text-rose-500 shadow-sm' : 'text-slate-400'}`}><ArrowDownCircle className="w-4 h-4" /> 現金支出</button><button onClick={() => setNewTxData({...newTxData, type: 'income'})} className={`flex-1 py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all ${newTxData.type === 'income' ? 'bg-emerald-50 text-emerald-500 shadow-sm' : 'text-slate-400'}`}><ArrowUpCircle className="w-4 h-4" /> 現金收入</button></div><div className="space-y-4"><div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1 flex items-center gap-1"><Calendar className="w-3 h-3"/> 日期</label><input type="date" value={newTxData.date} onChange={e => { setNewTxData({...newTxData, date: e.target.value}); }} onBlur={checkDuplicateEffect} className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 focus:ring-2 focus:ring-amber-200 outline-none shadow-sm" /></div><div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1 flex items-center gap-1"><Store className="w-3 h-3"/> 商家或項目名稱</label><input type="text" value={newTxData.merchant} onChange={e => setNewTxData({...newTxData, merchant: e.target.value})} className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 focus:ring-2 focus:ring-amber-200 outline-none shadow-sm" /></div><div className="space-y-1"><label className="text-xs font-bold text-slate-400 ml-1 flex items-center gap-1"><DollarSign className="w-3 h-3"/> 金額</label><input type="number" value={newTxData.amount} onChange={e => { setNewTxData({...newTxData, amount: e.target.value}); }} onBlur={checkDuplicateEffect} className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold text-xl text-slate-700 focus:ring-2 focus:ring-amber-200 outline-none shadow-sm" /></div>{cashDupeWarning && (<div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex gap-2 items-start animate-in fade-in slide-in-from-top-2"><AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" /><p className="text-xs text-amber-700 leading-relaxed font-medium">Meow~ 發現您最近有提款紀錄！<br/>請確認這筆現金支出是否為「重複記帳」？</p></div>)}</div><button onClick={saveNewTransaction} className="w-full py-4 bg-amber-400 text-white rounded-2xl font-bold text-lg shadow-lg hover:bg-amber-500 transition transform active:scale-95 flex justify-center items-center gap-2"><Check className="w-5 h-5" /> 加入清單</button></div><div className="h-6 w-full bg-white shrink-0"></div></div></div>
     )}
     {splittingDraft && <SplitModal transaction={splittingDraft} onClose={() => setSplittingDraft(null)} onSave={handleSplitSave} />}
+    {pdfPasswordPrompt && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-[32px] shadow-2xl p-6 w-full max-w-sm">
+                <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2.5 bg-amber-100 text-amber-500 rounded-2xl"><Lock className="w-5 h-5" /></div>
+                    <h3 className="font-extrabold text-slate-700 text-lg">PDF有密碼保護</h3>
+                </div>
+                {pdfPasswordPrompt.isRetry && <p className="text-xs text-rose-500 font-bold mb-3">密碼不對，請再試一次</p>}
+                <input
+                    type="password"
+                    autoFocus
+                    value={pdfPasswordInput}
+                    onChange={e => setPdfPasswordInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && pdfPasswordInput) { pdfPasswordPrompt.resolve(pdfPasswordInput); setPdfPasswordPrompt(null); } }}
+                    placeholder="請輸入這份PDF的開啟密碼"
+                    className="w-full p-4 bg-[#FFFBF5] border border-slate-200 rounded-2xl font-bold text-slate-700 focus:ring-2 focus:ring-amber-200 outline-none mb-4"
+                />
+                <div className="flex gap-3">
+                    <button
+                        onClick={() => { pdfPasswordPrompt.resolve(null); setPdfPasswordPrompt(null); }}
+                        className="flex-1 py-3 bg-slate-100 text-slate-500 rounded-2xl font-bold hover:bg-slate-200 transition"
+                    >
+                        跳過(改用圖片辨識)
+                    </button>
+                    <button
+                        onClick={() => { if (pdfPasswordInput) { pdfPasswordPrompt.resolve(pdfPasswordInput); setPdfPasswordPrompt(null); } }}
+                        disabled={!pdfPasswordInput}
+                        className="flex-1 py-3 bg-amber-400 text-white rounded-2xl font-bold hover:bg-amber-500 transition disabled:opacity-40"
+                    >
+                        確定
+                    </button>
+                </div>
+            </div>
+        </div>
+    )}
     </div>
   );
 };

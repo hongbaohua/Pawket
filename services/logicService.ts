@@ -714,17 +714,25 @@ export const checkCashDuplicate = (newCashTx: Transaction, history: Transaction[
     return potentialMatches.length > 0;
 };
 
-export const calculateRunway = (allTransactions: Transaction[]) => {
-    const totalIncome = allTransactions.filter(t => t.type === 'income').reduce((a, t) => a + t.amount, 0);
-    const totalExpense = allTransactions.filter(t => t.type === 'expense').reduce((a, t) => a + t.amount, 0);
-    const currentBalance = Math.max(totalIncome - totalExpense, 0);
+// 現金緩衝耗盡預警(Runway)：估算「照最近的燒錢速度，手上真的能動用的錢還能撐幾天」。
+// 2026-07-23重新設計（Ivy確認）：
+// - 餘額改用「可動用餘額」(現金+金融卡帳戶的真實餘額，沿用calculateWishlistMetrics
+//   已經在用的定義)，不再用「全部收入減全部支出」這種混算所有帳戶(含信用卡/電子
+//   支付/儲值卡)的虛擬數字——後者算出來的不是真的能花的錢。
+// - 燒錢速度改成固定支出+變動支出一起算，不再只看變動支出——房租水電這些固定支出
+//   一樣會讓現金變少，只算變動支出會低估真實燒錢速度、高估還能撐幾天。
+export const calculateRunway = (allTransactions: Transaction[], accounts: Account[]) => {
+    const liquidAccounts = accounts.filter(a => !a.isArchived && (a.type === 'cash' || a.type === 'bank_debit'));
+    const balances = calculateAccountBalances(liquidAccounts, allTransactions);
+    const currentBalance = Math.max(liquidAccounts.reduce((sum, a) => sum + (balances[a.id] || 0), 0), 0);
+
     const now = new Date();
     const windowStart = subDays(now, RUNWAY_ANALYSIS_WINDOW_DAYS);
-    const recentVariableExpenses = allTransactions
+    const recentExpenses = allTransactions
         .filter(t => {
             const d = parseISO(t.date);
             return t.type === 'expense'
-                && t.category.l1 === L1Category.VARIABLE
+                && (t.category.l1 === L1Category.VARIABLE || t.category.l1 === L1Category.FIXED)
                 && isAfter(d, windowStart)
                 && isBefore(d, now);
         })
@@ -734,7 +742,7 @@ export const calculateRunway = (allTransactions: Transaction[]) => {
         : now.toISOString();
     const actualDays = Math.min(RUNWAY_ANALYSIS_WINDOW_DAYS, differenceInDays(now, parseISO(firstTxDate)) + 1);
     const daysDivisor = Math.max(actualDays, 1);
-    const dailyBurnRate = recentVariableExpenses / daysDivisor;
+    const dailyBurnRate = recentExpenses / daysDivisor;
     let daysRemaining = 9999;
     let depletionDate: Date | null = null;
     if (dailyBurnRate > 0) {

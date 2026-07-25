@@ -118,7 +118,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     [wishlistItems, accounts, allTransactions, wishlistSettings.dailyBuffer, wishlistSettings.emergencyFund]
   );
   const penaltyData = useMemo(() => timeScope === 'all' ? { isOverspent: false, overage: 0, penaltyAmount: 0 } : calculateProjectedPenalty(transactions, budgets, penaltyConfig), [transactions, budgets, penaltyConfig, timeScope]);
-  const runwayData = useMemo(() => calculateRunway(allTransactions), [allTransactions]);
+  const runwayData = useMemo(() => calculateRunway(allTransactions, accounts), [allTransactions, accounts]);
 
   const [expandedL2, setExpandedL2] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -617,7 +617,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <div className={`p-4 rounded-full shrink-0 ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-200 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}><Hourglass className="w-8 h-8" /></div>
                 <div><h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">現金緩衝耗盡預警</h4><span className={`text-2xl font-black ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'text-rose-600' : 'text-slate-700'}`}>{runwayData.daysRemaining > 3650 ? '> 10 年' : `${runwayData.daysRemaining} 天`}</span></div>
               </div>
-              <p className="text-[10px] text-slate-300">來源：（全部收入－全部支出，多帳戶混算，並非真實單一帳戶餘額）÷最近90天變動支出日均，估算照這個燒錢速度還能撐幾天，不含固定支出，僅供參考</p>
+              <p className="text-[10px] text-slate-300">來源：可動用餘額（現金+金融卡帳戶，不含信用卡/電子支付/儲值卡）÷最近90天固定+變動支出的日均燒錢速度，估算照這個速度還能撐幾天</p>
           </div>
       </div>
     </div>

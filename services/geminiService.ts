@@ -59,15 +59,57 @@ Task: Extract transaction records from bank statement images/PDFs into structure
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-export const analyzeStatementImage = async (base64Image: string): Promise<Transaction[]> => {
-  // Lazy initialization to ensure env vars are ready
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
-  // Clean base64 string
-  const mimeMatch = base64Image.match(/^data:(.*?);base64,/);
-  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
-  const cleanBase64 = base64Image.replace(/^data:.*?;base64,/, '');
+const TRANSACTION_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    transactions: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          date: { type: Type.STRING, description: "YYYY-MM-DD" },
+          merchant: { type: Type.STRING },
+          amount: { type: Type.NUMBER },
+          type: { type: Type.STRING, enum: ["income", "expense"] },
+          confidence: { type: Type.NUMBER },
+          l1_category: { type: Type.STRING, enum: ["Fixed", "Variable", "Investment", "Income"] },
+          l2_category: { type: Type.STRING },
+          l3_category: { type: Type.STRING }
+        },
+        required: ["date", "merchant", "amount", "type", "l1_category"]
+      }
+    }
+  }
+};
 
+// 兩種來源(圖片OCR / PDF文字解析)最後都要轉成同一種Transaction格式，這段共用邏輯抽出來，
+// 避免兩個function各寫一份、以後改欄位對應規則要改兩個地方。
+const mapResponseToTransactions = (responseText: string): Transaction[] => {
+  const parsed = JSON.parse(responseText);
+  const rawList = parsed.transactions || (Array.isArray(parsed) ? parsed : []);
+
+  return rawList.map((item: any) => ({
+    id: uuidv4(),
+    date: item.date,
+    merchant: item.merchant || "Unknown Merchant",
+    originalText: `${item.merchant} ${item.amount}`,
+    amount: item.amount,
+    type: (item.type?.toLowerCase() === 'income') ? 'income' : 'expense',
+    category: {
+      l1: item.l1_category as L1Category || L1Category.VARIABLE,
+      l2: item.l2_category || '其他雜項', // Default fallback
+      l3: item.l3_category || ''
+    },
+    confidence: item.confidence || OCR_DEFAULT_CONFIDENCE,
+    isVerified: (item.confidence || 0) >= OCR_VERIFY_CONFIDENCE_THRESHOLD,
+    isSplit: false
+  }));
+};
+
+// 共用的重試迴圈：呼叫Gemini、解析回應、失敗時指數退避重試。傳入的parts決定這次是
+// 圖片OCR還是文字解析，其餘邏輯(schema/重試/欄位轉換)完全共用。
+const runExtraction = async (parts: any[]): Promise<Transaction[]> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const MAX_RETRIES = OCR_MAX_RETRIES;
   let lastError: any;
 
@@ -75,62 +117,17 @@ export const analyzeStatementImage = async (base64Image: string): Promise<Transa
     try {
       const response = await ai.models.generateContent({
         model: GEMINI_MODEL,
-        contents: {
-          parts: [
-            { inlineData: { mimeType: mimeType, data: cleanBase64 } },
-            { text: "Extract transaction data. Follow strict logic rules, especially for Income/Expense detection." }
-          ]
-        },
+        contents: { parts },
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
           responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              transactions: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    date: { type: Type.STRING, description: "YYYY-MM-DD" },
-                    merchant: { type: Type.STRING },
-                    amount: { type: Type.NUMBER },
-                    type: { type: Type.STRING, enum: ["income", "expense"] },
-                    confidence: { type: Type.NUMBER },
-                    l1_category: { type: Type.STRING, enum: ["Fixed", "Variable", "Investment", "Income"] },
-                    l2_category: { type: Type.STRING },
-                    l3_category: { type: Type.STRING }
-                  },
-                  required: ["date", "merchant", "amount", "type", "l1_category"]
-                }
-              }
-            }
-          }
+          responseSchema: TRANSACTION_RESPONSE_SCHEMA
         }
       });
 
       const text = response.text;
       if (!text) throw new Error("Empty response from Gemini");
-
-      const parsed = JSON.parse(text);
-      const rawList = parsed.transactions || (Array.isArray(parsed) ? parsed : []);
-
-      return rawList.map((item: any) => ({
-        id: uuidv4(),
-        date: item.date,
-        merchant: item.merchant || "Unknown Merchant",
-        originalText: `${item.merchant} ${item.amount}`,
-        amount: item.amount,
-        type: (item.type?.toLowerCase() === 'income') ? 'income' : 'expense',
-        category: {
-          l1: item.l1_category as L1Category || L1Category.VARIABLE,
-          l2: item.l2_category || '其他雜項', // Default fallback
-          l3: item.l3_category || ''
-        },
-        confidence: item.confidence || OCR_DEFAULT_CONFIDENCE,
-        isVerified: (item.confidence || 0) >= OCR_VERIFY_CONFIDENCE_THRESHOLD,
-        isSplit: false
-      }));
+      return mapResponseToTransactions(text);
 
     } catch (error) {
       console.warn(`Attempt ${attempt + 1} failed:`, error);
@@ -142,5 +139,26 @@ export const analyzeStatementImage = async (base64Image: string): Promise<Transa
     }
   }
 
-  throw lastError || new Error("Failed to process image after multiple attempts.");
+  throw lastError || new Error("Failed to process statement after multiple attempts.");
+};
+
+export const analyzeStatementImage = async (base64Image: string): Promise<Transaction[]> => {
+  // Clean base64 string
+  const mimeMatch = base64Image.match(/^data:(.*?);base64,/);
+  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+  const cleanBase64 = base64Image.replace(/^data:.*?;base64,/, '');
+
+  return runExtraction([
+    { inlineData: { mimeType: mimeType, data: cleanBase64 } },
+    { text: "Extract transaction data. Follow strict logic rules, especially for Income/Expense detection." }
+  ]);
+};
+
+// PDF結構化解析用：直接把PDF抽出來的純文字(見services/pdfTextExtractor.ts)交給Gemini結構化，
+// 不用把整份PDF當圖片辨識——文字比圖片token少很多(便宜)、也不會有OCR看錯字的問題，
+// 前提是這份PDF本身有文字層(不是掃描圖片)，這件事由呼叫端用looksLikeScannedPdf先判斷過。
+export const analyzeStatementText = async (extractedText: string): Promise<Transaction[]> => {
+  return runExtraction([
+    { text: "The following is text extracted directly from a bank statement PDF (not an image). Extract transaction data. Follow strict logic rules, especially for Income/Expense detection.\n\n--- PDF TEXT START ---\n" + extractedText + "\n--- PDF TEXT END ---" }
+  ]);
 };
