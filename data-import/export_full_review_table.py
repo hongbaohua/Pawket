@@ -24,6 +24,10 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 ROOT = r'C:\Users\Master\Projects\Pawket'
 OUT_PATH = ROOT + r'\Pawket\data-import\全面資料查核表_2026-07-23.xlsx'
+# Ivy反應在Pawket\data-import\深層路徑裡找不到這份檔案——比照CLAUDE.md「不該讓Ivy自己
+# 巡查資料夾找東西」的原則，另外存一份在最外層根目錄，這才是Ivy真正應該打開的位置，
+# 每次重新產生都會同步更新這個副本。
+IVY_COPY_PATH = ROOT + r'\查核表_請在這裡填寫.xlsx'
 IVY_USER_ID = '56dd1f4e-32c5-41ba-8da4-7eabce8b7b70'  # 見PROJECT_STATUS.md「新能力」小節
 
 print('查詢Supabase即時資料中...')
@@ -297,6 +301,8 @@ ws2.freeze_panes = 'A3'
 ws2.auto_filter.ref = f'A1:{get_column_letter(len(COLUMNS))}{2 + BLANK_ROWS}'
 
 wb.save(OUT_PATH)
+wb.save(IVY_COPY_PATH)
 print('已輸出:', OUT_PATH)
+print('Ivy版本(請打開這份):', IVY_COPY_PATH)
 print('全面資料查核:', row_i - 2, '筆')
 print('新增交易範本: 已建立', BLANK_ROWS, '個空白列供填寫')
