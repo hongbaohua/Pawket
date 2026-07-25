@@ -44,7 +44,9 @@ const CalcInput = React.forwardRef<HTMLInputElement, {
     <input
       ref={ref}
       type="text"
-      inputMode="decimal"
+      // 2026-07-24 修正：這裡故意不設inputMode="decimal"——手機上decimal模式只會跳出
+      // 純數字鍵盤(沒有+-*/()跟英文字母)，讓Ivy根本打不了算式(這正是這個欄位存在的目的)。
+      // 不設inputMode會用瀏覽器預設的完整鍵盤，才能真的打出 280*0.93+50 這種算式。
       readOnly={readOnly}
       value={draft}
       onChange={e => setDraft(e.target.value)}
@@ -140,21 +142,36 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     }));
   };
   const removeItemRow = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx));
+  // 2026-07-24 Ivy反應：品項單價都填好了，填折扣時卻要她自己手算原始金額——
+  // 品項合計本來就算得出來，不該要她重算一次。提供「帶入品項合計」按鈕(不是自動覆蓋，
+  // 避免她正在手動調整金額時被意外蓋掉)，讓她一鍵把品項單價×數量的加總填進去。
+  const itemsSubtotal = useMemo(
+    () => items.reduce((sum, it) => sum + (it.unitPrice != null ? it.unitPrice * (it.quantity || 1) : 0), 0),
+    [items]
+  );
   const toggleItemExpanded = (idx: number) => setExpandedItemIdx(prev => {
     const next = new Set(prev);
     if (next.has(idx)) next.delete(idx); else next.add(idx);
     return next;
   });
 
-  // 外幣試算小工具：跟折扣計算同樣的邏輯，使用者只要填「原幣金額」+「匯率」，
-  // 自動算出單價(台幣)+寫進備註，不用自己按計算機算完再手動打字進來。
-  // 這兩個欄位是暫時的計算輸入，不直接存進 TransactionItem，算出結果後才寫回 unitPrice/note。
+  // 外幣/代購折扣試算小工具：使用者填「原幣金額」+「匯率」+（選填）「跟團折扣%」，
+  // 再選進位方式，自動算出單價(台幣)+寫進備註，不用自己按計算機算完再手動打字進來。
+  // 這幾個欄位是暫時的計算輸入，不直接存進 TransactionItem，算出結果後才寫回 unitPrice/note。
+  //
+  // 2026-07-24 Ivy反應：代購常見算法是「外幣原價 × 跟團折扣，再指定進位方式」，原本只有
+  // 匯率換算、沒有折扣%跟進位選項，她只能自己在單價欄位手動打算式(而且打算式的鍵盤bug
+  // 這次也一併修好了)。加了折扣%欄位(留空=無折扣)+進位方式三選一(四捨五入/無條件進位/
+  // 無條件捨去)，公式：單價 = 進位(原幣金額 × 匯率 × (1 − 折扣% / 100))。
   //
   // 2026-07-23 Ivy反應：填過外幣的品項，重新打開只看到換算後的台幣數字，原幣金額/匯率
   // 都要點開「這項是外幣」才看得到，備註文字又要另外看，太麻煩。改成：重新打開時只要
   // 備註格式單純(只有「金額×匯率X」，沒有折扣這種額外文字混在中間)，就自動展開試算欄位
-  // 並把原幣金額/匯率回填好；備註格式比較複雜(例如包含「折」)寧可不猜、維持原樣顯示
-  // 純文字，也不要猜錯值塞回試算欄位造成二次錯誤。
+  // 並把原幣金額/匯率回填好；備註格式比較複雜(例如包含折扣/進位說明)寧可不猜、維持原樣
+  // 顯示純文字，也不要猜錯值塞回試算欄位造成二次錯誤。
+  type RoundMode = 'round' | 'ceil' | 'floor';
+  const ROUND_LABELS: Record<RoundMode, string> = { round: '四捨五入', ceil: '無條件進位', floor: '無條件捨去' };
+  const applyRound = (mode: RoundMode, n: number) => mode === 'ceil' ? Math.ceil(n) : mode === 'floor' ? Math.floor(n) : Math.round(n);
   const parseSimpleFxNote = (note: string | undefined): { amount: string; rate: string } | null => {
     if (!note) return null;
     const m = note.match(/^[^\d]*([\d.]+)\s*[×xX*]\s*匯率\s*([\d.]+)\s*$/);
@@ -165,9 +182,12 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     (transaction.items || []).forEach((it, i) => { if (parseSimpleFxNote(it.note)) initial.add(i); });
     return initial;
   });
-  const [fxInputs, setFxInputs] = useState<Record<number, { amount: string; rate: string }>>(() => {
-    const initial: Record<number, { amount: string; rate: string }> = {};
-    (transaction.items || []).forEach((it, i) => { const parsed = parseSimpleFxNote(it.note); if (parsed) initial[i] = parsed; });
+  const [fxInputs, setFxInputs] = useState<Record<number, { amount: string; rate: string; discountPercent: string; roundMode: RoundMode }>>(() => {
+    const initial: Record<number, { amount: string; rate: string; discountPercent: string; roundMode: RoundMode }> = {};
+    (transaction.items || []).forEach((it, i) => {
+      const parsed = parseSimpleFxNote(it.note);
+      if (parsed) initial[i] = { ...parsed, discountPercent: '', roundMode: 'round' };
+    });
     return initial;
   });
   const toggleFxExpanded = (idx: number) => setFxExpandedIdx(prev => {
@@ -175,15 +195,21 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     if (next.has(idx)) next.delete(idx); else next.add(idx);
     return next;
   });
-  const updateFxInput = (idx: number, field: 'amount' | 'rate', value: string) => {
-    const current = fxInputs[idx] || { amount: '', rate: '' };
+  const updateFxInput = (idx: number, field: 'amount' | 'rate' | 'discountPercent' | 'roundMode', value: string) => {
+    const current = fxInputs[idx] || { amount: '', rate: '', discountPercent: '', roundMode: 'round' as RoundMode };
     const nextInput = { ...current, [field]: value };
     setFxInputs(prev => ({ ...prev, [idx]: nextInput }));
     const amountNum = parseFloat(nextInput.amount);
     const rateNum = parseFloat(nextInput.rate);
+    const discountNum = parseFloat(nextInput.discountPercent);
+    const hasDiscount = nextInput.discountPercent.trim() !== '' && !isNaN(discountNum);
     if (!isNaN(amountNum) && !isNaN(rateNum)) {
-      const converted = Math.round(amountNum * rateNum * 100) / 100;
-      setItems(prev => prev.map((it, i) => i === idx ? { ...it, unitPrice: converted, note: `原幣$${amountNum} × 匯率${rateNum}` } : it));
+      const rawValue = amountNum * rateNum * (hasDiscount ? (1 - discountNum / 100) : 1);
+      const converted = applyRound(nextInput.roundMode, rawValue);
+      const noteText = hasDiscount
+        ? `原幣$${amountNum} × 匯率${rateNum} × ${(100 - discountNum).toFixed(0)}%折扣（${ROUND_LABELS[nextInput.roundMode]}）`
+        : `原幣$${amountNum} × 匯率${rateNum}`;
+      setItems(prev => prev.map((it, i) => i === idx ? { ...it, unitPrice: converted, note: noteText } : it));
     }
   };
 
@@ -724,7 +750,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                             </div>
                           </div>
                           <button type="button" onClick={() => toggleFxExpanded(idx)} className={`text-[10px] font-bold px-2 py-1 rounded-lg ${fxExpandedIdx.has(idx) ? 'bg-sky-100 text-sky-600' : 'text-slate-400 hover:bg-slate-100'}`}>
-                            {fxExpandedIdx.has(idx) ? '收合外幣試算' : '這項是外幣？點我試算台幣'}
+                            {fxExpandedIdx.has(idx) ? '收合外幣/代購折扣試算' : '這項是外幣或有代購折扣？點我試算單價'}
                           </button>
                           {fxExpandedIdx.has(idx) && (
                             <div className="grid grid-cols-2 gap-2 p-2 bg-sky-50/50 border border-sky-100 rounded-lg animate-in slide-in-from-top-1">
@@ -736,7 +762,26 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                                 <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">匯率</label>
                                 <input type="number" step="0.01" value={fxInputs[idx]?.rate ?? ''} onChange={(e) => updateFxInput(idx, 'rate', e.target.value)} placeholder="例如：4.45" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
                               </div>
-                              <p className="col-span-2 text-[10px] text-sky-400">填好這兩格會自動算出單價(台幣)，並把換算依據寫進備註，不用自己按計算機。</p>
+                              <div>
+                                <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">跟團折扣%（選填，例如85折填15）</label>
+                                <input type="number" step="0.1" value={fxInputs[idx]?.discountPercent ?? ''} onChange={(e) => updateFxInput(idx, 'discountPercent', e.target.value)} placeholder="留空=無折扣" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
+                              </div>
+                              <div>
+                                <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">進位方式</label>
+                                <div className="flex bg-white border border-sky-200 rounded-lg overflow-hidden">
+                                  {(['round', 'ceil', 'floor'] as RoundMode[]).map(mode => (
+                                    <button
+                                      key={mode}
+                                      type="button"
+                                      onClick={() => updateFxInput(idx, 'roundMode', mode)}
+                                      className={`flex-1 py-2 text-[10px] font-bold transition ${(fxInputs[idx]?.roundMode ?? 'round') === mode ? 'bg-sky-500 text-white' : 'text-slate-400 hover:bg-sky-50'}`}
+                                    >
+                                      {ROUND_LABELS[mode]}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                              <p className="col-span-2 text-[10px] text-sky-400">單價 = 原幣金額 × 匯率 ×（1－折扣%），依選的方式進位，自動算好+寫進備註，不用自己按計算機。</p>
                             </div>
                           )}
                         </div>
@@ -753,13 +798,24 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 ml-1">
                  實付金額 <Calculator className="w-3 h-3 text-slate-300" title="可以直接打算式，例如 280*0.93+50" />
               </label>
-              <CalcInput
-                 ref={amountRef}
-                 readOnly={showBreakdown}
-                 value={amount}
-                 onCommit={n => setAmount(n)}
-                 className={`w-full p-4 border rounded-2xl font-bold transition outline-none shadow-sm ${showBreakdown ? 'bg-slate-50 text-slate-500' : 'bg-white text-slate-700'} ${errors.amount ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200 focus:border-amber-300 focus:ring-4 focus:ring-amber-50'}`}
-              />
+              <div className="relative">
+                <CalcInput
+                   ref={amountRef}
+                   readOnly={showBreakdown}
+                   value={amount}
+                   onCommit={n => setAmount(n)}
+                   className={`w-full p-4 border rounded-2xl font-bold transition outline-none shadow-sm ${showBreakdown ? 'bg-slate-50 text-slate-500' : 'bg-white text-slate-700'} ${errors.amount ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200 focus:border-amber-300 focus:ring-4 focus:ring-amber-50'}`}
+                />
+                {!showBreakdown && itemsSubtotal > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setAmount(parseFloat(itemsSubtotal.toFixed(2)))}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-amber-500 bg-amber-50 px-2 py-1 rounded-lg hover:bg-amber-100 transition"
+                  >
+                    帶入品項合計 ${itemsSubtotal.toFixed(0)}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* 金額拆分：原始金額／折扣明細 */}
@@ -767,7 +823,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (!showBreakdown) setGrossAmount(amount);
+                  if (!showBreakdown) setGrossAmount(itemsSubtotal > 0 ? parseFloat(itemsSubtotal.toFixed(2)) : amount);
                   setShowBreakdown(!showBreakdown);
                 }}
                 className="text-xs font-bold text-amber-500 hover:text-amber-600 flex items-center gap-1 ml-1"
@@ -779,11 +835,22 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                 <div className="mt-3 p-4 bg-white rounded-2xl border border-slate-100 space-y-3 animate-in slide-in-from-top-2">
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">原始金額（折扣前，可以直接打算式）</label>
-                    <CalcInput
-                      value={grossAmount}
-                      onCommit={n => setGrossAmount(n)}
-                      className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:border-amber-300"
-                    />
+                    <div className="relative">
+                      <CalcInput
+                        value={grossAmount}
+                        onCommit={n => setGrossAmount(n)}
+                        className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:border-amber-300"
+                      />
+                      {itemsSubtotal > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setGrossAmount(parseFloat(itemsSubtotal.toFixed(2)))}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-amber-500 bg-white px-2 py-1 rounded-lg hover:bg-amber-50 transition border border-amber-100"
+                        >
+                          帶入品項合計 ${itemsSubtotal.toFixed(0)}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-slate-400 uppercase block">折扣明細</label>
