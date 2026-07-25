@@ -742,32 +742,34 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                   const subtotal = it.unitPrice != null ? it.unitPrice * (it.quantity || 1) : null;
                   return (
                     <div key={idx} className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
-                      <div className="flex gap-2 items-center">
+                      <div className="flex flex-wrap gap-2 items-center">
                         <input
                           type="text"
                           value={it.name}
                           onChange={(e) => updateItemField(idx, 'name', e.target.value)}
                           placeholder="例如：吉拿棒"
-                          className="flex-1 p-2 bg-transparent text-sm font-bold text-slate-700 outline-none"
+                          className="flex-1 min-w-[100px] p-2 bg-transparent text-sm font-bold text-slate-700 outline-none"
                         />
-                        {subtotal != null && <span className="text-xs font-bold text-amber-500 whitespace-nowrap">${subtotal.toFixed(2)}</span>}
-                        <button type="button" onClick={() => toggleItemExpanded(idx)} className={`text-[10px] font-bold px-2 py-1 rounded-lg whitespace-nowrap ${isExpanded ? 'bg-amber-100 text-amber-600' : 'text-slate-400 hover:bg-slate-100'}`}>
-                          {isExpanded ? '收合單價' : '填單價'}
-                        </button>
-                        <button type="button" onClick={() => removeItemRow(idx)} className="p-1 text-slate-300 hover:text-rose-400 transition"><Trash2 className="w-4 h-4" /></button>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {subtotal != null && <span className="text-xs font-bold text-amber-500 whitespace-nowrap">${subtotal.toFixed(2)}</span>}
+                          <button type="button" onClick={() => toggleItemExpanded(idx)} className={`text-[10px] font-bold px-2 py-1 rounded-lg whitespace-nowrap ${isExpanded ? 'bg-amber-100 text-amber-600' : 'text-slate-400 hover:bg-slate-100'}`}>
+                            {isExpanded ? '收合單價' : '填單價'}
+                          </button>
+                          <button type="button" onClick={() => removeItemRow(idx)} className="p-1 text-slate-300 hover:text-rose-400 transition shrink-0"><Trash2 className="w-4 h-4" /></button>
+                        </div>
                       </div>
                       {isExpanded && (
                         <div className="pt-2 border-t border-slate-100 animate-in slide-in-from-top-1 space-y-2">
-                          <div className="grid grid-cols-3 gap-2">
-                            <div>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            <div className="min-w-0">
                               <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">單價(台幣，可打算式)</label>
                               <CalcInput value={it.unitPrice} onCommit={n => updateItemField(idx, 'unitPrice', String(n))} className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
                             </div>
-                            <div>
+                            <div className="min-w-0">
                               <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">數量</label>
                               <CalcInput value={it.quantity} onCommit={n => updateItemField(idx, 'quantity', String(n))} placeholder="1" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
                             </div>
-                            <div>
+                            <div className="min-w-0 col-span-2 sm:col-span-1">
                               <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">備註</label>
                               <input type="text" value={it.note ?? ''} onChange={(e) => updateItemField(idx, 'note', e.target.value)} placeholder="例如：日幣購入" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
                             </div>
@@ -777,27 +779,27 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                           </button>
                           {fxExpandedIdx.has(idx) && (
                             <div className="grid grid-cols-2 gap-2 p-2 bg-sky-50/50 border border-sky-100 rounded-lg animate-in slide-in-from-top-1">
-                              <div>
+                              <div className="min-w-0">
                                 <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">原幣金額</label>
                                 <input type="number" value={fxInputs[idx]?.amount ?? ''} onChange={(e) => updateFxInput(idx, 'amount', e.target.value)} placeholder="例如：1000" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
                               </div>
-                              <div>
+                              <div className="min-w-0">
                                 <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">匯率</label>
                                 <input type="number" step="0.01" value={fxInputs[idx]?.rate ?? ''} onChange={(e) => updateFxInput(idx, 'rate', e.target.value)} placeholder="例如：4.45" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
                               </div>
-                              <div>
+                              <div className="min-w-0">
                                 <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">折扣（選填，85折填0.85）</label>
                                 <input type="number" step="0.01" value={fxInputs[idx]?.discount ?? ''} onChange={(e) => updateFxInput(idx, 'discount', e.target.value)} placeholder="留空=無折扣" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
                               </div>
-                              <div>
+                              <div className="min-w-0 flex flex-col">
                                 <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">進位方式</label>
-                                <div className="flex bg-white border border-sky-200 rounded-lg overflow-hidden">
+                                <div className="flex-1 flex items-stretch bg-white border border-sky-200 rounded-lg overflow-hidden">
                                   {(['round', 'ceil', 'floor'] as RoundMode[]).map(mode => (
                                     <button
                                       key={mode}
                                       type="button"
                                       onClick={() => updateFxInput(idx, 'roundMode', mode)}
-                                      className={`flex-1 py-2 text-[10px] font-bold transition ${(fxInputs[idx]?.roundMode ?? 'round') === mode ? 'bg-sky-500 text-white' : 'text-slate-400 hover:bg-sky-50'}`}
+                                      className={`flex-1 min-w-0 px-1 py-2 text-[9px] leading-tight font-bold transition ${(fxInputs[idx]?.roundMode ?? 'round') === mode ? 'bg-sky-500 text-white' : 'text-slate-400 hover:bg-sky-50'}`}
                                     >
                                       {ROUND_LABELS[mode]}
                                     </button>
