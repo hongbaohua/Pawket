@@ -1,38 +1,84 @@
 # -*- coding: utf-8 -*-
-# 2026-07-23 全面資料查核 Phase 2：把全部1735筆交易依照系統的完整欄位匯出成Excel，
-# 給Ivy逐筆審核。這次查證後「確定要改」的直接在表格裡改好(同時在AI查核備註欄寫清楚
-# 改了什麼、為什麼)，「不確定/需要Ivy補充」的維持原樣但在備註欄提出問題。
-# Ivy確認過表格沒問題後，才會依照這份表格產生fix_009.sql實際套用到Supabase。
-import json, sys, io
+# 2026-07-23 全面資料查核 Phase 2：把全部交易依照系統的完整欄位匯出成Excel，給Ivy逐筆審核。
+# 2026-07-24 改版：
+# 1. 資料來源改成直接查詢Supabase live資料(用query_supabase.py，SUPABASE_SERVICE_ROLE_KEY
+#    已經存在.env.local)，不再讀本機的`匯入_統整全部.json`——那份檔案是匯入當下的快照，
+#    後續fix_001~010.sql這些修正如果本機json忘記同步就會跟資料庫真正的內容不一致，
+#    直接查live資料庫可以徹底避免這個問題，也能反映Ivy自己在App裡動手改過的任何資料。
+# 2. 新增accountId欄位(原本漏掉，只有轉帳用的fromAccountId/toAccountId，一般收支
+#    完全沒有顯示是哪個帳戶)，帳戶一律顯示名稱(不是id)，方便Ivy閱讀/填寫。
+# 3. 新增第二個分頁「新增交易範本」：Ivy要新增的交易可以直接照這個範本填在這個分頁，
+#    第2列(淺綠底)是每個欄位的填寫說明，第3列起是空白列給她填。
+#    她的計畫：這次查核完(改「全面資料查核」分頁+填「新增交易範本」分頁)之後，
+#    要把資料庫全部清掉，直接照這份Excel(修正過的既有資料+新增的資料)重新匯入，
+#    所以這份檔案要能同時當作「查核紀錄」跟「下一次匯入的完整來源」兩種用途。
+import sys, os, io
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from query_supabase import fetch, fetch_all
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 ROOT = r'C:\Users\Master\Projects\Pawket'
-UNIFIED_PATH = ROOT + r'\Pawket\匯入_統整全部.json'
 OUT_PATH = ROOT + r'\Pawket\data-import\全面資料查核表_2026-07-23.xlsx'
+IVY_USER_ID = '56dd1f4e-32c5-41ba-8da4-7eabce8b7b70'  # 見PROJECT_STATUS.md「新能力」小節
 
-with open(UNIFIED_PATH, encoding='utf-8') as f:
-    data = json.load(f)
-txs = data['transactions'] if isinstance(data, dict) else data
+print('查詢Supabase即時資料中...')
+accounts_raw = fetch('accounts', f'select=id,name&user_id=eq.{IVY_USER_ID}')
+ACCOUNT_NAME_BY_ID = {a['id']: a['name'] for a in accounts_raw}
+print(f'帳戶共{len(ACCOUNT_NAME_BY_ID)}個')
 
-# ============ 這次Phase 2查證後，確定要改的欄位修正 ============
-# key = id, value = 要覆蓋的欄位 + 備註說明
-CONFIRMED_FIXES = {
-    # 波妮國際：WebSearch查證公司登記資料，確認是內衣零售業(台中北區登記)，
-    # 不是「其他雜項」。
-    None: None,  # placeholder，實際用merchant+date+amount比對找id，見下方
-}
+rows_raw = fetch_all(
+    'transactions',
+    f'select=id,date,merchant,type,net_amount,gross_amount,discounts,l1,l2,l3,'
+    f'account_id,payment_channel,items,note,special_tag,from_account_id,to_account_id,'
+    f'original_text&user_id=eq.{IVY_USER_ID}&deleted_at=is.null'
+)
+print(f'交易共{len(rows_raw)}筆')
 
-# 用商家+日期+金額組合定位到id(比直接寫死id更不容易對錯，因為這幾筆是這次現場查出來的)
+
+def acct_name(account_id):
+    if not account_id:
+        return ''
+    return ACCOUNT_NAME_BY_ID.get(account_id, f'(未知帳戶id:{account_id})')
+
+
+# 轉成跟舊版腳本一樣方便存取的dict結構(欄位名沿用駝峰式，跟types.ts一致)
+txs = []
+for r in rows_raw:
+    txs.append({
+        'id': r['id'],
+        'date': r['date'],
+        'merchant': r['merchant'],
+        'type': r['type'],
+        'amount': r['net_amount'],
+        'grossAmount': r.get('gross_amount'),
+        'discounts': r.get('discounts'),
+        'category': {'l1': r.get('l1') or '', 'l2': r.get('l2') or '', 'l3': r.get('l3') or ''},
+        'accountId': r.get('account_id'),
+        'paymentChannel': r.get('payment_channel'),
+        'items': r.get('items'),
+        'note': r.get('note'),
+        'specialTag': r.get('special_tag'),
+        'fromAccountId': r.get('from_account_id'),
+        'toAccountId': r.get('to_account_id'),
+        'originalText': r.get('original_text'),
+    })
+
+# ============ 這次Phase 2查證後，確定要改的欄位修正(2026-07-23那輪查核結果) ============
+CONFIRMED_FIXES = {}
+
+
 def find_one(merchant, date, amount):
     matches = [t for t in txs if t['merchant'] == merchant and t['date'] == date and abs(t['amount'] - amount) < 0.01]
     if len(matches) != 1:
         print(f'WARNING: {merchant} {date} {amount} 找到{len(matches)}筆，預期1筆', file=sys.stderr)
         return None
     return matches[0]['id']
+
 
 fixes_applied = {}
 
@@ -95,7 +141,7 @@ t = find_one('統一超商', '2024-11-06', 182)
 if t:
     SOFT_NOTES[t] = '同樣是超商消費，這筆分類「生活日用」，但其他7-11/全家的紀錄多半分類「餐飲食品」，可能只是這筆買的東西剛好不是吃的，不確定，列出來供參考，不算錯誤。'
 
-# ============ 套用確定的修正到記憶體中的資料(還沒寫回json，等Ivy看過表格確認) ============
+# ============ 套用確定的修正到記憶體中的資料(還沒寫回資料庫，等Ivy看過表格確認) ============
 for tx in txs:
     if tx['id'] in fixes_applied:
         fx = fixes_applied[tx['id']]
@@ -107,7 +153,8 @@ for tx in txs:
 print(f'套用了 {len(fixes_applied)} 筆確定修正')
 print(f'加了 {len(SOFT_NOTES)} 筆軟性建議備註')
 
-# ============ 匯出Excel ============
+
+# ============ 共用格式化函式 ============
 def fmt_items(items):
     if not items:
         return ''
@@ -134,29 +181,31 @@ def fmt_discounts(discounts):
 
 
 COLUMNS = ['id', 'date', 'merchant', 'type', 'amount', 'grossAmount', 'discounts',
-           'l1', 'l2', 'l3', 'paymentChannel', 'items', 'note',
+           'l1', 'l2', 'l3', 'accountId', 'paymentChannel', 'items', 'note',
            'specialTag_type', 'specialTag_counterparty', 'specialTag_note',
            'fromAccountId', 'toAccountId', 'originalText', 'AI查核備註', 'Ivy的備註']
-IVY_NOTE_COL = len(COLUMNS)  # 給Ivy自己填的欄位，一律空白，跟AI查核備註區分開
+IVY_NOTE_COL = len(COLUMNS)
+WIDTHS = [10, 11, 18, 9, 8, 10, 16, 10, 10, 10, 12, 12, 30, 20, 12, 14, 14, 12, 12, 40, 55, 40]
 
-wb = openpyxl.Workbook()
-ws = wb.active
-ws.title = '全面資料查核'
+L1_LABEL = {'Fixed': '固定支出', 'Variable': '變動支出', 'Investment': '投資儲蓄', 'Income': '收入帳戶'}
 
 header_font = Font(name='Arial', bold=True, color='FFFFFF')
 header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
 normal_font = Font(name='Arial', size=10)
 remark_fill = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
-# Ivy自己要填的那一欄用淺藍色打底(跟AI查核備註的黃色區分開)，一看就知道這欄是留給她寫的。
 ivy_note_fill = PatternFill(start_color='DDEBF7', end_color='DDEBF7', fill_type='solid')
+
+wb = openpyxl.Workbook()
+
+# ============ 分頁1：全面資料查核 ============
+ws = wb.active
+ws.title = '全面資料查核'
 
 for ci, col in enumerate(COLUMNS, start=1):
     cell = ws.cell(row=1, column=ci, value=col)
     cell.font = header_font
     cell.fill = header_fill
     cell.alignment = Alignment(horizontal='center')
-
-L1_LABEL = {'Fixed': '固定支出', 'Variable': '變動支出', 'Investment': '投資儲蓄', 'Income': '收入帳戶'}
 
 row_i = 2
 for tx in sorted(txs, key=lambda t: (t['date'], t['id'])):
@@ -171,9 +220,9 @@ for tx in sorted(txs, key=lambda t: (t['date'], t['id'])):
         tx['id'], tx['date'], tx['merchant'], tx['type'], tx['amount'],
         tx.get('grossAmount', ''), fmt_discounts(tx.get('discounts')),
         L1_LABEL.get(tx['category']['l1'], tx['category']['l1']), tx['category']['l2'], tx['category'].get('l3', ''),
-        tx.get('paymentChannel', ''), fmt_items(tx.get('items')), tx.get('note', ''),
+        acct_name(tx.get('accountId')), tx.get('paymentChannel', ''), fmt_items(tx.get('items')), tx.get('note', ''),
         st.get('type', ''), st.get('counterparty', ''), st.get('note', ''),
-        tx.get('fromAccountId', ''), tx.get('toAccountId', ''),
+        acct_name(tx.get('fromAccountId')), acct_name(tx.get('toAccountId')),
         tx.get('originalText', ''), remark, '',
     ]
     for ci, v in enumerate(values, start=1):
@@ -185,13 +234,69 @@ for tx in sorted(txs, key=lambda t: (t['date'], t['id'])):
             cell.fill = ivy_note_fill
     row_i += 1
 
-widths = [10, 11, 18, 9, 8, 10, 16, 10, 10, 10, 12, 30, 20, 12, 14, 14, 10, 10, 40, 55, 40]
-for ci, w in enumerate(widths, start=1):
+for ci, w in enumerate(WIDTHS, start=1):
     ws.column_dimensions[get_column_letter(ci)].width = w
-
 ws.freeze_panes = 'A2'
-ws.auto_filter.ref = f'A1:{get_column_letter(len(COLUMNS))}{row_i-1}'
+ws.auto_filter.ref = f'A1:{get_column_letter(len(COLUMNS))}{row_i - 1}'
+
+# ============ 分頁2：新增交易範本 ============
+# Ivy要新增的交易直接照這個範本填在這個分頁，第2列是每個欄位的填寫說明(淺綠底)，
+# 第3列起是空白列。她確認完兩個分頁都沒問題後，會把資料庫全部清掉，直接照這份
+# Excel(全面資料查核修正過的既有資料 + 新增交易範本裡新填的資料)重新匯入。
+ws2 = wb.create_sheet('新增交易範本')
+
+EXPLANATIONS = {
+    'id': '留空即可，系統會自動產生新的識別碼',
+    'date': '日期，格式YYYY-MM-DD，例如2026-07-24',
+    'merchant': '商家名稱＝買了什麼東西/用了什麼服務的本體，不是付款方式(例如遊戲儲值要寫遊戲名稱，不是Google Play)',
+    'type': 'expense(支出) / income(收入) / transfer(帳戶互轉，例如提款、儲值)，三選一',
+    'amount': '實付金額(折扣後最終付的錢；transfer的話就是轉帳金額)',
+    'grossAmount': '折扣前的原始金額，選填，沒有折扣可以留空',
+    'discounts': '折扣明細，格式「標籤:-$金額」，多筆用「; 」分隔，例如：LINE POINT:-$40; 會員折扣:-$10',
+    'l1': '固定支出／變動支出／投資儲蓄／收入帳戶，四選一(income要選收入帳戶；transfer可以留空)',
+    'l2': '次分類，要跟l1配對，例如變動支出可選：餐飲食品/生活日用/交通通勤/休閒娛樂/服飾美妝/3C電子/醫療保健/學習進修/社交人情/寵物花費/銀行手續費/轉帳/網路購物/其他雜項',
+    'l3': '細項標籤，選填，例如：飲料、拿鐵',
+    'accountId': f'這筆錢是哪個帳戶，填帳戶名稱就好。你目前的帳戶：{", ".join(ACCOUNT_NAME_BY_ID.values())}',
+    'paymentChannel': '付款通道，選填，例如：VISA、LINE Pay、方便付-街口支付',
+    'items': '品項清單，格式「商品名(單價×數量)[備註]」，多筆用「; 」分隔，例如：小卡LASER組($95×4)[原幣$6×4個×匯率4.9×折扣0.8（無條件進位）]',
+    'note': '備註，選填',
+    'specialTag_type': 'proxy_purchase(代購) / work_advance(工作代墊)，選填，沒有留空',
+    'specialTag_counterparty': '代購人是誰/要跟誰報帳，選填(不重要可以留空)',
+    'specialTag_note': '代購額外說明，選填，例如：已打統編',
+    'fromAccountId': '只有type=transfer才要填，寫轉出的帳戶名稱',
+    'toAccountId': '只有type=transfer才要填，寫轉入的帳戶名稱',
+    'originalText': '留空即可，這是系統記錄原始來源用的欄位',
+    'AI查核備註': '這個分頁不用填，留空',
+    'Ivy的備註': '可以寫給自己看的補充說明，或標記這筆還不確定',
+}
+
+for ci, col in enumerate(COLUMNS, start=1):
+    cell = ws2.cell(row=1, column=ci, value=col)
+    cell.font = header_font
+    cell.fill = header_fill
+    cell.alignment = Alignment(horizontal='center')
+
+explain_fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+explain_font = Font(name='Arial', size=9, italic=True, color='548235')
+for ci, col in enumerate(COLUMNS, start=1):
+    cell = ws2.cell(row=2, column=ci, value=EXPLANATIONS.get(col, ''))
+    cell.font = explain_font
+    cell.fill = explain_fill
+    cell.alignment = Alignment(wrap_text=True, vertical='top')
+
+# 空白列給Ivy填，先預留40列的格式(她要繼續往下填也不受限制，Excel不會因為超過這個範圍就不能用)
+BLANK_ROWS = 40
+for r in range(3, 3 + BLANK_ROWS):
+    for ci in range(1, len(COLUMNS) + 1):
+        ws2.cell(row=r, column=ci).font = normal_font
+
+for ci, w in enumerate(WIDTHS, start=1):
+    ws2.column_dimensions[get_column_letter(ci)].width = w
+ws2.row_dimensions[2].height = 60
+ws2.freeze_panes = 'A3'
+ws2.auto_filter.ref = f'A1:{get_column_letter(len(COLUMNS))}{2 + BLANK_ROWS}'
 
 wb.save(OUT_PATH)
 print('已輸出:', OUT_PATH)
-print('共', row_i - 2, '筆')
+print('全面資料查核:', row_i - 2, '筆')
+print('新增交易範本: 已建立', BLANK_ROWS, '個空白列供填寫')
