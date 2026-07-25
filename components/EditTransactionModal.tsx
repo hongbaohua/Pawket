@@ -198,24 +198,43 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   });
   const updateFxInput = (idx: number, field: 'amount' | 'rate' | 'discount' | 'roundMode', value: string) => {
     const current = fxInputs[idx] || { amount: '', rate: '', discount: '', roundMode: 'round' as RoundMode };
-    const nextInput = { ...current, [field]: value };
-    setFxInputs(prev => ({ ...prev, [idx]: nextInput }));
-    const amountNum = parseFloat(nextInput.amount);
-    const rateNum = parseFloat(nextInput.rate);
-    const discountNum = parseFloat(nextInput.discount);
-    const hasDiscount = nextInput.discount.trim() !== '' && !isNaN(discountNum);
-    const quantity = items[idx]?.quantity || 1;
-    if (!isNaN(amountNum) && !isNaN(rateNum)) {
-      // 先算「整筆」總價再進位一次，不要對單價先進位——單價再乘以數量會放大進位誤差。
-      const rawTotal = amountNum * quantity * rateNum * (hasDiscount ? discountNum : 1);
-      const roundedTotal = applyRound(nextInput.roundMode, rawTotal);
-      const unitPrice = roundedTotal / quantity; // 不四捨五入到小數點，讓「單價×數量」剛好等於進位後的總價
-      const noteText = hasDiscount
-        ? `原幣$${amountNum} × ${quantity}個 × 匯率${rateNum} × 折扣${discountNum}（${ROUND_LABELS[nextInput.roundMode]}）`
-        : `原幣$${amountNum} × ${quantity}個 × 匯率${rateNum}`;
-      setItems(prev => prev.map((it, i) => i === idx ? { ...it, unitPrice, note: noteText } : it));
-    }
+    setFxInputs(prev => ({ ...prev, [idx]: { ...current, [field]: value } }));
+    // 實際重新計算unitPrice/note交給下面的useEffect做，這裡只負責更新fxInputs本身。
   };
+
+  // 2026-07-24 修好一個真的bug：原本unitPrice只在「原幣金額/匯率/折扣/進位」這幾個
+  // 欄位改變時才重算，改「數量」本身完全不會觸發重算——如果使用者先用試算工具算完
+  // 才回頭改數量，單價會停留在舊的(用舊數量算出來的)值，造成「單價×新數量」對不起來
+  // (Ivy實測案例：算完後把數量改成9，還是拿到用數量1算出的單價×9=216，而不是212)。
+  // 改成用useEffect同時盯著fxInputs**跟**items(讀各項目目前的數量)，不管使用者
+  // 先改哪個欄位、用什麼順序改，只要試算工具有展開過這個品項，數量一有變動就會
+  // 自動重新計算，不會有先後順序造成的過期資料。
+  useEffect(() => {
+    setItems(prev => {
+      let changed = false;
+      const next = prev.map((it, idx) => {
+        const input = fxInputs[idx];
+        if (!input) return it;
+        const amountNum = parseFloat(input.amount);
+        const rateNum = parseFloat(input.rate);
+        if (isNaN(amountNum) || isNaN(rateNum)) return it;
+        const discountNum = parseFloat(input.discount);
+        const hasDiscount = input.discount.trim() !== '' && !isNaN(discountNum);
+        const quantity = it.quantity || 1;
+        // 先算「整筆」總價再進位一次，不要對單價先進位——單價再乘以數量會放大進位誤差。
+        const rawTotal = amountNum * quantity * rateNum * (hasDiscount ? discountNum : 1);
+        const roundedTotal = applyRound(input.roundMode, rawTotal);
+        const unitPrice = roundedTotal / quantity; // 不四捨五入到小數點，讓「單價×數量」剛好等於進位後的總價
+        const noteText = hasDiscount
+          ? `原幣$${amountNum} × ${quantity}個 × 匯率${rateNum} × 折扣${discountNum}（${ROUND_LABELS[input.roundMode]}）`
+          : `原幣$${amountNum} × ${quantity}個 × 匯率${rateNum}`;
+        if (it.unitPrice === unitPrice && it.note === noteText) return it;
+        changed = true;
+        return { ...it, unitPrice, note: noteText };
+      });
+      return changed ? next : prev;
+    });
+  }, [fxInputs, items]);
 
   // 特殊標記：代購／工作代墊。輕量標記＋顯示用，不做完整分帳計算。
   const [specialTagType, setSpecialTagType] = useState<'none' | SpecialTag['type']>(transaction.specialTag?.type || 'none');
