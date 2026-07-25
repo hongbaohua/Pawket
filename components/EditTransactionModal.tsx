@@ -155,20 +155,21 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     return next;
   });
 
-  // 外幣/代購折扣試算小工具：使用者填「原幣金額」+「匯率」+（選填）「跟團折扣%」，
+  // 外幣/代購折扣試算小工具：使用者填「原幣金額」(單價)+「匯率」+（選填）「折扣」，
   // 再選進位方式，自動算出單價(台幣)+寫進備註，不用自己按計算機算完再手動打字進來。
   // 這幾個欄位是暫時的計算輸入，不直接存進 TransactionItem，算出結果後才寫回 unitPrice/note。
   //
-  // 2026-07-24 Ivy反應：代購常見算法是「外幣原價 × 跟團折扣，再指定進位方式」，原本只有
-  // 匯率換算、沒有折扣%跟進位選項，她只能自己在單價欄位手動打算式(而且打算式的鍵盤bug
-  // 這次也一併修好了)。加了折扣%欄位(留空=無折扣)+進位方式三選一(四捨五入/無條件進位/
-  // 無條件捨去)，公式：單價 = 進位(原幣金額 × 匯率 × (1 − 折扣% / 100))。
-  //
-  // 2026-07-23 Ivy反應：填過外幣的品項，重新打開只看到換算後的台幣數字，原幣金額/匯率
-  // 都要點開「這項是外幣」才看得到，備註文字又要另外看，太麻煩。改成：重新打開時只要
-  // 備註格式單純(只有「金額×匯率X」，沒有折扣這種額外文字混在中間)，就自動展開試算欄位
-  // 並把原幣金額/匯率回填好；備註格式比較複雜(例如包含折扣/進位說明)寧可不猜、維持原樣
-  // 顯示純文字，也不要猜錯值塞回試算欄位造成二次錯誤。
+  // 2026-07-24 Ivy實測抓到兩個問題，都修好了：
+  // 1. 折扣欄位原本要填「% off」（85折要填15，等於要心算100-85），太繞。改成直接填
+  //    折扣倍率（85折就填0.85，無折扣留空），跟她口頭描述算法的方式一致，不用換算。
+  //    欄位名稱也從「跟團折扣%」簡化成「折扣」。
+  // 2. **進位順序bug**：原本的算法是「單價=進位(原幣×匯率×折扣)」，再拿這個已經
+  //    進位過的單價乘以數量——但正確算法應該是先算整筆總價再進位一次，不是每個單位
+  //    都進位。實測案例：單價人民幣6、數量9、8折、匯率4.9——舊算法算出
+  //    round(6×4.9×0.8)=round(23.52)=24，24×9=216；但正確答案是先算總價
+  //    6×9×4.9×0.8=211.68，整筆進位一次=212，Ivy的實付金額212元證實這才是對的。
+  //    改成：算出「進位後的總價」，再回推單價=總價/數量（不特別四捨五入到小數點，
+  //    這樣單價×數量在畫面上顯示出來就會剛好等於進位後的總價，不會有累積誤差）。
   type RoundMode = 'round' | 'ceil' | 'floor';
   const ROUND_LABELS: Record<RoundMode, string> = { round: '四捨五入', ceil: '無條件進位', floor: '無條件捨去' };
   const applyRound = (mode: RoundMode, n: number) => mode === 'ceil' ? Math.ceil(n) : mode === 'floor' ? Math.floor(n) : Math.round(n);
@@ -182,11 +183,11 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     (transaction.items || []).forEach((it, i) => { if (parseSimpleFxNote(it.note)) initial.add(i); });
     return initial;
   });
-  const [fxInputs, setFxInputs] = useState<Record<number, { amount: string; rate: string; discountPercent: string; roundMode: RoundMode }>>(() => {
-    const initial: Record<number, { amount: string; rate: string; discountPercent: string; roundMode: RoundMode }> = {};
+  const [fxInputs, setFxInputs] = useState<Record<number, { amount: string; rate: string; discount: string; roundMode: RoundMode }>>(() => {
+    const initial: Record<number, { amount: string; rate: string; discount: string; roundMode: RoundMode }> = {};
     (transaction.items || []).forEach((it, i) => {
       const parsed = parseSimpleFxNote(it.note);
-      if (parsed) initial[i] = { ...parsed, discountPercent: '', roundMode: 'round' };
+      if (parsed) initial[i] = { ...parsed, discount: '', roundMode: 'round' };
     });
     return initial;
   });
@@ -195,21 +196,24 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     if (next.has(idx)) next.delete(idx); else next.add(idx);
     return next;
   });
-  const updateFxInput = (idx: number, field: 'amount' | 'rate' | 'discountPercent' | 'roundMode', value: string) => {
-    const current = fxInputs[idx] || { amount: '', rate: '', discountPercent: '', roundMode: 'round' as RoundMode };
+  const updateFxInput = (idx: number, field: 'amount' | 'rate' | 'discount' | 'roundMode', value: string) => {
+    const current = fxInputs[idx] || { amount: '', rate: '', discount: '', roundMode: 'round' as RoundMode };
     const nextInput = { ...current, [field]: value };
     setFxInputs(prev => ({ ...prev, [idx]: nextInput }));
     const amountNum = parseFloat(nextInput.amount);
     const rateNum = parseFloat(nextInput.rate);
-    const discountNum = parseFloat(nextInput.discountPercent);
-    const hasDiscount = nextInput.discountPercent.trim() !== '' && !isNaN(discountNum);
+    const discountNum = parseFloat(nextInput.discount);
+    const hasDiscount = nextInput.discount.trim() !== '' && !isNaN(discountNum);
+    const quantity = items[idx]?.quantity || 1;
     if (!isNaN(amountNum) && !isNaN(rateNum)) {
-      const rawValue = amountNum * rateNum * (hasDiscount ? (1 - discountNum / 100) : 1);
-      const converted = applyRound(nextInput.roundMode, rawValue);
+      // 先算「整筆」總價再進位一次，不要對單價先進位——單價再乘以數量會放大進位誤差。
+      const rawTotal = amountNum * quantity * rateNum * (hasDiscount ? discountNum : 1);
+      const roundedTotal = applyRound(nextInput.roundMode, rawTotal);
+      const unitPrice = roundedTotal / quantity; // 不四捨五入到小數點，讓「單價×數量」剛好等於進位後的總價
       const noteText = hasDiscount
-        ? `原幣$${amountNum} × 匯率${rateNum} × ${(100 - discountNum).toFixed(0)}%折扣（${ROUND_LABELS[nextInput.roundMode]}）`
-        : `原幣$${amountNum} × 匯率${rateNum}`;
-      setItems(prev => prev.map((it, i) => i === idx ? { ...it, unitPrice: converted, note: noteText } : it));
+        ? `原幣$${amountNum} × ${quantity}個 × 匯率${rateNum} × 折扣${discountNum}（${ROUND_LABELS[nextInput.roundMode]}）`
+        : `原幣$${amountNum} × ${quantity}個 × 匯率${rateNum}`;
+      setItems(prev => prev.map((it, i) => i === idx ? { ...it, unitPrice, note: noteText } : it));
     }
   };
 
@@ -763,8 +767,8 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                                 <input type="number" step="0.01" value={fxInputs[idx]?.rate ?? ''} onChange={(e) => updateFxInput(idx, 'rate', e.target.value)} placeholder="例如：4.45" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
                               </div>
                               <div>
-                                <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">跟團折扣%（選填，例如85折填15）</label>
-                                <input type="number" step="0.1" value={fxInputs[idx]?.discountPercent ?? ''} onChange={(e) => updateFxInput(idx, 'discountPercent', e.target.value)} placeholder="留空=無折扣" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
+                                <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">折扣（選填，85折填0.85）</label>
+                                <input type="number" step="0.01" value={fxInputs[idx]?.discount ?? ''} onChange={(e) => updateFxInput(idx, 'discount', e.target.value)} placeholder="留空=無折扣" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
                               </div>
                               <div>
                                 <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">進位方式</label>
@@ -781,7 +785,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                                   ))}
                                 </div>
                               </div>
-                              <p className="col-span-2 text-[10px] text-sky-400">單價 = 原幣金額 × 匯率 ×（1－折扣%），依選的方式進位，自動算好+寫進備註，不用自己按計算機。</p>
+                              <p className="col-span-2 text-[10px] text-sky-400">先算「原幣金額×數量×匯率×折扣」的整筆總價，依選的方式進位一次，再換算回單價——不會因為每個單位分別進位而跟總價對不起來。自動算好+寫進備註，不用自己按計算機。</p>
                             </div>
                           )}
                         </div>
