@@ -1,110 +1,10 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Transaction, L1Category, TransactionType, STANDARD_CATEGORIES, BankStatementRow } from "../types";
+import { BankStatementRow } from "../types";
 import { v4 as uuidv4 } from 'uuid';
-import { GEMINI_MODEL, OCR_MAX_RETRIES, OCR_VERIFY_CONFIDENCE_THRESHOLD, OCR_DEFAULT_CONFIDENCE } from '../config/aiSettings';
-
-// Construct dynamic category list for prompt
-const CATEGORY_GUIDE = Object.entries(STANDARD_CATEGORIES)
-  .map(([l1, l2s]) => `- ${l1}: [${l2s.join(', ')}]`)
-  .join('\n');
-
-const SYSTEM_INSTRUCTION = `
-Role: Senior Financial Data Extraction Specialist.
-Task: Extract transaction records from bank statement images/PDFs into structured JSON.
-
-**CRITICAL LOGIC RULES (Anti-Hallucination & De-duplication):**
-
-1. **Income vs Expense Detection (Sign/Type Rules)** - **HIGHEST PRIORITY**:
-   - **Expense (支出)**: 
-     - Keywords: "Debit", "DR", "Withdrawal", "Payment", "Purchase", "支出", "消費", "扣款".
-     - Signs: Negative numbers (e.g., -100) indicate expense in most CSVs, BUT in bank statements, "Debit" column is positive. **Check the column header**.
-   - **Income (收入)**: 
-     - Keywords: "Credit", "CR", "Deposit", "Refund", "Interest", "Salary", "存入", "入帳", "配息".
-     - Signs: Positive numbers in a "Credit" column.
-   - **Ambiguity Rule**: If a column is named "Amount" with no sign:
-     - If description contains "Payment" or "Purchase" -> Expense.
-     - If description contains "Deposit" or "Transfer from" -> Income.
-
-2. **Master List Priority (主表優先原則)**: 
-   - Scan for the main "Transaction List" table first. 
-   - **IGNORE** isolated receipt summaries, fee confirmation slips, or "Total Due" boxes if they duplicate data already found in the main table.
-   - If a "Handling Fee" appears in the summary but is also listed in the table, do not extract it twice.
-
-3. **Date Distinction (日期辨識邏輯)**:
-   - **Target**: 'Transaction Date' (消費日/交易日).
-   - **Avoid**: 'Posting Date' (入帳日) if possible.
-   - **FORBIDDEN**: Do NOT use the 'Statement Date' (製表日) or 'Print Date' as the transaction date for individual rows.
-   - If a row has two dates, select the **earlier** one.
-
-4. **Smart Pre-Classification & Synonym Merging (智能分類與合併)**:
-   - **STRICT RULE**: You MUST assign the L2 category form the PROVIDED LIST below. **Do NOT invent new L2 categories.**
-   - **MERGE SYNONYMS**: If a transaction implies a category not in the list, map it to the closest existing one.
-     - "Taxi", "Uber", "High Speed Rail", "Gas" -> Map to '交通通勤' (Do NOT use 'Transport').
-     - "7-11", "Supermarket", "Groceries", "Toilet paper" -> Map to '生活日用'.
-     - "Spotify", "Netflix", "Youtube" -> Map to '訂閱服務'.
-     - "Doctor", "Pharmacy", "Medicine" -> Map to '醫療保健'.
-   
-   **Standard Category List**:
-   ${CATEGORY_GUIDE}
-
-5. **Row-Level Alignment**:
-   - Use the **Date** column as the anchor. A valid row MUST have a specific date.
-   - Scan horizontally. Handle multi-line descriptions by grouping them under the Date anchor.
-
-**Data Cleaning**:
-- Merge truncated merchant names (e.g., "Uber * Trip" -> "Uber").
-- Ensure all dates are in YYYY-MM-DD format.
-`;
+import { GEMINI_MODEL, OCR_MAX_RETRIES } from '../config/aiSettings';
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-const TRANSACTION_RESPONSE_SCHEMA = {
-  type: Type.OBJECT,
-  properties: {
-    transactions: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          date: { type: Type.STRING, description: "YYYY-MM-DD" },
-          merchant: { type: Type.STRING },
-          amount: { type: Type.NUMBER },
-          type: { type: Type.STRING, enum: ["income", "expense"] },
-          confidence: { type: Type.NUMBER },
-          l1_category: { type: Type.STRING, enum: ["Fixed", "Variable", "Investment", "Income"] },
-          l2_category: { type: Type.STRING },
-          l3_category: { type: Type.STRING }
-        },
-        required: ["date", "merchant", "amount", "type", "l1_category"]
-      }
-    }
-  }
-};
-
-// 兩種來源(圖片OCR / PDF文字解析)最後都要轉成同一種Transaction格式，這段共用邏輯抽出來，
-// 避免兩個function各寫一份、以後改欄位對應規則要改兩個地方。
-const mapResponseToTransactions = (responseText: string): Transaction[] => {
-  const parsed = JSON.parse(responseText);
-  const rawList = parsed.transactions || (Array.isArray(parsed) ? parsed : []);
-
-  return rawList.map((item: any) => ({
-    id: uuidv4(),
-    date: item.date,
-    merchant: item.merchant || "Unknown Merchant",
-    originalText: `${item.merchant} ${item.amount}`,
-    amount: item.amount,
-    type: (item.type?.toLowerCase() === 'income') ? 'income' : 'expense',
-    category: {
-      l1: item.l1_category as L1Category || L1Category.VARIABLE,
-      l2: item.l2_category || '其他雜項', // Default fallback
-      l3: item.l3_category || ''
-    },
-    confidence: item.confidence || OCR_DEFAULT_CONFIDENCE,
-    isVerified: (item.confidence || 0) >= OCR_VERIFY_CONFIDENCE_THRESHOLD,
-    isSplit: false
-  }));
-};
 
 // 共用的重試迴圈：呼叫Gemini、解析回應、失敗時指數退避重試。schema/systemInstruction/mapper
 // 參數化後，銀行對帳單辨識(多筆交易)跟收據品項辨識(單筆交易內的品項)可以共用同一套
@@ -143,28 +43,7 @@ const runExtraction = async <T>(parts: any[], schema: any, systemInstruction: st
   throw lastError || new Error("Failed to process statement after multiple attempts.");
 };
 
-export const analyzeStatementImage = async (base64Image: string): Promise<Transaction[]> => {
-  // Clean base64 string
-  const mimeMatch = base64Image.match(/^data:(.*?);base64,/);
-  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
-  const cleanBase64 = base64Image.replace(/^data:.*?;base64,/, '');
-
-  return runExtraction([
-    { inlineData: { mimeType: mimeType, data: cleanBase64 } },
-    { text: "Extract transaction data. Follow strict logic rules, especially for Income/Expense detection." }
-  ], TRANSACTION_RESPONSE_SCHEMA, SYSTEM_INSTRUCTION, mapResponseToTransactions);
-};
-
-// PDF結構化解析用：直接把PDF抽出來的純文字(見services/pdfTextExtractor.ts)交給Gemini結構化，
-// 不用把整份PDF當圖片辨識——文字比圖片token少很多(便宜)、也不會有OCR看錯字的問題，
-// 前提是這份PDF本身有文字層(不是掃描圖片)，這件事由呼叫端用looksLikeScannedPdf先判斷過。
-export const analyzeStatementText = async (extractedText: string): Promise<Transaction[]> => {
-  return runExtraction([
-    { text: "The following is text extracted directly from a bank statement PDF (not an image). Extract transaction data. Follow strict logic rules, especially for Income/Expense detection.\n\n--- PDF TEXT START ---\n" + extractedText + "\n--- PDF TEXT END ---" }
-  ], TRANSACTION_RESPONSE_SCHEMA, SYSTEM_INSTRUCTION, mapResponseToTransactions);
-};
-
-// 收據/明細品項辨識用：跟上面兩個「一份對帳單抓出好幾筆新交易」不同層級——這是「單一一筆
+// 收據/明細品項辨識用：跟下面「一份對帳單抓出好幾筆原始資料列」不同層級——這是「單一一筆
 // 交易內部買了哪些品項」，給EditTransactionModal.tsx的「喵喵購物清單」上傳收據照片自動填用。
 const RECEIPT_SYSTEM_INSTRUCTION = `
 Role: Receipt Line-Item Extraction Specialist.
@@ -256,9 +135,9 @@ export const analyzeReceiptItems = async (base64Image: string): Promise<ReceiptA
   ], RECEIPT_RESPONSE_SCHEMA, RECEIPT_SYSTEM_INSTRUCTION, mapResponseToReceiptResult);
 };
 
-// 對帳模組用：從銀行對帳單文字抽出「原始資料列」，跟上面analyzeStatementText刻意不同層級——
-// 對帳只需要日期/金額/收支方向來比對，完全不需要猜分類，硬逼AI分類反而容易亂猜（尤其
-// 月結單格式常常只有卡號末四碼+日期+金額，連商家描述都沒有）。schema故意不要求l1_category。
+// 對帳模組用：從銀行對帳單文字抽出「原始資料列」——對帳只需要日期/金額/收支方向來比對，
+// 完全不需要猜分類，硬逼AI分類反而容易亂猜（尤其月結單格式常常只有卡號末四碼+日期+金額，
+// 連商家描述都沒有）。schema故意不要求分類欄位。
 const BANK_ROW_SYSTEM_INSTRUCTION = `
 Role: Bank Statement Row Extraction Specialist.
 Task: Extract every transaction ROW from the given bank statement text — this is for reconciliation
@@ -321,5 +200,20 @@ const mapResponseToBankStatementRows = (responseText: string): BankStatementRow[
 export const analyzeBankStatementRows = async (extractedText: string): Promise<BankStatementRow[]> => {
   return runExtraction([
     { text: "The following is text extracted directly from a bank statement PDF (not an image). Extract every row for reconciliation purposes — do not guess a category.\n\n--- PDF TEXT START ---\n" + extractedText + "\n--- PDF TEXT END ---" }
+  ], BANK_ROW_RESPONSE_SCHEMA, BANK_ROW_SYSTEM_INSTRUCTION, mapResponseToBankStatementRows);
+};
+
+// 對帳模組用：紙本對帳單拍照、或掃描成沒有文字層的PDF，都沒辦法走上面文字抽取那條路，
+// 改用Gemini的多模態視覺能力直接讀檔案本身(圖片或PDF都可以直接當inlineData送出，
+// 跟舊版整頁圖片OCR的做法一樣)，但用同一套「不猜分類」的schema，維持對帳「只比對、
+// 不亂猜」的一貫設計，不會退化成猜分類就整批新增的舊行為。
+export const analyzeBankStatementRowsFromFile = async (dataUrl: string): Promise<BankStatementRow[]> => {
+  const mimeMatch = dataUrl.match(/^data:(.*?);base64,/);
+  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+  const cleanBase64 = dataUrl.replace(/^data:.*?;base64,/, '');
+
+  return runExtraction([
+    { inlineData: { mimeType, data: cleanBase64 } },
+    { text: "Extract every row from this bank/postal statement (photo or scanned document) for reconciliation purposes — do not guess a category." }
   ], BANK_ROW_RESPONSE_SCHEMA, BANK_ROW_SYSTEM_INSTRUCTION, mapResponseToBankStatementRows);
 };

@@ -5,7 +5,6 @@ import {
   RUNWAY_ANALYSIS_WINDOW_DAYS,
   ANOMALY_MIN_HISTORY_COUNT, ANOMALY_AMOUNT_MULTIPLIER, ANOMALY_MIN_AMOUNT,
   FREQUENCY_HISTORY_MONTHS, FREQUENCY_MULTIPLIER, FREQUENCY_MIN_COUNT,
-  CASH_DUPLICATE_CHECK_DAYS, CASH_WITHDRAWAL_KEYWORDS,
   PIE_L3_PROMOTE_THRESHOLD, PIE_MAX_SLICES,
   PACING_MIN_HISTORY_MONTHS, PACING_WARNING_MULTIPLIER, PACING_CRITICAL_MULTIPLIER, PACING_MIN_AMOUNT,
   RECURRING_MIN_HISTORY_MONTHS, RECURRING_MONTH_COVERAGE_RATIO,
@@ -742,20 +741,6 @@ export const applyHistoricalCategory = (newTx: Transaction, history: Transaction
         };
     }
     return newTx;
-};
-
-export const checkCashDuplicate = (newCashTx: Transaction, history: Transaction[]): boolean => {
-    const txDate = parseISO(newCashTx.date);
-    const checkStart = subDays(txDate, CASH_DUPLICATE_CHECK_DAYS);
-    const checkEnd = addMonths(txDate, 0);
-    const potentialMatches = history.filter(t => {
-         const tDate = parseISO(t.date);
-         if (isBefore(tDate, checkStart) || isAfter(tDate, checkEnd)) return false;
-         const name = t.merchant.toLowerCase();
-         const isWithdrawal = CASH_WITHDRAWAL_KEYWORDS.some(k => name.includes(k));
-         return isWithdrawal;
-    });
-    return potentialMatches.length > 0;
 };
 
 // 現金緩衝耗盡預警(Runway)：估算「照最近的燒錢速度，手上真的能動用的錢還能撐幾天」。

@@ -1,8 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, FileSearch } from 'lucide-react';
+import { List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, FileSearch } from 'lucide-react';
 import Dashboard from './components/Dashboard';
-import Scanner from './components/Scanner';
 import ReconcileView from './components/ReconcileView';
 import SplitModal from './components/SplitModal';
 import EditTransactionModal from './components/EditTransactionModal';
@@ -96,7 +95,7 @@ const App: React.FC = () => {
 
   const userId = session?.user.id;
 
-  const [view, setView] = useState<'dashboard' | 'scanner' | 'transactions' | 'reconcile'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'transactions' | 'reconcile'>('dashboard');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [merchantAliases, setMerchantAliases] = useState<MerchantAlias[]>([]);
@@ -341,12 +340,6 @@ const App: React.FC = () => {
     document.addEventListener('mousedown', click);
     return () => document.removeEventListener('mousedown', click);
   }, []);
-
-  const handleTransactionsAdded = (newTx: Transaction[]) => {
-    setTransactions(prev => [...prev, ...newTx]);
-    setView('transactions');
-    if (userId) upsertTransactions(userId, newTx).catch(err => console.error('儲存交易失敗', err));
-  };
 
   const handleSplitSave = (splitTxs: Transaction[]) => {
     if (!splittingTransaction) return;
@@ -828,11 +821,11 @@ const App: React.FC = () => {
            <span className="font-extrabold text-2xl tracking-tight text-slate-700 hidden lg:block">Paw<span className="text-amber-500">ket</span></span>
         </div>
         <nav className="flex flex-row lg:flex-col flex-1 lg:py-6 gap-1 lg:gap-4 lg:space-y-0 px-1 lg:px-4 overflow-x-auto lg:overflow-visible relative">
-          {/* 明細本是最常用的功能，排最前面；餵食帳單以後可能改成對帳用途，排後面。
+          {/* 明細本是最常用的功能，排最前面；餵食帳單(舊的整批OCR新增功能)2026-07-27
+              已移除，改用對帳(比對已有資料、只新增真正遺漏的部分，不會重複新增)。
               願望清單/帳戶管理比較像系統設定，移出主導覽、收進下面的「更多」選單，
               騰出空間讓手機版也能顯示文字標籤（純icon太難辨識，Ivy反應過）。 */}
           <button onClick={() => setView('transactions')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'transactions' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><List className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'transactions' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">明細本</span></button>
-          <button onClick={() => setView('scanner')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'scanner' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><ScanLine className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'scanner' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">餵食帳單</span></button>
           <button onClick={() => setView('reconcile')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'reconcile' ? 'bg-sky-50 border-sky-100 text-sky-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><FileSearch className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'reconcile' ? 'text-sky-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">對帳</span></button>
         </nav>
         {/* 用戶名稱/大頭貼是「總設定」入口：願望清單本身在側欄下方已經有常駐的卡片可以點
@@ -879,7 +872,6 @@ const App: React.FC = () => {
             currentDate={currentDate} setCurrentDate={setCurrentDate} penaltyConfig={penaltyConfig} setPenaltyConfig={setPenaltyConfig}
             customRange={customRange} setCustomRange={setCustomRange} accounts={accounts}
           />}
-        {view === 'scanner' && <Scanner onTransactionsAdded={handleTransactionsAdded} history={transactions} />}
         {view === 'reconcile' && (
           <ReconcileView
             accounts={accounts}

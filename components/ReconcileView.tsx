@@ -1,14 +1,17 @@
-// 對帳模組第一批可用切片：選一個帳戶、上傳一份月結單PDF，比對出「已對到/正常等待入帳/
-// 你可能忘了記/官方紀錄一直沒出現」四種狀態。架構比照Scanner.tsx的上傳+密碼詢問流程
-// （直接重用services/pdfTextExtractor.ts那套，不重寫一份），但這裡只支援單一份PDF、
-// 不落地存對帳結果，跑完這次Ivy處理完就結束（見PROJECT_STATUS.md的設計說明）。
+// 對帳模組第一批可用切片：選一個帳戶、上傳一份對帳單（電子PDF/掃描PDF/照片都可以），
+// 比對出「已對到/正常等待入帳/你可能忘了記/官方紀錄一直沒出現」四種狀態。這個功能取代
+// 了原本的「餵食帳單」(Scanner.tsx，2026-07-27移除)——差異在於餵食帳單假設「都是新交易，
+// 猜完分類就整批新增」，完全不檢查是不是已經記過了；對帳則是「先跟已有資料比對，只有
+// 真正遺漏的才要新增」，架構上更安全。上傳+密碼詢問流程沿用原本Scanner.tsx那套邏輯
+// （直接重用services/pdfTextExtractor.ts），這裡只支援單一份檔案、不落地存對帳結果，
+// 跑完這次Ivy處理完就結束（見PROJECT_STATUS.md的設計說明）。
 import React, { useState, useRef, useMemo } from 'react';
 import { Upload, Lock, Loader2, FileSearch, CheckCircle2, AlertTriangle, HelpCircle, Plus, Pencil, X, RotateCcw } from 'lucide-react';
 import { Account, Transaction, BankStatementRow, MerchantAlias, ReconcileStatus, L1Category, STANDARD_CATEGORIES } from '../types';
 import { extractPdfText, looksLikeScannedPdf, PdfPasswordRequiredError } from '../services/pdfTextExtractor';
-import { analyzeBankStatementRows } from '../services/geminiService';
+import { analyzeBankStatementRows, analyzeBankStatementRowsFromFile } from '../services/geminiService';
 import { reconcile, BankRowMatch } from '../services/reconciliationService';
-import { findMerchantAliasCandidates } from '../services/logicService';
+import { findMerchantAliasCandidates, applyHistoricalCategory } from '../services/logicService';
 import { RECONCILE_MAX_PDF_PAGES } from '../config/financialRules';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -64,18 +67,27 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
     fr.readAsDataURL(file);
   };
 
-  // 這次只支援有文字層的電子PDF（不是掃描圖片）——對帳需要結構化的日期/金額/收支方向，
-  // 沒有對應的圖片OCR備援可以退（那個備援是給「辨識交易」用的，跟這裡要的資料形狀不同）。
-  const extractText = async (dataUrl: string): Promise<{ text: string; pageCount: number }> => {
+  // 三種來源都支援：電子PDF(有文字層，優先走這條，快又不耗視覺辨識額度)、掃描PDF(沒有
+  // 文字層，退回視覺辨識)、照片(直接視覺辨識)——呼應原本Scanner.tsx「文字抽取失敗就退回
+  // 圖片OCR」的備援哲學，但這裡不管走哪條路，用的都是同一套「不猜分類」的schema，
+  // 不會退化成猜完分類就整批新增的舊行為。
+  const getBankRows = async (dataUrl: string): Promise<BankStatementRow[]> => {
+    if (dataUrl.startsWith('data:image/')) {
+      return analyzeBankStatementRowsFromFile(dataUrl);
+    }
     const buffer = dataUrlToArrayBuffer(dataUrl);
     let password: string | undefined;
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
         const parsed = await extractPdfText(buffer, password);
-        if (looksLikeScannedPdf(parsed)) {
-          throw new Error('這份PDF看起來是掃描圖片、沒有文字層，目前對帳功能只支援有文字層的電子對帳單。');
+        // 頁數防呆兩條路都要套用，避免掃描版PDF繞過去重演「整份丟給AI漏資料」的問題。
+        if (parsed.pageCount > RECONCILE_MAX_PDF_PAGES) {
+          throw new Error(`這份對帳單有${parsed.pageCount}頁，看起來涵蓋很長的期間。目前一次只支援一份月結單(通常1-2頁)，請分批上傳，不要整批貼歷史明細。`);
         }
-        return parsed;
+        if (looksLikeScannedPdf(parsed)) {
+          return await analyzeBankStatementRowsFromFile(dataUrl);
+        }
+        return await analyzeBankStatementRows(parsed.text);
       } catch (err) {
         if (err instanceof PdfPasswordRequiredError) {
           const input = await askForPdfPassword(err.isRetry);
@@ -95,14 +107,9 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
     setError(null);
     setResult(null);
     try {
-      const { text, pageCount } = await extractText(previewDataUrl);
-      if (pageCount > RECONCILE_MAX_PDF_PAGES) {
-        setError(`這份對帳單有${pageCount}頁，看起來涵蓋很長的期間。目前一次只支援一份月結單(通常1-2頁)，請分批上傳，不要整批貼歷史明細。`);
-        return;
-      }
-      const bankRows = await analyzeBankStatementRows(text);
+      const bankRows = await getBankRows(previewDataUrl);
       if (bankRows.length === 0) {
-        setError('沒有從這份PDF讀到任何交易資料，請確認上傳的檔案正確。');
+        setError('沒有從這份檔案讀到任何交易資料，請確認上傳的內容正確。');
         return;
       }
       const r = reconcile(selectedAccount, bankRows, transactions);
@@ -137,7 +144,7 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
 
   const commitAddFromRow = (row: BankStatementRow, merchantName?: string) => {
     const l1 = row.flowType === 'credit' ? L1Category.INCOME : L1Category.VARIABLE;
-    const prefilled: Transaction = {
+    const draft: Transaction = {
       id: uuidv4(),
       date: row.date,
       merchant: merchantName || '',
@@ -150,6 +157,9 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
       isVerified: true,
       isSplit: false,
     };
+    // 商家名稱確定的話，套用這個商家過去記過的分類/收支類型（原本是餵食帳單專用的邏輯，
+    // 移除餵食帳單後改給這裡用，行為不變：同一家店這次一樣直接帶出上次的分類，不用重選）。
+    const prefilled = applyHistoricalCategory(draft, transactions);
     onAddFromBankRow(prefilled, row.rawDescription);
     setAliasPicker(null);
   };
@@ -206,17 +216,17 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
               onClick={() => fileInputRef.current?.click()}
             >
               <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mb-4 shadow-sm group-hover:scale-110 transition-transform"><Upload className="w-9 h-9 text-sky-400" /></div>
-              <p className="text-lg text-slate-600 font-extrabold">點擊上傳一份月結單PDF</p>
-              <p className="text-sm text-slate-400 mt-2 text-center font-medium">一次一份，通常1-2頁的那種月結單</p>
+              <p className="text-lg text-slate-600 font-extrabold">點擊上傳一份對帳單</p>
+              <p className="text-sm text-slate-400 mt-2 text-center font-medium">PDF、掃描檔、拍照都可以，一次一份，通常1-2頁的那種月結單</p>
             </div>
           ) : (
             <div className="flex items-center gap-4 p-4 bg-sky-50/50 border border-sky-100 rounded-3xl mb-4">
               <FileSearch className="w-8 h-8 text-sky-400 shrink-0" />
-              <p className="flex-1 font-bold text-slate-600">已選好一份PDF，可以開始比對</p>
+              <p className="flex-1 font-bold text-slate-600">已選好一份檔案，可以開始比對</p>
               <button onClick={handleReset} className="p-2 hover:bg-white rounded-full text-slate-400 hover:text-rose-400 transition"><X className="w-5 h-5" /></button>
             </div>
           )}
-          <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="application/pdf" />
+          <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="application/pdf,image/*" />
 
           {previewDataUrl && !result && (
             <button onClick={handleParse} disabled={isProcessing} className="w-full mt-2 py-4 bg-gradient-to-r from-sky-400 to-blue-400 text-white rounded-2xl font-bold text-lg shadow-lg shadow-sky-100 hover:shadow-sky-200 transition flex justify-center items-center gap-3">

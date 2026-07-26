@@ -40,10 +40,6 @@ export const FREQUENCY_HISTORY_MONTHS = 3;  // 拿最近幾個月的平均次數
 export const FREQUENCY_MULTIPLIER = 1.2;    // 這個週期的次數超過平均的幾倍，才會被標記為異常
 export const FREQUENCY_MIN_COUNT = 3;       // 次數低於這個數字不列入偵測（避免小樣本誤判，例如平常只買1次、這次買2次就被誤判）
 
-// ── 8. 現金提款重複偵測（掃描帳單時，避免同一筆 ATM 提款被記兩次：一次在銀行明細、一次是手動記的現金） ──
-export const CASH_DUPLICATE_CHECK_DAYS = 7; // 往前找幾天內的提款紀錄
-export const CASH_WITHDRAWAL_KEYWORDS = ['atm', 'withdrawal', '提款', '領錢', 'cash'];
-
 // ── 9. 分類比率圓餅圖（貓咪指揮中心開頭卡片） ──
 // 預設用L2次分類分塊；如果某個L3細項單獨佔全部支出的比例超過這個門檻，
 // 就從它所屬的L2塊拆出來單獨顯示一塊（例如「飲料」從「餐飲食品」裡拆出來）。
