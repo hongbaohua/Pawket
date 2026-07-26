@@ -72,3 +72,10 @@ export const DEFAULT_PENALTY_CONFIG = {
   ratio: 0.5,               // 超支金額的 50% 會被視為下期預算的「罰款」扣除
   targetCategory: '休閒娛樂' // 罰則預設鎖定的次分類目標
 };
+
+// ── 13. 對帳模組（比對銀行對帳單 vs 手動記帳） ──
+export const RECONCILE_AMOUNT_TOLERANCE = 1; // 金額誤差在這個數字以內視為同一筆(NT$1，吸收無條件捨去等小數誤差)
+// 一次對帳只支援「一份月結單」等級的資料量(通常1-2頁)，避免重演「整份歷史明細丟給AI
+// 結果漏掉大半資料」的問題(2026-07-26踩過：2.5年791筆一次送出，AI只回傳210筆)。
+// 超過這個頁數就擋下、請Ivy分批上傳，不在這個功能裡做分批送AI的邏輯。
+export const RECONCILE_MAX_PDF_PAGES = 3;

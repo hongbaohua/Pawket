@@ -47,7 +47,8 @@ const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave
     if (!editing || !editing.name.trim()) return;
     setSaving(true);
     try {
-      // 機構名稱欄位目前沒有實際用途（對帳模組還沒做），跟顯示名稱合併成一欄，不用填兩次。
+      // 機構名稱欄位目前沒有另外的用途（對帳模組是用accountId直接對應，不是靠這個文字欄位），
+      // 跟顯示名稱合併成一欄，不用填兩次。
       await onSave({ ...editing, institution: editing.name.trim() });
       setEditing(null);
     } finally {
@@ -136,6 +137,39 @@ const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave
                   例如悠遊卡、麥當勞點點卡這類實體儲值卡。有些只能從特定電子支付錢包加值（例如悠遊卡只能從悠遊付加值），加值時一樣記一筆「帳戶互轉」交易即可。
                 </p>
               )}
+            </div>
+            <div>
+              <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">
+                對帳用：預期入帳延遲天數（選填，不填的話這個帳戶不能拿來對帳）
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">最短幾天</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editing.postingDelayMin ?? ''}
+                    onChange={e => setEditing({ ...editing, postingDelayMin: e.target.value === '' ? undefined : parseInt(e.target.value, 10) })}
+                    placeholder="例如：0"
+                    className="w-full p-3 bg-[#FFFBF5] border border-slate-100 rounded-2xl font-bold outline-none focus:border-amber-300"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-400 block mb-1">最長幾天</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={editing.postingDelayMax ?? ''}
+                    onChange={e => setEditing({ ...editing, postingDelayMax: e.target.value === '' ? undefined : parseInt(e.target.value, 10) })}
+                    placeholder="例如：9"
+                    className="w-full p-3 bg-[#FFFBF5] border border-slate-100 rounded-2xl font-bold outline-none focus:border-amber-300"
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
+                消費之後銀行通常要幾天才會在對帳單上顯示——現金/電子支付通常是0天（當下就算），
+                銀行簽帳卡/信用卡常見要等5-9天。這兩個數字是「對帳」功能比對用的，不影響一般記帳。
+              </p>
             </div>
             <div className="flex gap-3 mt-2">
               <button type="button" onClick={() => setEditing(null)} className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-bold transition">取消</button>

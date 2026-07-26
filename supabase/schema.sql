@@ -56,11 +56,14 @@ create table if not exists transactions (
 );
 
 -- ── 3. 商家別名對照表 ──
+-- candidates改成候選清單結構(2026-07-27, migration_006)，不假設「一個代碼=一個固定商家」——
+-- 實測驗證過近2成真實代碼其實對應過2種以上不同商家/用途(例如Google Play代碼背後可能是
+-- 好幾款不同遊戲)，只有candidates剛好1筆時才能自動帶入，2筆以上必須讓使用者從候選清單選。
 create table if not exists merchant_aliases (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   official_pattern text not null,        -- 銀行/OCR原始顯示的商家代碼，如「連支＊樂樂早餐」
-  user_merchant text not null,           -- 你慣用的名稱，如「樂樂早餐店」
+  candidates jsonb not null default '[]', -- 這個代碼歷史上對應過的商家清單 [{userMerchant,count}]
   account_id uuid references accounts(id) on delete cascade, -- 選填：限定某帳戶才套用
   default_l1 text,                       -- 選填：自動建議分類大類
   default_l2 text,                       -- 選填：自動建議分類次類

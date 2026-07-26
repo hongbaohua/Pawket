@@ -30,6 +30,8 @@ export interface Account {
   type: AccountType;
   currency: string;
   isArchived: boolean;
+  postingDelayMin?: number;  // 對帳用：預期入帳延遲最短天數（選填，沒填代表這個帳戶還沒設定好，不能拿來對帳）
+  postingDelayMax?: number;  // 對帳用：預期入帳延遲最長天數
 }
 
 // 一筆折扣明細，例如 { label: 'LINE POINT', amount: 40 }
@@ -79,6 +81,41 @@ export interface Transaction {
   isSplit: boolean;
   parentId?: string; // If this is a child of a split
   deletedAt?: string; // 軟刪除時間戳記（選填），有值代表在垃圾桶裡，正常列表不會顯示
+  reconcileStatus?: ReconcileStatus; // 對帳狀態（選填），只有跑過對帳的交易才有值
+}
+
+// 對帳狀態：matched=已比對成功；pending_settlement=手動記帳有、官方紀錄還在預期
+// 入帳延遲區間內沒出現，正常不用管；missing_manual=官方紀錄有、手動記帳找不到對應，
+// 該補記；missing_official=手動記帳有、超過延遲區間官方紀錄仍找不到，可能記錯了。
+export type ReconcileStatus = 'matched' | 'pending_settlement' | 'missing_manual' | 'missing_official';
+
+// 對帳專用：從銀行對帳單抽出來的一列原始資料，刻意不是Transaction的子集——
+// 完全不猜分類/商家，只有比對需要的欄位。這一列本身不落地存資料庫，只存在
+// 對帳畫面的暫存state，這次對帳處理完就丟棄。
+export interface BankStatementRow {
+  id: string;
+  date: string; // YYYY-MM-DD，銀行認定的交易/入帳日
+  amount: number; // 一律正數，方向看flowType
+  flowType: 'debit' | 'credit'; // debit=錢離開這個帳戶，credit=錢進這個帳戶
+  rawDescription?: string; // 銀行原始顯示文字，月結單常見完全沒有商家描述
+  last4?: string; // 卡號末四碼（選填）
+}
+
+// 商家別名：候選清單結構，不假設「一個銀行代碼=一個固定商家」——查證過近2成
+// 真實代碼其實對應過2種以上不同商家/用途（例如Google Play代碼背後可能是好幾款遊戲），
+// 只有candidates剛好1筆時才能自動帶入，2筆以上一定要列清單讓使用者自己選。
+export interface MerchantAliasCandidate {
+  userMerchant: string;
+  count: number; // 這個代碼歷史上被確認對應到這個商家幾次
+}
+
+export interface MerchantAlias {
+  id: string;
+  officialPattern: string; // 銀行/OCR原始顯示的商家代碼
+  candidates: MerchantAliasCandidate[];
+  accountId?: string; // 選填：限定某帳戶才套用
+  defaultL1?: L1Category;
+  defaultL2?: string;
 }
 
 export interface Budget {

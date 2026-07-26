@@ -1,5 +1,5 @@
 
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig } from '../types';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig, MerchantAlias, MerchantAliasCandidate } from '../types';
 import { format, getDaysInMonth, getDate, startOfMonth, endOfMonth, addMonths, subMonths, differenceInDays, isAfter, isBefore, startOfDay, endOfDay, parseISO, startOfYear, getMonth, getYear, isSameMonth, differenceInMonths, subDays, addDays } from 'date-fns';
 import {
   RUNWAY_ANALYSIS_WINDOW_DAYS,
@@ -595,6 +595,41 @@ export const findSimilarTransactions = (
                          (candidateRaw.length > 3 && targetRaw.includes(candidateRaw));
         return nameMatch || rawMatch;
     });
+};
+
+// 對帳模組用：拿銀行原始描述文字去查商家別名候選清單。故意不用額外的模糊比對套件，
+// 沿用上面findSimilarTransactions一樣的「小寫子字串包含」比對風格。
+// 回傳的candidates只有1筆時UI才能自動帶入，2筆以上一定要列清單讓使用者選——
+// 這裡完全不做「挑一個最像的」判斷，判斷權留給使用者。
+export const findMerchantAliasCandidates = (
+    rawDescription: string | undefined,
+    aliases: MerchantAlias[],
+    accountId?: string
+): MerchantAliasCandidate[] => {
+    const raw = (rawDescription || '').trim().toLowerCase();
+    if (raw.length < 2) return [];
+
+    // 帳戶限定的別名優先於不限帳戶的別名（同樣代碼在不同銀行可能對應不同店）
+    const scoped = aliases.filter(a => !a.accountId || a.accountId === accountId);
+
+    const exact = scoped.find(a => a.officialPattern.trim().toLowerCase() === raw);
+    if (exact) return exact.candidates;
+
+    const fuzzyMatches = scoped.filter(a => {
+        const pattern = a.officialPattern.trim().toLowerCase();
+        return pattern.length > 1 && (raw.includes(pattern) || pattern.includes(raw));
+    });
+    if (fuzzyMatches.length === 0) return [];
+
+    // 子字串比對可能同時命中好幾筆別名紀錄，合併候選清單（同商家名稱的次數加總），
+    // 不要武斷選其中一筆別名紀錄當唯一依據。
+    const merged = new Map<string, number>();
+    fuzzyMatches.forEach(a => a.candidates.forEach(c => {
+        merged.set(c.userMerchant, (merged.get(c.userMerchant) || 0) + c.count);
+    }));
+    return Array.from(merged.entries())
+        .map(([userMerchant, count]) => ({ userMerchant, count }))
+        .sort((a, b) => b.count - a.count);
 };
 
 // 願望清單（2026-07-21重新設計，取代舊的「夢想目標/存錢進度」）：

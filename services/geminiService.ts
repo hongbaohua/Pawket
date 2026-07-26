@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Transaction, L1Category, TransactionType, STANDARD_CATEGORIES } from "../types";
+import { Transaction, L1Category, TransactionType, STANDARD_CATEGORIES, BankStatementRow } from "../types";
 import { v4 as uuidv4 } from 'uuid';
 import { GEMINI_MODEL, OCR_MAX_RETRIES, OCR_VERIFY_CONFIDENCE_THRESHOLD, OCR_DEFAULT_CONFIDENCE } from '../config/aiSettings';
 
@@ -254,4 +254,72 @@ export const analyzeReceiptItems = async (base64Image: string): Promise<ReceiptA
     { inlineData: { mimeType: mimeType, data: cleanBase64 } },
     { text: "Extract line items from this receipt. Follow strict rules for unit price vs line subtotal, and output Traditional Chinese only." }
   ], RECEIPT_RESPONSE_SCHEMA, RECEIPT_SYSTEM_INSTRUCTION, mapResponseToReceiptResult);
+};
+
+// 對帳模組用：從銀行對帳單文字抽出「原始資料列」，跟上面analyzeStatementText刻意不同層級——
+// 對帳只需要日期/金額/收支方向來比對，完全不需要猜分類，硬逼AI分類反而容易亂猜（尤其
+// 月結單格式常常只有卡號末四碼+日期+金額，連商家描述都沒有）。schema故意不要求l1_category。
+const BANK_ROW_SYSTEM_INSTRUCTION = `
+Role: Bank Statement Row Extraction Specialist.
+Task: Extract every transaction ROW from the given bank statement text — this is for reconciliation
+(matching against the user's own manually-kept records), NOT for categorization. Do not guess a category.
+
+**CRITICAL RULES:**
+
+1. **flowType (debit/credit) detection is the highest priority**:
+   - "debit": money left the account (withdrawal, purchase, payment, 扣款/支出/消費/提款).
+   - "credit": money entered the account (deposit, refund, interest, salary, 存入/入帳/配息).
+   - amount is always a POSITIVE number; direction is expressed only via flowType, never via sign.
+
+2. **Date**: use the transaction/consumption date (交易日/消費日), not the posting date (入帳日) or
+   the statement print date, if multiple dates are shown per row.
+
+3. **rawDescription**: copy the merchant/description text exactly as printed, including truncated bank
+   codes (e.g. "連支＊樂樂早餐"). Many bank monthly statements have NO description at all (only
+   card-last-4/date/amount) — in that case leave rawDescription empty/omit it, do NOT invent one.
+
+4. **last4**: the last 4 digits of the card number if shown, otherwise omit.
+
+5. Extract EVERY row in the main transaction table. Ignore summary/total boxes, marketing text, and
+   duplicate fee-confirmation slips that repeat a row already in the main table.
+`;
+
+const BANK_ROW_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    rows: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          date: { type: Type.STRING, description: "YYYY-MM-DD" },
+          amount: { type: Type.NUMBER },
+          flowType: { type: Type.STRING, enum: ["debit", "credit"] },
+          rawDescription: { type: Type.STRING },
+          last4: { type: Type.STRING }
+        },
+        required: ["date", "amount", "flowType"]
+      }
+    }
+  },
+  required: ["rows"]
+};
+
+const mapResponseToBankStatementRows = (responseText: string): BankStatementRow[] => {
+  const parsed = JSON.parse(responseText);
+  const rawList = parsed.rows || [];
+  return rawList.map((item: any) => ({
+    id: uuidv4(),
+    date: item.date,
+    amount: Math.abs(Number(item.amount) || 0),
+    flowType: item.flowType === 'credit' ? 'credit' : 'debit',
+    rawDescription: item.rawDescription || undefined,
+    last4: item.last4 || undefined
+  }));
+};
+
+export const analyzeBankStatementRows = async (extractedText: string): Promise<BankStatementRow[]> => {
+  return runExtraction([
+    { text: "The following is text extracted directly from a bank statement PDF (not an image). Extract every row for reconciliation purposes — do not guess a category.\n\n--- PDF TEXT START ---\n" + extractedText + "\n--- PDF TEXT END ---" }
+  ], BANK_ROW_RESPONSE_SCHEMA, BANK_ROW_SYSTEM_INSTRUCTION, mapResponseToBankStatementRows);
 };

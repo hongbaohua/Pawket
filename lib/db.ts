@@ -3,7 +3,7 @@
 // 轉成資料表用的欄位格式（snake_case、攤平），反之亦然。
 
 import { supabase } from './supabaseClient';
-import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag, WishlistItem } from '../types';
+import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag, WishlistItem, ReconcileStatus, MerchantAlias, MerchantAliasCandidate } from '../types';
 
 // ── 帳戶 ──
 
@@ -14,6 +14,8 @@ interface AccountRow {
   type: AccountType;
   currency: string;
   is_archived: boolean;
+  posting_delay_min: number | null;
+  posting_delay_max: number | null;
 }
 
 const rowToAccount = (row: AccountRow): Account => ({
@@ -23,6 +25,8 @@ const rowToAccount = (row: AccountRow): Account => ({
   type: row.type,
   currency: row.currency,
   isArchived: row.is_archived,
+  postingDelayMin: row.posting_delay_min ?? undefined,
+  postingDelayMax: row.posting_delay_max ?? undefined,
 });
 
 export const fetchAccounts = async (): Promise<Account[]> => {
@@ -39,6 +43,8 @@ export const createAccount = async (userId: string, account: Omit<Account, 'id'>
     type: account.type,
     currency: account.currency,
     is_archived: account.isArchived,
+    posting_delay_min: account.postingDelayMin ?? null,
+    posting_delay_max: account.postingDelayMax ?? null,
   }).select().single();
   if (error) throw error;
   return rowToAccount(data as AccountRow);
@@ -51,6 +57,8 @@ export const updateAccount = async (account: Account): Promise<void> => {
     type: account.type,
     currency: account.currency,
     is_archived: account.isArchived,
+    posting_delay_min: account.postingDelayMin ?? null,
+    posting_delay_max: account.postingDelayMax ?? null,
   }).eq('id', account.id);
   if (error) throw error;
 };
@@ -98,6 +106,7 @@ interface TransactionRow {
   is_split: boolean;
   parent_id: string | null;
   deleted_at: string | null;
+  reconcile_status: ReconcileStatus | null;
 }
 
 const rowToTransaction = (row: TransactionRow): Transaction => ({
@@ -126,8 +135,13 @@ const rowToTransaction = (row: TransactionRow): Transaction => ({
   isSplit: row.is_split,
   parentId: row.parent_id || undefined,
   deletedAt: row.deleted_at || undefined,
+  reconcileStatus: row.reconcile_status || undefined,
 });
 
+// 刻意不包含 reconcile_status：這個欄位只由對帳流程透過下面的 setReconcileStatus
+// 更新，一般編輯/新增交易呼叫 upsertTransaction(s) 時完全不會提到這個欄位，
+// PostgREST upsert 只會覆蓋 payload 裡有出現的欄位，這樣才不會每次存檔都
+// 不小心把對帳狀態洗掉。
 const transactionToRow = (userId: string, tx: Transaction) => ({
   id: tx.id,
   user_id: userId,
@@ -229,6 +243,13 @@ export const deleteAllTransactions = async (userId: string): Promise<void> => {
   if (error) throw error;
 };
 
+// 對帳用：只更新這一個欄位，不用整筆 upsertTransaction 重送（也避免順便把使用者
+// 這段時間手動改過、還沒同步回本機state的其他欄位覆蓋掉）。
+export const setReconcileStatus = async (id: string, status: ReconcileStatus | null): Promise<void> => {
+  const { error } = await supabase.from('transactions').update({ reconcile_status: status }).eq('id', id);
+  if (error) throw error;
+};
+
 // ── 願望清單 ──
 
 interface WishlistItemRow {
@@ -278,5 +299,48 @@ export const upsertWishlistItems = async (userId: string, items: WishlistItem[])
 
 export const deleteWishlistItem = async (id: string): Promise<void> => {
   const { error } = await supabase.from('wishlist_items').delete().eq('id', id);
+  if (error) throw error;
+};
+
+// ── 商家別名（對帳模組用） ──
+
+interface MerchantAliasRow {
+  id: string;
+  official_pattern: string;
+  candidates: MerchantAliasCandidate[] | null;
+  account_id: string | null;
+  default_l1: L1Category | null;
+  default_l2: string | null;
+}
+
+const rowToMerchantAlias = (row: MerchantAliasRow): MerchantAlias => ({
+  id: row.id,
+  officialPattern: row.official_pattern,
+  candidates: row.candidates || [],
+  accountId: row.account_id || undefined,
+  defaultL1: row.default_l1 || undefined,
+  defaultL2: row.default_l2 || undefined,
+});
+
+const merchantAliasToRow = (userId: string, alias: MerchantAlias) => ({
+  id: alias.id,
+  user_id: userId,
+  official_pattern: alias.officialPattern,
+  candidates: alias.candidates,
+  account_id: alias.accountId || null,
+  default_l1: alias.defaultL1 || null,
+  default_l2: alias.defaultL2 || null,
+});
+
+// 表目前很小（初期是空的，之後逐筆從對帳流程學習累積），不用像fetchTransactions
+// 那樣分頁，之後如果真的成長超過1000筆再比照那個分頁寫法補上。
+export const fetchMerchantAliases = async (): Promise<MerchantAlias[]> => {
+  const { data, error } = await supabase.from('merchant_aliases').select('*');
+  if (error) throw error;
+  return (data as MerchantAliasRow[]).map(rowToMerchantAlias);
+};
+
+export const upsertMerchantAlias = async (userId: string, alias: MerchantAlias): Promise<void> => {
+  const { error } = await supabase.from('merchant_aliases').upsert(merchantAliasToRow(userId, alias));
   if (error) throw error;
 };

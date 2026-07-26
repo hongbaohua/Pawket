@@ -1,8 +1,9 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat } from 'lucide-react';
+import { ScanLine, List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, FileSearch } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import Scanner from './components/Scanner';
+import ReconcileView from './components/ReconcileView';
 import SplitModal from './components/SplitModal';
 import EditTransactionModal from './components/EditTransactionModal';
 import BatchCorrectionModal from './components/BatchCorrectionModal';
@@ -12,7 +13,7 @@ import CategoryMappingModal from './components/CategoryMappingModal';
 import Auth from './components/Auth';
 import AccountsModal from './components/AccountsModal';
 import TransferModal from './components/TransferModal';
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag } from './types';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus } from './types';
 import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -20,7 +21,8 @@ import {
   seedDefaultAccountsIfEmpty, fetchTransactions, createAccount, updateAccount, archiveAccount,
   upsertTransaction, upsertTransactions, deleteTransaction as dbDeleteTransaction, deleteTransactionsByParentId,
   deleteAllTransactions, fetchWishlistItems, upsertWishlistItems, deleteWishlistItem as dbDeleteWishlistItem,
-  fetchDeletedTransactions, restoreTransaction, permanentlyDeleteTransaction
+  fetchDeletedTransactions, restoreTransaction, permanentlyDeleteTransaction,
+  fetchMerchantAliases, upsertMerchantAlias, setReconcileStatus as dbSetReconcileStatus
 } from './lib/db';
 import type { Session } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
@@ -94,9 +96,10 @@ const App: React.FC = () => {
 
   const userId = session?.user.id;
 
-  const [view, setView] = useState<'dashboard' | 'scanner' | 'transactions'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'scanner' | 'transactions' | 'reconcile'>('dashboard');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [merchantAliases, setMerchantAliases] = useState<MerchantAlias[]>([]);
   const [isAccountsModalOpen, setIsAccountsModalOpen] = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
   const [budgets, setBudgets] = useState<Budget[]>(INITIAL_BUDGETS);
@@ -109,15 +112,17 @@ const App: React.FC = () => {
     (async () => {
       setDataLoading(true);
       try {
-        const [accs, txs, wishlist] = await Promise.all([
+        const [accs, txs, wishlist, aliases] = await Promise.all([
           seedDefaultAccountsIfEmpty(userId),
           fetchTransactions(),
           fetchWishlistItems(),
+          fetchMerchantAliases(),
         ]);
         if (!cancelled) {
           setAccounts(accs);
           setTransactions(txs);
           setWishlistItems(wishlist);
+          setMerchantAliases(aliases);
         }
       } catch (err) {
         console.error('載入資料失敗', err);
@@ -206,6 +211,9 @@ const App: React.FC = () => {
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set());
   const toggleRowExpanded = (id: string) => setExpandedRowIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  // 對帳模組「新增這筆」流程用：記著這次開EditTransactionModal是為了補一列銀行對帳單的
+  // missing_manual資料，存檔成功後要順便把這次確認的商家名稱學起來，記進商家別名候選清單。
+  const [pendingAliasLearn, setPendingAliasLearn] = useState<{ officialPattern: string; accountId?: string } | null>(null);
   const [transferModalState, setTransferModalState] = useState<{ open: boolean; transaction?: Transaction }>({ open: false });
   const [batchCandidates, setBatchCandidates] = useState<Transaction[]>([]);
   const [batchSource, setBatchSource] = useState<Transaction | null>(null);
@@ -447,6 +455,45 @@ const App: React.FC = () => {
         upsertTransaction(userId, options.additionalTransfer).catch(err => console.error('儲存儲值交易失敗', err));
       }
     }
+    // 對帳模組「新增這筆」流程：這次存檔如果是為了補一列銀行對帳單資料，把這次確認的
+    // 商家名稱學起來（既有候選+1次，或新增一筆候選），下次同樣的銀行代碼出現時就有
+    // 建議可以選（商家別名的「問一次、記住」第三層邏輯）。
+    if (pendingAliasLearn && updatedTx.merchant.trim() && userId) {
+      const pattern = pendingAliasLearn.officialPattern;
+      const scopeAccountId = pendingAliasLearn.accountId;
+      const merchantName = updatedTx.merchant.trim();
+      const existing = merchantAliases.find(a => a.officialPattern === pattern && (a.accountId || undefined) === scopeAccountId);
+      const nextAlias: MerchantAlias = existing
+        ? {
+            ...existing,
+            candidates: existing.candidates.some(c => c.userMerchant === merchantName)
+              ? existing.candidates.map(c => c.userMerchant === merchantName ? { ...c, count: c.count + 1 } : c)
+              : [...existing.candidates, { userMerchant: merchantName, count: 1 }],
+          }
+        : { id: uuidv4(), officialPattern: pattern, candidates: [{ userMerchant: merchantName, count: 1 }], accountId: scopeAccountId };
+      setMerchantAliases(prev => [...prev.filter(a => a.id !== nextAlias.id), nextAlias]);
+      upsertMerchantAlias(userId, nextAlias).catch(err => console.error('儲存商家別名失敗', err));
+    }
+    setPendingAliasLearn(null);
+  };
+
+  // 對帳模組用：從一列銀行對帳單資料開「新增交易」，日期/金額/帳戶先幫Ivy帶好。
+  // officialPattern有值的話代表這次存檔要順便學商家別名（見上面handleEditSave）。
+  const handleAddFromBankRow = (prefilled: Transaction, officialPattern?: string) => {
+    setPendingAliasLearn(officialPattern ? { officialPattern, accountId: prefilled.accountId } : null);
+    setEditingTransaction(prefilled);
+  };
+
+  // 對帳模組用：把比對結果(matched/pending_settlement/missing_official)寫回對應交易，
+  // 畫面先樂觀更新，背景才真的寫進Supabase。
+  const handleApplyReconcileStatuses = (updates: { transactionId: string; status: ReconcileStatus }[]) => {
+    if (updates.length === 0) return;
+    setTransactions(prev => prev.map(t => {
+      const u = updates.find(x => x.transactionId === t.id);
+      return u ? { ...t, reconcileStatus: u.status } : t;
+    }));
+    Promise.all(updates.map(u => dbSetReconcileStatus(u.transactionId, u.status)))
+      .catch(err => console.error('更新對帳狀態失敗', err));
   };
 
   const handleTransferSave = (tx: Transaction) => {
@@ -786,6 +833,7 @@ const App: React.FC = () => {
               騰出空間讓手機版也能顯示文字標籤（純icon太難辨識，Ivy反應過）。 */}
           <button onClick={() => setView('transactions')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'transactions' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><List className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'transactions' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">明細本</span></button>
           <button onClick={() => setView('scanner')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'scanner' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><ScanLine className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'scanner' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">餵食帳單</span></button>
+          <button onClick={() => setView('reconcile')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'reconcile' ? 'bg-sky-50 border-sky-100 text-sky-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><FileSearch className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'reconcile' ? 'text-sky-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">對帳</span></button>
         </nav>
         {/* 用戶名稱/大頭貼是「總設定」入口：願望清單本身在側欄下方已經有常駐的卡片可以點
             （桌機版），不需要再開一個獨立按鈕；帳戶管理、登出這種比較像系統設定的動作
@@ -832,6 +880,17 @@ const App: React.FC = () => {
             customRange={customRange} setCustomRange={setCustomRange} accounts={accounts}
           />}
         {view === 'scanner' && <Scanner onTransactionsAdded={handleTransactionsAdded} history={transactions} />}
+        {view === 'reconcile' && (
+          <ReconcileView
+            accounts={accounts}
+            transactions={transactions}
+            merchantAliases={merchantAliases}
+            onAddFromBankRow={handleAddFromBankRow}
+            onEditTransaction={setEditingTransaction}
+            onApplyReconcileStatuses={handleApplyReconcileStatuses}
+            onOpenAccountsModal={() => setIsAccountsModalOpen(true)}
+          />
+        )}
         {view === 'transactions' && (
           <div className="bg-white rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 overflow-hidden">
             <div className="p-8 border-b border-orange-50 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white gap-4">
@@ -1066,7 +1125,7 @@ const App: React.FC = () => {
         )}
       </main>
       {splittingTransaction && <SplitModal transaction={splittingTransaction} allTransactions={transactions} onClose={() => setSplittingTransaction(null)} onSave={handleSplitSave} />}
-      {editingTransaction && <EditTransactionModal transaction={editingTransaction} allTransactions={transactions} accounts={accounts} customCategoryHistory={customCategoryHistory} onTagAction={handleTagAction} onClose={() => setEditingTransaction(null)} onSave={handleEditSave} />}
+      {editingTransaction && <EditTransactionModal transaction={editingTransaction} allTransactions={transactions} accounts={accounts} customCategoryHistory={customCategoryHistory} onTagAction={handleTagAction} onClose={() => { setEditingTransaction(null); setPendingAliasLearn(null); }} onSave={handleEditSave} />}
       {transferModalState.open && <TransferModal accounts={accounts} transaction={transferModalState.transaction} onClose={() => setTransferModalState({ open: false })} onSave={handleTransferSave} />}
       {isAccountsModalOpen && <AccountsModal accounts={accounts} onClose={() => setIsAccountsModalOpen(false)} onSave={handleSaveAccount} onArchive={handleArchiveAccount} />}
       {batchSource && <BatchCorrectionModal matches={batchCandidates} source={batchSource} allTransactions={transactions} onConfirm={handleBatchConfirm} onClose={() => { setBatchSource(null); setBatchCandidates([]); }} />}
