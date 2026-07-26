@@ -106,9 +106,10 @@ const mapResponseToTransactions = (responseText: string): Transaction[] => {
   }));
 };
 
-// 共用的重試迴圈：呼叫Gemini、解析回應、失敗時指數退避重試。傳入的parts決定這次是
-// 圖片OCR還是文字解析，其餘邏輯(schema/重試/欄位轉換)完全共用。
-const runExtraction = async (parts: any[]): Promise<Transaction[]> => {
+// 共用的重試迴圈：呼叫Gemini、解析回應、失敗時指數退避重試。schema/systemInstruction/mapper
+// 參數化後，銀行對帳單辨識(多筆交易)跟收據品項辨識(單筆交易內的品項)可以共用同一套
+// 重試/錯誤處理邏輯，不用各寫一份。
+const runExtraction = async <T>(parts: any[], schema: any, systemInstruction: string, mapper: (text: string) => T): Promise<T> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const MAX_RETRIES = OCR_MAX_RETRIES;
   let lastError: any;
@@ -119,15 +120,15 @@ const runExtraction = async (parts: any[]): Promise<Transaction[]> => {
         model: GEMINI_MODEL,
         contents: { parts },
         config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
+          systemInstruction,
           responseMimeType: "application/json",
-          responseSchema: TRANSACTION_RESPONSE_SCHEMA
+          responseSchema: schema
         }
       });
 
       const text = response.text;
       if (!text) throw new Error("Empty response from Gemini");
-      return mapResponseToTransactions(text);
+      return mapper(text);
 
     } catch (error) {
       console.warn(`Attempt ${attempt + 1} failed:`, error);
@@ -151,7 +152,7 @@ export const analyzeStatementImage = async (base64Image: string): Promise<Transa
   return runExtraction([
     { inlineData: { mimeType: mimeType, data: cleanBase64 } },
     { text: "Extract transaction data. Follow strict logic rules, especially for Income/Expense detection." }
-  ]);
+  ], TRANSACTION_RESPONSE_SCHEMA, SYSTEM_INSTRUCTION, mapResponseToTransactions);
 };
 
 // PDF結構化解析用：直接把PDF抽出來的純文字(見services/pdfTextExtractor.ts)交給Gemini結構化，
@@ -160,5 +161,97 @@ export const analyzeStatementImage = async (base64Image: string): Promise<Transa
 export const analyzeStatementText = async (extractedText: string): Promise<Transaction[]> => {
   return runExtraction([
     { text: "The following is text extracted directly from a bank statement PDF (not an image). Extract transaction data. Follow strict logic rules, especially for Income/Expense detection.\n\n--- PDF TEXT START ---\n" + extractedText + "\n--- PDF TEXT END ---" }
-  ]);
+  ], TRANSACTION_RESPONSE_SCHEMA, SYSTEM_INSTRUCTION, mapResponseToTransactions);
+};
+
+// 收據/明細品項辨識用：跟上面兩個「一份對帳單抓出好幾筆新交易」不同層級——這是「單一一筆
+// 交易內部買了哪些品項」，給EditTransactionModal.tsx的「喵喵購物清單」上傳收據照片自動填用。
+const RECEIPT_SYSTEM_INSTRUCTION = `
+Role: Receipt Line-Item Extraction Specialist.
+Task: Read a photo of a single receipt/itemized bill (convenience store receipt, restaurant bill, retail invoice, etc.) and extract line items.
+
+**CRITICAL RULES:**
+
+1. **unitPrice must be the PER-UNIT price, not the line subtotal.**
+   - If the receipt shows "雞腿飯 x2 $160" (a line subtotal for multiple quantity), you MUST divide by
+     quantity to report unitPrice=80, quantity=2. Do NOT put the line subtotal (160) into unitPrice.
+   - If quantity is not shown, assume quantity=1 and unitPrice = the printed price.
+
+2. **Discounts**: extract any visible discount lines (e.g. "會員折扣 -$20", "9折" converted to an amount)
+   into the discounts array as {label, amount}. If there are no visible discounts, return an empty array.
+   Do not invent discounts that aren't shown.
+
+3. **mergedName**: write ONE short Traditional Chinese phrase summarizing all the items together
+   (e.g. "早餐(蛋餅+豆漿)", "超商雜貨"), for a user who prefers not to itemize.
+
+4. **Output language**: all text fields (item names, discount labels, mergedName) MUST be Traditional
+   Chinese (繁體中文), never Simplified Chinese, regardless of what script appears on the receipt.
+
+5. If the image contains multiple unrelated purchases or looks like a multi-transaction statement rather
+   than a single receipt, do not force it into one coherent breakdown — extract whatever is legible.
+   Low-confidence items are fine; the user can edit them by hand afterward.
+`;
+
+const RECEIPT_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    items: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          name: { type: Type.STRING },
+          unitPrice: { type: Type.NUMBER },
+          quantity: { type: Type.NUMBER }
+        },
+        required: ["name", "unitPrice", "quantity"]
+      }
+    },
+    discounts: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          label: { type: Type.STRING },
+          amount: { type: Type.NUMBER }
+        },
+        required: ["label", "amount"]
+      }
+    },
+    mergedName: { type: Type.STRING }
+  },
+  required: ["items", "mergedName"]
+};
+
+export interface ReceiptAnalysisResult {
+  items: { name: string; unitPrice: number; quantity: number }[];
+  discounts: { label: string; amount: number }[];
+  mergedName: string;
+}
+
+const mapResponseToReceiptResult = (responseText: string): ReceiptAnalysisResult => {
+  const parsed = JSON.parse(responseText);
+  return {
+    items: (parsed.items || []).map((it: any) => ({
+      name: it.name || '',
+      unitPrice: typeof it.unitPrice === 'number' ? it.unitPrice : 0,
+      quantity: typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 1
+    })),
+    discounts: (parsed.discounts || []).map((d: any) => ({
+      label: d.label || '',
+      amount: typeof d.amount === 'number' ? d.amount : 0
+    })),
+    mergedName: parsed.mergedName || ''
+  };
+};
+
+export const analyzeReceiptItems = async (base64Image: string): Promise<ReceiptAnalysisResult> => {
+  const mimeMatch = base64Image.match(/^data:(.*?);base64,/);
+  const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+  const cleanBase64 = base64Image.replace(/^data:.*?;base64,/, '');
+
+  return runExtraction([
+    { inlineData: { mimeType: mimeType, data: cleanBase64 } },
+    { text: "Extract line items from this receipt. Follow strict rules for unit price vs line subtotal, and output Traditional Chinese only." }
+  ], RECEIPT_RESPONSE_SCHEMA, RECEIPT_SYSTEM_INSTRUCTION, mapResponseToReceiptResult);
 };

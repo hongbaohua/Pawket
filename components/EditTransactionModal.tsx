@@ -1,8 +1,9 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account, Discount, SpecialTag, TransactionItem } from '../types';
-import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, ChevronLeft, ChevronRight, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard, Calculator, Divide, Zap } from 'lucide-react';
+import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, ChevronLeft, ChevronRight, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard, Calculator, Divide, Zap, Loader2 } from 'lucide-react';
 import { calculateAccountBalances } from '../services/logicService';
+import { analyzeReceiptItems, ReceiptAnalysisResult } from '../services/geminiService';
 import { v4 as uuidv4 } from 'uuid';
 
 // 2026-07-22 Ivy反應金額欄位太死板：原價/折扣/代購費/匯率/進位規則每家代購都不一樣，
@@ -154,6 +155,66 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     if (next.has(idx)) next.delete(idx); else next.add(idx);
     return next;
   });
+
+  // 上傳收據照片自動辨識品項/單價/折扣（2026-07-26新功能）：拍收據照片上傳，AI讀出
+  // 每項名稱/單價/數量+折扣，準備「詳細版」(逐項列出)跟「合併版」(mergedName當單一品項)
+  // 兩種版本讓Ivy自己選要套用哪個，不會自動決定要不要簡寫。
+  const [receiptAnalyzing, setReceiptAnalyzing] = useState(false);
+  const [receiptResult, setReceiptResult] = useState<ReceiptAnalysisResult | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+  // 選好版本後，如果目前品項清單本來就不是空的，先問「取代」還是「加到後面」，
+  // 這個狀態記錄「已經選好哪個版本，正在等取代/加後面選擇」的中間步驟。
+  const [receiptPendingAction, setReceiptPendingAction] = useState<'detailed' | 'merged' | null>(null);
+  const receiptFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleReceiptFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (receiptFileInputRef.current) receiptFileInputRef.current.value = '';
+    if (!file) return;
+    setReceiptError(null);
+    setReceiptResult(null);
+    setReceiptPendingAction(null);
+    setReceiptAnalyzing(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve) => {
+        const fr = new FileReader();
+        fr.onloadend = () => resolve(fr.result as string);
+        fr.readAsDataURL(file);
+      });
+      const result = await analyzeReceiptItems(dataUrl);
+      setReceiptResult(result);
+    } catch (err) {
+      console.warn('收據辨識失敗', err);
+      setReceiptError('看不清楚這張照片，辨識失敗了，可以重新上傳一張，或直接手動填品項。');
+    } finally {
+      setReceiptAnalyzing(false);
+    }
+  };
+
+  // version直接當參數傳入(不讀receiptPendingAction這個state)，避免applyReceiptVersion
+  // 在「品項本來就是空的、直接套用」這條路徑上因為setState是非同步的、閉包還沒拿到最新值而套錯版本。
+  const commitReceiptItems = (version: 'detailed' | 'merged', mode: 'replace' | 'append') => {
+    if (!receiptResult) return;
+    const newItems: TransactionItem[] = version === 'detailed'
+      ? receiptResult.items.map(it => ({ name: it.name, unitPrice: it.unitPrice, quantity: it.quantity }))
+      : [{ name: receiptResult.mergedName, unitPrice: receiptResult.items.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0), quantity: 1 }];
+    setItems(prev => mode === 'replace' ? newItems : [...prev, ...newItems]);
+    if (receiptResult.discounts.length > 0) {
+      setDiscounts(prev => [...prev, ...receiptResult.discounts]);
+      setShowBreakdown(true);
+    }
+    setReceiptResult(null);
+    setReceiptPendingAction(null);
+    setReceiptError(null);
+  };
+
+  const applyReceiptVersion = (version: 'detailed' | 'merged') => {
+    if (items.length === 0) {
+      commitReceiptItems(version, 'replace');
+    } else {
+      setReceiptPendingAction(version);
+    }
+  };
 
   // 外幣/代購折扣試算小工具：使用者填「原幣金額」(單價)+「匯率」+（選填）「折扣」，
   // 再選進位方式，自動算出單價(台幣)+寫進備註，不用自己按計算機算完再手動打字進來。
@@ -815,6 +876,73 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                   );
                 })}
                 <button type="button" onClick={addItemRow} className="text-xs font-bold text-slate-400 hover:text-amber-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> 新增品項</button>
+
+                {/* 上傳收據照片自動辨識（2026-07-26新功能）：拍收據照片，AI讀出每項名稱/單價/
+                    數量+折扣，準備「詳細版」跟「合併版」讓Ivy自己選要套用哪個 */}
+                <div className="pt-1">
+                  <input type="file" accept="image/*" ref={receiptFileInputRef} onChange={handleReceiptFileChange} className="hidden" />
+                  <button
+                    type="button"
+                    onClick={() => receiptFileInputRef.current?.click()}
+                    disabled={receiptAnalyzing}
+                    className="text-xs font-bold text-sky-500 hover:text-sky-600 flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <Receipt className="w-3.5 h-3.5" /> 上傳收據照片自動辨識
+                  </button>
+
+                  {receiptAnalyzing && (
+                    <div className="mt-2 p-3 bg-sky-50/50 border border-sky-100 rounded-xl flex items-center gap-2 text-xs font-bold text-sky-500 animate-in slide-in-from-top-1">
+                      <Loader2 className="w-4 h-4 animate-spin" /> 正在讀收據內容...
+                    </div>
+                  )}
+
+                  {receiptError && (
+                    <div className="mt-2 p-3 bg-rose-50 border border-rose-100 rounded-xl space-y-1 animate-in slide-in-from-top-1">
+                      <p className="text-xs font-bold text-rose-500">{receiptError}</p>
+                      <button type="button" onClick={() => { setReceiptError(null); receiptFileInputRef.current?.click(); }} className="text-[10px] font-bold text-rose-600 underline">重新上傳</button>
+                    </div>
+                  )}
+
+                  {receiptResult && !receiptPendingAction && (
+                    <div className="mt-2 grid sm:grid-cols-2 gap-2 animate-in slide-in-from-top-1">
+                      <div className="p-3 bg-white border border-sky-200 rounded-xl space-y-2">
+                        <p className="text-[10px] font-bold text-sky-500 uppercase">詳細版（逐項列出）</p>
+                        <ul className="text-xs text-slate-600 space-y-0.5 max-h-28 overflow-y-auto">
+                          {receiptResult.items.map((it, i) => (
+                            <li key={i} className="flex justify-between gap-2">
+                              <span className="truncate">{it.name} ×{it.quantity}</span>
+                              <span className="shrink-0 font-bold">${(it.unitPrice * it.quantity).toFixed(0)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {receiptResult.discounts.length > 0 && (
+                          <p className="text-[10px] text-emerald-500">折扣：{receiptResult.discounts.map(d => `${d.label} -$${d.amount}`).join('、')}</p>
+                        )}
+                        <button type="button" onClick={() => applyReceiptVersion('detailed')} className="w-full py-1.5 bg-sky-500 text-white text-xs font-bold rounded-lg hover:bg-sky-600">套用這個版本</button>
+                      </div>
+                      <div className="p-3 bg-white border border-amber-200 rounded-xl space-y-2">
+                        <p className="text-[10px] font-bold text-amber-500 uppercase">合併版（一行帶過）</p>
+                        <p className="text-xs text-slate-600">{receiptResult.mergedName || '（辨識不出合併描述）'}</p>
+                        <p className="text-xs font-bold text-amber-600">${receiptResult.items.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0).toFixed(0)}</p>
+                        {receiptResult.discounts.length > 0 && (
+                          <p className="text-[10px] text-emerald-500">折扣：{receiptResult.discounts.map(d => `${d.label} -$${d.amount}`).join('、')}</p>
+                        )}
+                        <button type="button" onClick={() => applyReceiptVersion('merged')} className="w-full py-1.5 bg-amber-400 text-white text-xs font-bold rounded-lg hover:bg-amber-500">套用這個版本</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {receiptResult && receiptPendingAction && (
+                    <div className="mt-2 p-3 bg-white border border-slate-200 rounded-xl space-y-2 animate-in slide-in-from-top-1">
+                      <p className="text-xs font-bold text-slate-500">目前已經有品項了，這次辨識的內容要：</p>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => commitReceiptItems(receiptPendingAction, 'replace')} className="flex-1 py-1.5 bg-rose-100 text-rose-600 text-xs font-bold rounded-lg hover:bg-rose-200">取代目前品項</button>
+                        <button type="button" onClick={() => commitReceiptItems(receiptPendingAction, 'append')} className="flex-1 py-1.5 bg-slate-100 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-200">加到後面</button>
+                      </div>
+                      <button type="button" onClick={() => setReceiptPendingAction(null)} className="text-[10px] text-slate-400 underline">取消，回去看兩個版本</button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
