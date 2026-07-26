@@ -39,8 +39,10 @@ const BatchCorrectionModal: React.FC<BatchCorrectionModalProps> = ({ matches, so
               <div className="flex-1">
                   <h3 className="text-xl font-extrabold text-slate-800">喵喵發現了 {matches.length} 筆相似交易！</h3>
                   <p className="text-sm text-slate-500 mt-1">
-                      您剛剛修正了 <strong>{source.merchant}</strong> ({source.category.l2})。<br/>
-                      是否要將這些相似項目也一併更新，節省時間？
+                      您剛剛把 <strong>{source.merchant}</strong> 改成「{source.category.l1}／{source.category.l2}」。<br/>
+                      下面這些交易的<strong>金額跟這筆差不到10%、商家名稱也對得上一部分</strong>，
+                      猜測可能是同一家店的其他消費記錄——要不要一起套用剛剛這次的修改？
+                      （不是完全比對，覺得不是同一家的話取消勾選就好，不會影響其他筆）
                   </p>
               </div>
               <button onClick={onClose} className="p-2 hover:bg-white/50 rounded-full transition text-slate-400">
