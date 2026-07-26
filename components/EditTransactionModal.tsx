@@ -198,10 +198,17 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     const newItems: TransactionItem[] = version === 'detailed'
       ? receiptResult.items.map(it => ({ name: it.name, unitPrice: it.unitPrice, quantity: it.quantity }))
       : [{ name: receiptResult.mergedName, unitPrice: receiptResult.items.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0), quantity: 1 }];
-    setItems(prev => mode === 'replace' ? newItems : [...prev, ...newItems]);
+    const resultingItems = mode === 'replace' ? newItems : [...items, ...newItems];
+    setItems(resultingItems);
     if (receiptResult.discounts.length > 0) {
       setDiscounts(prev => [...prev, ...receiptResult.discounts]);
       setShowBreakdown(true);
+      // 2026-07-27 Ivy實測抓到的bug：有折扣時展開折扣區塊後，實付金額=原始金額-折扣，
+      // 但原始金額(grossAmount)沒有跟著品項自動帶入，會停留在舊值(新增交易通常是0)，
+      // 沒手動點「帶入品項合計」的話折扣一減就變負數。這裡直接比照那顆按鈕的邏輯自動帶入，
+      // 不用等她自己想起來要點。
+      const resultingSubtotal = resultingItems.reduce((sum, it) => sum + (it.unitPrice != null ? it.unitPrice * (it.quantity || 1) : 0), 0);
+      if (resultingSubtotal > 0) setGrossAmount(parseFloat(resultingSubtotal.toFixed(2)));
     }
     setReceiptResult(null);
     setReceiptPendingAction(null);
