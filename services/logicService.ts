@@ -578,11 +578,20 @@ export const findSimilarTransactions = (
              const diffPercent = Math.abs(t.amount - target.amount) / target.amount;
              if (diffPercent > 0.1) return false;
         }
+        // 2026-07-27 Ivy反應：商家名稱／完整分類(含細項)其實已經跟target一模一樣時，
+        // 套用這次修改等於沒有任何看得到的變化，卻還是跳出來問「要不要套用」，
+        // 讓人搞不懂到底要確認什麼。這種「改了也沒差」的候選直接排除，不再拿出來問。
+        const alreadyIdentical = t.merchant.trim() === target.merchant.trim()
+            && t.category.l1 === target.category.l1
+            && t.category.l2 === target.category.l2
+            && t.category.l3 === target.category.l3;
+        if (alreadyIdentical) return false;
+
         const candidateName = t.merchant.trim().toLowerCase();
         const nameMatch = targetName.includes(candidateName) || candidateName.includes(targetName);
         const targetRaw = (target.originalText || '').toLowerCase();
         const candidateRaw = (t.originalText || '').toLowerCase();
-        const rawMatch = (targetRaw.length > 3 && candidateRaw.includes(targetRaw)) || 
+        const rawMatch = (targetRaw.length > 3 && candidateRaw.includes(targetRaw)) ||
                          (candidateRaw.length > 3 && targetRaw.includes(candidateRaw));
         return nameMatch || rawMatch;
     });

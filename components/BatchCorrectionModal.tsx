@@ -1,17 +1,39 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Transaction } from '../types';
-import { Sparkles, X, Check, ArrowRight, CheckSquare, Square } from 'lucide-react';
+import { Sparkles, X, Check, ArrowRight, CheckSquare, Square, AlertTriangle } from 'lucide-react';
 
 interface BatchCorrectionModalProps {
   matches: Transaction[];
   source: Transaction;
+  allTransactions: Transaction[];
   onConfirm: (selectedIds: string[]) => void;
   onClose: () => void;
 }
 
-const BatchCorrectionModal: React.FC<BatchCorrectionModalProps> = ({ matches, source, onConfirm, onClose }) => {
+// 這筆交易目前的「商家＋完整分類(含細項)」寫法，用來判斷兩筆是不是完全同一種分類方式。
+const sameClassification = (a: Transaction, b: Transaction) =>
+  a.merchant.trim() === b.merchant.trim() &&
+  a.category.l1 === b.category.l1 &&
+  a.category.l2 === b.category.l2 &&
+  a.category.l3 === b.category.l3;
+
+const BatchCorrectionModal: React.FC<BatchCorrectionModalProps> = ({ matches, source, allTransactions, onConfirm, onClose }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(matches.map(m => m.id)));
+
+  // 2026-07-27 Ivy指出：這個功能原本假設「剛剛存的這次修改一定是對的」，但如果剛好是這次
+  // 手滑打錯，反而會把錯誤擴散到原本正確的舊紀錄。改成顯示「資料庫裡多數已經是哪種寫法」，
+  // 讓Ivy自己判斷這次的修改是不是反而才是那個異常值，而不是盲目相信最新一次的編輯。
+  const { newVersionCount, oldVersionCounts } = useMemo(() => {
+    const excludedIds = new Set([source.id, ...matches.map(m => m.id)]);
+    const pool = allTransactions.filter(t => !excludedIds.has(t.id));
+    const newCount = pool.filter(t => sameClassification(t, source)).length;
+    const oldCounts = new Map<string, number>();
+    matches.forEach(m => {
+      oldCounts.set(m.id, pool.filter(t => sameClassification(t, m)).length);
+    });
+    return { newVersionCount: newCount, oldVersionCounts: oldCounts };
+  }, [matches, source, allTransactions]);
 
   const toggleSelection = (id: string) => {
     const newSet = new Set(selectedIds);
@@ -39,10 +61,15 @@ const BatchCorrectionModal: React.FC<BatchCorrectionModalProps> = ({ matches, so
               <div className="flex-1">
                   <h3 className="text-xl font-extrabold text-slate-800">喵喵發現了 {matches.length} 筆相似交易！</h3>
                   <p className="text-sm text-slate-500 mt-1">
-                      您剛剛把 <strong>{source.merchant}</strong> 改成「{source.category.l1}／{source.category.l2}」。<br/>
+                      您剛剛把 <strong>{source.merchant}</strong> 改成「{source.category.l1}／{source.category.l2}{source.category.l3 ? `／${source.category.l3}` : ''}」。<br/>
                       下面這些交易的<strong>金額跟這筆差不到10%、商家名稱也對得上一部分</strong>，
                       猜測可能是同一家店的其他消費記錄——要不要一起套用剛剛這次的修改？
                       （不是完全比對，覺得不是同一家的話取消勾選就好，不會影響其他筆）
+                  </p>
+                  <p className="text-xs text-slate-400 mt-2">
+                      {newVersionCount > 0
+                        ? `這次改成的寫法，資料庫裡另外還有 ${newVersionCount} 筆本來就是這樣分類的。`
+                        : `這次改成的寫法，目前資料庫裡沒有其他紀錄用一樣的寫法——如果是這次手滑打錯，建議先按右上角 ✕ 取消，不要往下套用。`}
                   </p>
               </div>
               <button onClick={onClose} className="p-2 hover:bg-white/50 rounded-full transition text-slate-400">
@@ -63,17 +90,21 @@ const BatchCorrectionModal: React.FC<BatchCorrectionModalProps> = ({ matches, so
               {matches.map(t => {
                   const isSelected = selectedIds.has(t.id);
                   const isIncome = t.type === 'income';
-                  
+                  const oldCount = oldVersionCounts.get(t.id) || 0;
+                  // 舊寫法比新寫法更多資料在用，代表這次的修改才可能是異常值(打錯字/選錯分類)，
+                  // 不是舊紀錄需要被「修正」——這種情況特別標示出來，不要讓Ivy誤以為新的一定對。
+                  const oldIsMoreEstablished = oldCount > newVersionCount;
+
                   return (
-                      <div 
-                        key={t.id} 
+                      <div
+                        key={t.id}
                         onClick={() => toggleSelection(t.id)}
                         className={`p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-center gap-4 group ${isSelected ? 'border-indigo-400 bg-indigo-50/30' : 'border-slate-100 bg-white hover:border-indigo-100'}`}
                       >
                           <div className={`w-6 h-6 rounded-md border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-indigo-500 border-indigo-500 text-white' : 'border-slate-300 bg-white'}`}>
                               {isSelected && <Check className="w-4 h-4" />}
                           </div>
-                          
+
                           <div className="flex-1">
                               <div className="flex justify-between">
                                   <span className="font-bold text-slate-700">{t.date}</span>
@@ -87,10 +118,19 @@ const BatchCorrectionModal: React.FC<BatchCorrectionModalProps> = ({ matches, so
                                   <span className="font-bold text-indigo-600">{source.merchant}</span>
                               </div>
                               <div className="flex items-center gap-2 mt-1 text-xs">
-                                  <span className="px-2 py-0.5 bg-slate-100 text-slate-400 rounded-md">{t.category.l1} &bull; {t.category.l2}</span>
+                                  <span className="px-2 py-0.5 bg-slate-100 text-slate-400 rounded-md">{t.category.l1} &bull; {t.category.l2}{t.category.l3 ? ` • ${t.category.l3}` : ''}</span>
                                   <ArrowRight className="w-3 h-3 text-slate-300" />
-                                  <span className="px-2 py-0.5 bg-indigo-100 text-indigo-600 rounded-md font-bold">{source.category.l1} &bull; {source.category.l2}</span>
+                                  <span className="px-2 py-0.5 bg-indigo-100 text-indigo-600 rounded-md font-bold">{source.category.l1} &bull; {source.category.l2}{source.category.l3 ? ` • ${source.category.l3}` : ''}</span>
                               </div>
+                              <p className={`mt-1 text-[10px] ${oldIsMoreEstablished ? 'text-amber-600 font-bold flex items-center gap-1' : 'text-slate-300'}`}>
+                                  {oldIsMoreEstablished && <AlertTriangle className="w-3 h-3 shrink-0" />}
+                                  {oldCount > 0
+                                    ? `這個舊寫法目前資料庫裡另外還有 ${oldCount} 筆，`
+                                    : `這個舊寫法目前資料庫裡沒有其他紀錄在用，`}
+                                  {oldIsMoreEstablished
+                                    ? `比新寫法的 ${newVersionCount} 筆還多——這次的修改反而可能才是打錯的，建議先取消勾選這筆`
+                                    : `新寫法有 ${newVersionCount} 筆`}
+                              </p>
                           </div>
                       </div>
                   )
