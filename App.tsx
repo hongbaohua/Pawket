@@ -12,7 +12,9 @@ import CategoryMappingModal from './components/CategoryMappingModal';
 import Auth from './components/Auth';
 import AccountsModal from './components/AccountsModal';
 import TransferModal from './components/TransferModal';
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus } from './types';
+import SharedExpenseModal from './components/SharedExpenseModal';
+import SharedExpenseListModal from './components/SharedExpenseListModal';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant } from './types';
 import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -21,7 +23,8 @@ import {
   upsertTransaction, upsertTransactions, deleteTransaction as dbDeleteTransaction, deleteTransactionsByParentId,
   deleteAllTransactions, fetchWishlistItems, upsertWishlistItems, deleteWishlistItem as dbDeleteWishlistItem,
   fetchDeletedTransactions, restoreTransaction, permanentlyDeleteTransaction,
-  fetchMerchantAliases, upsertMerchantAlias, setReconcileStatus as dbSetReconcileStatus
+  fetchMerchantAliases, upsertMerchantAlias, setReconcileStatus as dbSetReconcileStatus,
+  fetchSharedExpenses, upsertSharedExpense
 } from './lib/db';
 import type { Session } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
@@ -99,6 +102,11 @@ const App: React.FC = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [merchantAliases, setMerchantAliases] = useState<MerchantAlias[]>([]);
+  const [sharedExpenses, setSharedExpenses] = useState<SharedExpense[]>([]);
+  // 共同支出／代墊分帳(階段7)：正在設定分攤明細的交易(開EditTransactionModal時的「設定
+  // 分攤明細」按鈕觸發)，跟「應收應付總覽」清單彈窗，是兩個獨立的入口但共用同一份資料。
+  const [managingSharedExpenseTx, setManagingSharedExpenseTx] = useState<Transaction | null>(null);
+  const [isSharedExpenseListOpen, setIsSharedExpenseListOpen] = useState(false);
   const [isAccountsModalOpen, setIsAccountsModalOpen] = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
   const [budgets, setBudgets] = useState<Budget[]>(INITIAL_BUDGETS);
@@ -111,17 +119,19 @@ const App: React.FC = () => {
     (async () => {
       setDataLoading(true);
       try {
-        const [accs, txs, wishlist, aliases] = await Promise.all([
+        const [accs, txs, wishlist, aliases, shared] = await Promise.all([
           seedDefaultAccountsIfEmpty(userId),
           fetchTransactions(),
           fetchWishlistItems(),
           fetchMerchantAliases(),
+          fetchSharedExpenses(),
         ]);
         if (!cancelled) {
           setAccounts(accs);
           setTransactions(txs);
           setWishlistItems(wishlist);
           setMerchantAliases(aliases);
+          setSharedExpenses(shared);
         }
       } catch (err) {
         console.error('載入資料失敗', err);
@@ -475,6 +485,46 @@ const App: React.FC = () => {
   const handleAddFromBankRow = (prefilled: Transaction, officialPattern?: string) => {
     setPendingAliasLearn(officialPattern ? { officialPattern, accountId: prefilled.accountId } : null);
     setEditingTransaction(prefilled);
+  };
+
+  // 共同支出／代墊分帳(階段7)用：EditTransactionModal的「設定分攤明細」存檔時呼叫，
+  // 順便寫入的settlement交易(如果有勾「順便記交易」)一起存進transactions。
+  const handleSaveSharedExpense = (expense: SharedExpense, additionalSettlements: Transaction[]) => {
+    setSharedExpenses(prev => {
+      const exists = prev.some(se => se.id === expense.id);
+      return exists ? prev.map(se => se.id === expense.id ? expense : se) : [...prev, expense];
+    });
+    if (additionalSettlements.length > 0) {
+      setTransactions(prev => [...additionalSettlements, ...prev]);
+    }
+    setManagingSharedExpenseTx(null);
+    if (userId) {
+      upsertSharedExpense(userId, expense).catch(err => console.error('儲存分攤明細失敗', err));
+      additionalSettlements.forEach(tx => {
+        upsertTransaction(userId, tx).catch(err => console.error('儲存結算交易失敗', err));
+      });
+    }
+  };
+
+  // 應收應付總覽清單「標記已結清」用：更新對應SharedExpense裡的那一個參與者，
+  // 整份SharedExpense重送(upsertSharedExpense本來就是整份參與者陣列replace的設計)。
+  const handleSettleSharedExpenseParticipant = (sharedExpenseId: string, participant: SharedExpenseParticipant, additionalSettlement?: Transaction) => {
+    const target = sharedExpenses.find(se => se.id === sharedExpenseId);
+    if (!target) return;
+    const updatedExpense: SharedExpense = {
+      ...target,
+      participants: target.participants.map(p => p.id === participant.id ? participant : p),
+    };
+    setSharedExpenses(prev => prev.map(se => se.id === sharedExpenseId ? updatedExpense : se));
+    if (additionalSettlement) {
+      setTransactions(prev => [additionalSettlement, ...prev]);
+    }
+    if (userId) {
+      upsertSharedExpense(userId, updatedExpense).catch(err => console.error('更新分攤結清狀態失敗', err));
+      if (additionalSettlement) {
+        upsertTransaction(userId, additionalSettlement).catch(err => console.error('儲存結算交易失敗', err));
+      }
+    }
   };
 
   // 對帳模組用：把比對結果(matched/pending_settlement/missing_official)寫回對應交易，
@@ -871,6 +921,7 @@ const App: React.FC = () => {
             timeScope={timeScope} setTimeScope={setTimeScope} cycleStartDay={cycleStartDay} setCycleStartDay={setCycleStartDay} dateRangeLabel={dateRange.label}
             currentDate={currentDate} setCurrentDate={setCurrentDate} penaltyConfig={penaltyConfig} setPenaltyConfig={setPenaltyConfig}
             customRange={customRange} setCustomRange={setCustomRange} accounts={accounts}
+            sharedExpenses={sharedExpenses} onOpenSharedExpenses={() => setIsSharedExpenseListOpen(true)}
           />}
         {view === 'reconcile' && (
           <ReconcileView
@@ -963,6 +1014,20 @@ const App: React.FC = () => {
                                   {t.specialTag.counterparty ? `・${t.specialTag.counterparty}` : ''}
                                 </span>
                               )}
+                              {(() => {
+                                const se = sharedExpenses.find(se => se.transactionId === t.id);
+                                if (!se) return null;
+                                const unsettled = se.participants.filter(p => !p.settled);
+                                if (unsettled.length === 0) return null;
+                                const oweMe = unsettled.filter(p => p.direction === 'they_owe_me').reduce((s, p) => s + p.owedAmount, 0);
+                                const oweThem = unsettled.filter(p => p.direction === 'i_owe_them').reduce((s, p) => s + p.owedAmount, 0);
+                                return (
+                                  <>
+                                    {oweMe > 0 && <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-600">應收${oweMe}</span>}
+                                    {oweThem > 0 && <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-100 text-rose-600">應付${oweThem}</span>}
+                                  </>
+                                );
+                              })()}
                             </span>
                             {t.items && t.items.length > 0 && (() => {
                               const isRowExpanded = expandedRowIds.has(t.id);
@@ -1117,7 +1182,25 @@ const App: React.FC = () => {
         )}
       </main>
       {splittingTransaction && <SplitModal transaction={splittingTransaction} allTransactions={transactions} onClose={() => setSplittingTransaction(null)} onSave={handleSplitSave} />}
-      {editingTransaction && <EditTransactionModal transaction={editingTransaction} allTransactions={transactions} accounts={accounts} customCategoryHistory={customCategoryHistory} onTagAction={handleTagAction} onClose={() => { setEditingTransaction(null); setPendingAliasLearn(null); }} onSave={handleEditSave} />}
+      {editingTransaction && <EditTransactionModal transaction={editingTransaction} allTransactions={transactions} accounts={accounts} customCategoryHistory={customCategoryHistory} sharedExpenses={sharedExpenses} onTagAction={handleTagAction} onManageSharedExpense={setManagingSharedExpenseTx} onClose={() => { setEditingTransaction(null); setPendingAliasLearn(null); }} onSave={handleEditSave} />}
+      {managingSharedExpenseTx && (
+        <SharedExpenseModal
+          transaction={managingSharedExpenseTx}
+          existing={sharedExpenses.find(se => se.transactionId === managingSharedExpenseTx.id)}
+          accounts={accounts}
+          onClose={() => setManagingSharedExpenseTx(null)}
+          onSave={handleSaveSharedExpense}
+        />
+      )}
+      {isSharedExpenseListOpen && (
+        <SharedExpenseListModal
+          sharedExpenses={sharedExpenses}
+          transactions={transactions}
+          accounts={accounts}
+          onClose={() => setIsSharedExpenseListOpen(false)}
+          onSettle={handleSettleSharedExpenseParticipant}
+        />
+      )}
       {transferModalState.open && <TransferModal accounts={accounts} transaction={transferModalState.transaction} onClose={() => setTransferModalState({ open: false })} onSave={handleTransferSave} />}
       {isAccountsModalOpen && <AccountsModal accounts={accounts} onClose={() => setIsAccountsModalOpen(false)} onSave={handleSaveAccount} onArchive={handleArchiveAccount} />}
       {batchSource && <BatchCorrectionModal matches={batchCandidates} source={batchSource} allTransactions={transactions} onConfirm={handleBatchConfirm} onClose={() => { setBatchSource(null); setBatchCandidates([]); }} />}

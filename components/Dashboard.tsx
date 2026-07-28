@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { AlertCircle, TrendingUp, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper } from 'lucide-react';
-import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange } from '../types';
+import { AlertCircle, TrendingUp, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper, Users, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange, SharedExpense } from '../types';
 import { addMonths, format, startOfMonth, endOfMonth, startOfDay, endOfDay, isValid, parseISO } from 'date-fns';
 import { analyzeFinancialHealth, getSeasonalTrends, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, getCategoryPieData, detectRecurringExpenses, calculateWishlistMetrics, WishlistItemMetrics, calculateProjectedPenalty, calculateRunway, getDateRange } from '../services/logicService';
 import html2canvas from 'html2canvas';
@@ -18,7 +18,9 @@ interface DashboardProps {
   accounts: Account[];
   wishlistItems: WishlistItem[];
   wishlistSettings: WishlistSettings;
+  sharedExpenses: SharedExpense[];
   onOpenWishlist: () => void;
+  onOpenSharedExpenses: () => void;
   onPrint: () => void;
   timeScope: TimeScope;
   setTimeScope: (scope: TimeScope) => void;
@@ -96,7 +98,7 @@ const WishlistCard = ({
 };
 
 const Dashboard: React.FC<DashboardProps> = ({
-    alerts, budgets, transactions, allTransactions, accounts, wishlistItems, wishlistSettings, onOpenWishlist, onPrint, timeScope, setTimeScope, cycleStartDay, setCycleStartDay, dateRangeLabel, currentDate, setCurrentDate, penaltyConfig, setPenaltyConfig, customRange, setCustomRange
+    alerts, budgets, transactions, allTransactions, accounts, wishlistItems, wishlistSettings, sharedExpenses, onOpenWishlist, onOpenSharedExpenses, onPrint, timeScope, setTimeScope, cycleStartDay, setCycleStartDay, dateRangeLabel, currentDate, setCurrentDate, penaltyConfig, setPenaltyConfig, customRange, setCustomRange
 }) => {
   const expenses = transactions.filter(t => t.type === 'expense');
   const incomes = transactions.filter(t => t.type === 'income');
@@ -119,6 +121,16 @@ const Dashboard: React.FC<DashboardProps> = ({
   );
   const penaltyData = useMemo(() => timeScope === 'all' ? { isOverspent: false, overage: 0, penaltyAmount: 0 } : calculateProjectedPenalty(transactions, budgets, penaltyConfig), [transactions, budgets, penaltyConfig, timeScope]);
   const runwayData = useMemo(() => calculateRunway(allTransactions, accounts), [allTransactions, accounts]);
+  // 共同支出／代墊分帳(階段7)：只算還沒結清的，加總「別人欠我」跟「我欠別人」各自的金額。
+  const sharedExpenseTotals = useMemo(() => {
+    let theyOweMe = 0, iOweThem = 0, unsettledCount = 0;
+    sharedExpenses.forEach(se => se.participants.forEach(p => {
+      if (p.settled) return;
+      unsettledCount++;
+      if (p.direction === 'they_owe_me') theyOweMe += p.owedAmount; else iOweThem += p.owedAmount;
+    }));
+    return { theyOweMe, iOweThem, unsettledCount };
+  }, [sharedExpenses]);
 
   const [expandedL2, setExpandedL2] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
@@ -507,6 +519,28 @@ const Dashboard: React.FC<DashboardProps> = ({
               )}
           </div>
       </div>
+
+      {/* SECTION 1.6: 應收應付（階段7代墊分帳，只有真的有分帳紀錄時才顯示，避免沒用過
+          這個功能的人看到一個永遠是$0的卡片） */}
+      {sharedExpenses.length > 0 && (
+        <div
+          data-pdf-section
+          onClick={onOpenSharedExpenses}
+          className="bg-white p-6 rounded-[32px] shadow-xl shadow-orange-50/50 border border-orange-50 flex items-center justify-between gap-4 cursor-pointer hover:border-purple-100 transition"
+        >
+          <h4 className="font-bold text-slate-700 flex items-center gap-2 shrink-0"><Users className="w-5 h-5 text-purple-400" />應收應付</h4>
+          <div className="flex gap-6">
+            <div className="text-right">
+              <p className="text-[10px] font-bold text-emerald-500 uppercase flex items-center justify-end gap-1"><ArrowDownCircle className="w-3 h-3" />應收</p>
+              <p className="text-xl font-extrabold text-emerald-600">${sharedExpenseTotals.theyOweMe.toLocaleString()}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] font-bold text-rose-500 uppercase flex items-center justify-end gap-1"><ArrowUpCircle className="w-3 h-3" />應付</p>
+              <p className="text-xl font-extrabold text-rose-600">${sharedExpenseTotals.iOweThem.toLocaleString()}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SECTION 2: Alerts */}
       {timeScope !== 'all' && alerts.length > 0 && (

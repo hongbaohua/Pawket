@@ -123,6 +123,27 @@ export interface Budget {
   amount: number;
 }
 
+// 共同支出／代墊分帳（規格書階段7）：跟SplitModal(把一筆錢拆進不同預算分類)是完全
+// 不同的概念——這是「這筆錢部分是幫別人代墊，之後要跟對方收/付清」。這次刻意不調整
+// 任何花費統計/預算邏輯，純粹當追蹤用的帳本，別人欠的錢不會從「本月花費」扣掉。
+export interface SharedExpenseParticipant {
+  id: string;
+  name: string;
+  owedAmount: number;
+  direction: 'they_owe_me' | 'i_owe_them';
+  settled: boolean;
+  settleMethod?: '現金' | '轉帳' | 'LINE Pay Money' | '其他';
+  settledDate?: string;
+}
+
+export interface SharedExpense {
+  id: string;
+  transactionId: string; // 關聯的原始交易
+  totalAmount: number;
+  myShare: number; // 自己實際負擔的金額（純記錄用途，這次不影響統計）
+  participants: SharedExpenseParticipant[];
+}
+
 // NEW: Penalty Configuration for Module III
 export interface PenaltyConfig {
   enabled: boolean;

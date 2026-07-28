@@ -3,7 +3,7 @@
 // 轉成資料表用的欄位格式（snake_case、攤平），反之亦然。
 
 import { supabase } from './supabaseClient';
-import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag, WishlistItem, ReconcileStatus, MerchantAlias, MerchantAliasCandidate } from '../types';
+import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag, WishlistItem, ReconcileStatus, MerchantAlias, MerchantAliasCandidate, SharedExpense, SharedExpenseParticipant } from '../types';
 
 // ── 帳戶 ──
 
@@ -342,5 +342,121 @@ export const fetchMerchantAliases = async (): Promise<MerchantAlias[]> => {
 
 export const upsertMerchantAlias = async (userId: string, alias: MerchantAlias): Promise<void> => {
   const { error } = await supabase.from('merchant_aliases').upsert(merchantAliasToRow(userId, alias));
+  if (error) throw error;
+};
+
+// ── 共同支出／代墊分帳 ──
+
+interface SharedExpenseRow {
+  id: string;
+  transaction_id: string;
+  total_amount: number;
+  my_share: number;
+}
+
+interface SharedExpenseParticipantRow {
+  id: string;
+  shared_expense_id: string;
+  name: string;
+  owed_amount: number;
+  direction: 'they_owe_me' | 'i_owe_them';
+  settled: boolean;
+  settle_method: string | null;
+  settled_date: string | null;
+}
+
+const rowToParticipant = (row: SharedExpenseParticipantRow): SharedExpenseParticipant => ({
+  id: row.id,
+  name: row.name,
+  owedAmount: Number(row.owed_amount),
+  direction: row.direction,
+  settled: row.settled,
+  settleMethod: (row.settle_method as SharedExpenseParticipant['settleMethod']) || undefined,
+  settledDate: row.settled_date || undefined,
+});
+
+// 兩張表各查一次(都很小，不用像fetchTransactions那樣分頁)，participants依
+// shared_expense_id分組掛回對應的SharedExpense。
+export const fetchSharedExpenses = async (): Promise<SharedExpense[]> => {
+  const [expensesRes, participantsRes] = await Promise.all([
+    supabase.from('shared_expenses').select('*'),
+    supabase.from('shared_expense_participants').select('*'),
+  ]);
+  if (expensesRes.error) throw expensesRes.error;
+  if (participantsRes.error) throw participantsRes.error;
+
+  const participantsByExpenseId = new Map<string, SharedExpenseParticipant[]>();
+  (participantsRes.data as SharedExpenseParticipantRow[]).forEach(row => {
+    const list = participantsByExpenseId.get(row.shared_expense_id) || [];
+    list.push(rowToParticipant(row));
+    participantsByExpenseId.set(row.shared_expense_id, list);
+  });
+
+  return (expensesRes.data as SharedExpenseRow[]).map(row => ({
+    id: row.id,
+    transactionId: row.transaction_id,
+    totalAmount: Number(row.total_amount),
+    myShare: Number(row.my_share),
+    participants: participantsByExpenseId.get(row.id) || [],
+  }));
+};
+
+// 參與者整份replace：先比對舊清單找出這次不再出現的id單獨刪除，其餘upsert
+// （做法跟WishlistModal的onUpdateItems整份陣列替換邏輯一樣）。
+export const upsertSharedExpense = async (userId: string, expense: SharedExpense): Promise<void> => {
+  const { error: expenseErr } = await supabase.from('shared_expenses').upsert({
+    id: expense.id,
+    user_id: userId,
+    transaction_id: expense.transactionId,
+    total_amount: expense.totalAmount,
+    my_share: expense.myShare,
+  });
+  if (expenseErr) throw expenseErr;
+
+  const { data: existing, error: fetchErr } = await supabase
+    .from('shared_expense_participants')
+    .select('id')
+    .eq('shared_expense_id', expense.id);
+  if (fetchErr) throw fetchErr;
+
+  const existingIds = new Set((existing || []).map((r: { id: string }) => r.id));
+  const nextIds = new Set(expense.participants.map(p => p.id));
+  const toDelete = [...existingIds].filter(id => !nextIds.has(id));
+  if (toDelete.length > 0) {
+    const { error: delErr } = await supabase.from('shared_expense_participants').delete().in('id', toDelete);
+    if (delErr) throw delErr;
+  }
+
+  if (expense.participants.length > 0) {
+    const rows = expense.participants.map(p => ({
+      id: p.id,
+      shared_expense_id: expense.id,
+      name: p.name,
+      owed_amount: p.owedAmount,
+      direction: p.direction,
+      settled: p.settled,
+      settle_method: p.settleMethod || null,
+      settled_date: p.settledDate || null,
+    }));
+    const { error: upErr } = await supabase.from('shared_expense_participants').upsert(rows);
+    if (upErr) throw upErr;
+  }
+};
+
+// shared_expense_participants的on delete cascade會自動一起刪，不用額外處理。
+export const deleteSharedExpense = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('shared_expenses').delete().eq('id', id);
+  if (error) throw error;
+};
+
+export const markParticipantSettled = async (
+  participantId: string,
+  settleMethod: NonNullable<SharedExpenseParticipant['settleMethod']>,
+  settledDate: string
+): Promise<void> => {
+  const { error } = await supabase
+    .from('shared_expense_participants')
+    .update({ settled: true, settle_method: settleMethod, settled_date: settledDate })
+    .eq('id', participantId);
   if (error) throw error;
 };

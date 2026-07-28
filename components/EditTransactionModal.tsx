@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account, Discount, SpecialTag, TransactionItem } from '../types';
-import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, ChevronLeft, ChevronRight, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard, Calculator, Divide, Zap, Loader2 } from 'lucide-react';
+import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account, Discount, SpecialTag, TransactionItem, SharedExpense } from '../types';
+import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, ChevronLeft, ChevronRight, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard, Calculator, Divide, Zap, Loader2, Users } from 'lucide-react';
 import { calculateAccountBalances } from '../services/logicService';
 import { analyzeReceiptItems, ReceiptAnalysisResult } from '../services/geminiService';
 import { v4 as uuidv4 } from 'uuid';
@@ -72,7 +72,9 @@ interface EditTransactionModalProps {
   allTransactions: Transaction[];
   accounts?: Account[];
   customCategoryHistory?: Record<string, string[]>;
+  sharedExpenses?: SharedExpense[];
   onTagAction?: (action: 'rename' | 'delete', l1: L1Category, oldName: string, newName?: string) => void;
+  onManageSharedExpense?: (transaction: Transaction) => void;
   onClose: () => void;
   onSave: (updatedTransaction: Transaction, options?: { openSplitAfter?: boolean; additionalTransfer?: Transaction }) => void;
 }
@@ -82,7 +84,9 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     allTransactions,
     accounts = [],
     customCategoryHistory = {},
+    sharedExpenses = [],
     onTagAction,
+    onManageSharedExpense,
     onClose,
     onSave
 }) => {
@@ -793,6 +797,19 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                     placeholder="額外說明（選填，例如：已打統編、0313批次）"
                     className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-purple-300"
                   />
+                  {/* 分攤明細(規格書階段7)只有已存在的交易才能設定——SharedExpense要連結真實的
+                      transactionId，新增中、還沒存檔的交易還沒有這個id存在資料庫裡，要先存檔
+                      才能設定。 */}
+                  {!isNew && onManageSharedExpense && (
+                    <button
+                      type="button"
+                      onClick={() => onManageSharedExpense(transaction)}
+                      className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-500 rounded-xl text-xs font-bold transition"
+                    >
+                      <Users className="w-3.5 h-3.5" />
+                      {sharedExpenses.some(se => se.transactionId === transaction.id) ? '編輯分攤明細' : '設定分攤明細'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
