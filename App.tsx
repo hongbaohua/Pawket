@@ -256,6 +256,14 @@ const App: React.FC = () => {
     return { l2: Array.from(l2Set).sort(), l3: Array.from(l3Set).filter(tag => !l2Set.has(tag)).sort() };
   }, [transactions]);
 
+  const toggleTagFilter = (tag: string) => {
+      setSelectedTagFilters(prev => {
+          const next = new Set(prev);
+          if (next.has(tag)) next.delete(tag); else next.add(tag);
+          return next;
+      });
+  };
+
   const processedTransactions = useMemo(() => {
       let result = [...transactions];
       if (searchTerm.trim()) {
@@ -959,7 +967,32 @@ const App: React.FC = () => {
             </div>
             <div className="px-8 py-6 border-b border-orange-50 bg-[#FFFBF5]/30 no-print">
                  <div className="flex flex-col gap-4">
-                     <div className="flex gap-3"><div className="relative flex-1"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" /><input type="text" placeholder="快速查找..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-white border border-slate-100 rounded-2xl shadow-sm text-slate-700 font-bold outline-none" />{searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-300"><X className="w-4 h-4" /></button>}</div><button onClick={() => setIsFilterExpanded(!isFilterExpanded)} className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all border ${isFilterExpanded ? 'bg-amber-100 text-amber-600 border-amber-200' : 'bg-white text-slate-500 border-slate-100'}`}><Filter className="w-5 h-5" /><span className="hidden sm:inline">標籤篩選</span></button></div>
+                     <div className="flex gap-3"><div className="relative flex-1"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" /><input type="text" placeholder="快速查找..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-white border border-slate-100 rounded-2xl shadow-sm text-slate-700 font-bold outline-none" />{searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-300"><X className="w-4 h-4" /></button>}</div><button onClick={() => setIsFilterExpanded(!isFilterExpanded)} className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all border ${isFilterExpanded ? 'bg-amber-100 text-amber-600 border-amber-200' : 'bg-white text-slate-500 border-slate-100'}`}><Filter className="w-5 h-5" /><span className="hidden sm:inline">標籤篩選{selectedTagFilters.size > 0 ? `(${selectedTagFilters.size})` : ''}</span></button></div>
+                     {isFilterExpanded && (
+                       <div className="p-4 bg-white border border-amber-100 rounded-2xl space-y-3 animate-in slide-in-from-top-1 duration-150">
+                         {availableTags.l2.length === 0 && availableTags.l3.length === 0 ? (
+                           <p className="text-sm text-slate-400 text-center py-2">目前還沒有分類標籤可以篩選喵～</p>
+                         ) : (
+                           <>
+                             <div className="flex flex-wrap gap-2">
+                               {[...availableTags.l2, ...availableTags.l3].map(tag => (
+                                 <button
+                                   key={tag}
+                                   type="button"
+                                   onClick={() => toggleTagFilter(tag)}
+                                   className={`px-3.5 py-1.5 rounded-full text-xs font-bold border transition-all ${selectedTagFilters.has(tag) ? 'bg-amber-400 text-white border-amber-400' : 'bg-[#FFFBF5] text-slate-500 border-slate-200 hover:border-amber-200'}`}
+                                 >
+                                   {tag}
+                                 </button>
+                               ))}
+                             </div>
+                             {selectedTagFilters.size > 0 && (
+                               <button type="button" onClick={() => setSelectedTagFilters(new Set())} className="text-xs font-bold text-slate-400 hover:text-rose-500 transition">清除篩選</button>
+                             )}
+                           </>
+                         )}
+                       </div>
+                     )}
                  </div>
             </div>
             {/* 手機版(<lg)把表格改成卡片式垂直排列（每個<tr>變成一張卡片，<td>各自
