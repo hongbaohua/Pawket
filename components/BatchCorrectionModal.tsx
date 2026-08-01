@@ -20,6 +20,10 @@ const sameClassification = (a: Transaction, b: Transaction) =>
 
 const BatchCorrectionModal: React.FC<BatchCorrectionModalProps> = ({ matches, source, allTransactions, onConfirm, onClose }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set(matches.map(m => m.id)));
+  // 2026-08-02 Ivy手滑：剛存完編輯，這個彈窗馬上跳出來、「確認更新」又跟編輯畫面的
+  // 儲存鍵在同一個右下角位置，連續點擊時很容易誤觸。改成兩段式確認，第二段的按鈕
+  // 換位置、換顏色、換文字，讓人不可能沿用同一個點擊動作誤觸。
+  const [confirmStep, setConfirmStep] = useState(false);
 
   // 2026-07-27 Ivy指出：這個功能原本假設「剛剛存的這次修改一定是對的」，但如果剛好是這次
   // 手滑打錯，反而會把錯誤擴散到原本正確的舊紀錄。改成顯示「資料庫裡多數已經是哪種寫法」，
@@ -138,21 +142,45 @@ const BatchCorrectionModal: React.FC<BatchCorrectionModalProps> = ({ matches, so
           </div>
 
           {/* Footer */}
-          <div className="p-6 bg-white border-t border-slate-100 flex justify-end gap-3">
-              <button 
-                  onClick={onClose} 
-                  className="px-6 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition"
-              >
-                  不用了
-              </button>
-              <button 
-                  onClick={() => onConfirm(Array.from(selectedIds))}
-                  disabled={selectedIds.size === 0}
-                  className="px-8 py-3 rounded-2xl font-bold text-white bg-indigo-500 shadow-lg hover:bg-indigo-600 shadow-indigo-200 transition transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                  確認更新 ({selectedIds.size})
-              </button>
-          </div>
+          {!confirmStep ? (
+              <div className="p-6 bg-white border-t border-slate-100 flex justify-end gap-3">
+                  <button
+                      onClick={onClose}
+                      className="px-6 py-3 rounded-2xl font-bold text-slate-500 hover:bg-slate-50 transition"
+                  >
+                      不用了
+                  </button>
+                  <button
+                      onClick={() => setConfirmStep(true)}
+                      disabled={selectedIds.size === 0}
+                      className="px-8 py-3 rounded-2xl font-bold text-white bg-indigo-500 shadow-lg hover:bg-indigo-600 shadow-indigo-200 transition transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                      確認更新 ({selectedIds.size})
+                  </button>
+              </div>
+          ) : (
+              // 第二段確認：跟上面那顆按鈕刻意不同位置/顏色/文字，避免連續點擊誤觸
+              <div className="p-6 bg-amber-50 border-t border-amber-200 flex flex-col items-center gap-3">
+                  <p className="text-sm font-bold text-amber-700 flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      再確認一次：真的要把這 {selectedIds.size} 筆也改成一樣的分類嗎？這個動作會直接覆蓋原本的分類。
+                  </p>
+                  <div className="flex gap-4">
+                      <button
+                          onClick={() => setConfirmStep(false)}
+                          className="px-6 py-3 rounded-2xl font-bold text-slate-500 bg-white border border-slate-200 hover:bg-slate-50 transition"
+                      >
+                          再想一下
+                      </button>
+                      <button
+                          onClick={() => onConfirm(Array.from(selectedIds))}
+                          className="px-8 py-3 rounded-2xl font-bold text-white bg-rose-500 shadow-lg hover:bg-rose-600 shadow-rose-200 transition transform active:scale-95"
+                      >
+                          是，確定套用
+                      </button>
+                  </div>
+              </div>
+          )}
        </div>
     </div>
   );
