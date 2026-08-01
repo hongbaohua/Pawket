@@ -82,6 +82,7 @@ export interface Transaction {
   parentId?: string; // If this is a child of a split
   deletedAt?: string; // 軟刪除時間戳記（選填），有值代表在垃圾桶裡，正常列表不會顯示
   reconcileStatus?: ReconcileStatus; // 對帳狀態（選填），只有跑過對帳的交易才有值
+  createdAt?: string; // 建立時間戳記，只用來在同一天內排序（date只到天，同一天多筆時用這個決定先後），不給使用者編輯
 }
 
 // 對帳狀態：matched=已比對成功；pending_settlement=手動記帳有、官方紀錄還在預期

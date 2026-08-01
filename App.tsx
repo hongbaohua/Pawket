@@ -289,7 +289,12 @@ const App: React.FC = () => {
       if (selectedTagFilters.size > 0) {
           result = result.filter(t => selectedTagFilters.has(t.category.l2) || selectedTagFilters.has(t.category.l3));
       }
-      return result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      return result.sort((a, b) => {
+          const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
+          if (dateDiff !== 0) return dateDiff;
+          // 同一天內也要新的在前面，不然「日期倒敘、但同一天內卻是正序」邏輯會不一致
+          return (b.createdAt || '').localeCompare(a.createdAt || '');
+      });
   }, [transactions, searchTerm, selectedTagFilters]);
 
   const groupedDisplayItems = useMemo(() => {

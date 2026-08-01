@@ -107,6 +107,7 @@ interface TransactionRow {
   parent_id: string | null;
   deleted_at: string | null;
   reconcile_status: ReconcileStatus | null;
+  created_at: string;
 }
 
 const rowToTransaction = (row: TransactionRow): Transaction => ({
@@ -136,6 +137,7 @@ const rowToTransaction = (row: TransactionRow): Transaction => ({
   parentId: row.parent_id || undefined,
   deletedAt: row.deleted_at || undefined,
   reconcileStatus: row.reconcile_status || undefined,
+  createdAt: row.created_at,
 });
 
 // 刻意不包含 reconcile_status：這個欄位只由對帳流程透過下面的 setReconcileStatus
@@ -177,7 +179,9 @@ export const fetchTransactions = async (): Promise<Transaction[]> => {
   const allRows: TransactionRow[] = [];
   let from = 0;
   while (true) {
-    const { data, error } = await supabase.from('transactions').select('*').is('deleted_at', null).order('date', { ascending: false }).range(from, from + FETCH_PAGE_SIZE - 1);
+    // 同一天內也要新的在前面(跟外層date排序方向一致)，不然同一天多筆時順序看起來
+    // 忽前忽後、不符合「最新在最上面」的邏輯(Ivy 2026-08-02發現的問題)。
+    const { data, error } = await supabase.from('transactions').select('*').is('deleted_at', null).order('date', { ascending: false }).order('created_at', { ascending: false }).range(from, from + FETCH_PAGE_SIZE - 1);
     if (error) throw error;
     const page = data as TransactionRow[];
     allRows.push(...page);
