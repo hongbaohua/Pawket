@@ -296,8 +296,12 @@ const App: React.FC = () => {
       return result.sort((a, b) => {
           const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
           if (dateDiff !== 0) return dateDiff;
-          // 同一天內也要新的在前面，不然「日期倒敘、但同一天內卻是正序」邏輯會不一致
-          return (b.createdAt || '').localeCompare(a.createdAt || '');
+          // 同一天內也要新的在前面，不然「日期倒敘、但同一天內卻是正序」邏輯會不一致。
+          // 這裡故意不用 localeCompare 比較 ISO 時間字串——localeCompare是locale-aware比對，
+          // 對含冒號/句點的時間字串不保證是純字典順序，Ivy實測發現同一批建立時間完全相同的
+          // 資料，排序還是忽前忽後，用Date數字比較才是真正可靠的做法。
+          const createdDiff = new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+          return createdDiff;
       });
   }, [transactions, searchTerm, selectedTagFilters]);
 
