@@ -233,7 +233,11 @@ const App: React.FC = () => {
   // Undo States
   const [lastDeletedTransaction, setLastDeletedTransaction] = useState<Transaction | null>(null);
   const [lastCanceledSplit, setLastCanceledSplit] = useState<{ originalTxs: Transaction[], restoredTx: Transaction } | null>(null);
-  
+  // 批次修正(BatchCorrectionModal)套用後的復原快照：Ivy 2026-08-02反應誤觸批次套用後
+  // 完全不知道改了什麼，垃圾桶功能只救得回「刪除」，這種「大動作編輯」也該有類似的
+  // 復原機制，記下套用前的版本，一段時間內可以一鍵復原。
+  const [lastBatchUpdate, setLastBatchUpdate] = useState<{ before: Transaction[]; description: string } | null>(null);
+
   const undoTimeoutRef = useRef<number | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -680,6 +684,7 @@ const App: React.FC = () => {
   const handleBatchConfirm = (selectedIds: string[]) => {
       if (!batchSource) return;
       let updated: Transaction[] = [];
+      const before = transactions.filter(t => selectedIds.includes(t.id));
       setTransactions(prev => {
           updated = prev.map(t => selectedIds.includes(t.id) ? { ...t, merchant: batchSource.merchant, type: batchSource.type, category: { ...batchSource.category }, isVerified: true, originalText: (t.originalText || '') + " (Batch Updated)" } : t);
           return updated;
@@ -689,6 +694,29 @@ const App: React.FC = () => {
       if (userId) {
           const changed = updated.filter(t => selectedIds.includes(t.id));
           upsertTransactions(userId, changed).catch(err => console.error('批次更新失敗', err));
+      }
+      // 套用後要讓Ivy知道實際改了什麼＋一段時間內可以復原，不然像垃圾桶只救得回刪除，
+      // 這種「一次改很多筆」的大動作編輯沒有安全網（2026-08-02 Ivy誤觸後反應的問題）。
+      const { l1, l2, l3 } = batchSource.category;
+      setLastBatchUpdate({
+          before,
+          description: `已把 ${selectedIds.length} 筆交易改成「${batchSource.merchant} → ${CATEGORY_LABELS[l1]}／${l2}${l3 ? `／${l3}` : ''}」`,
+      });
+      setLastDeletedTransaction(null);
+      setLastCanceledSplit(null);
+      if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+      undoTimeoutRef.current = window.setTimeout(() => setLastBatchUpdate(null), 8000);
+  };
+
+  const handleUndoBatchUpdate = () => {
+      if (!lastBatchUpdate) return;
+      const { before } = lastBatchUpdate;
+      const beforeIds = new Set(before.map(t => t.id));
+      setTransactions(prev => prev.map(t => beforeIds.has(t.id) ? before.find(b => b.id === t.id)! : t));
+      setLastBatchUpdate(null);
+      if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
+      if (userId) {
+          upsertTransactions(userId, before).catch(err => console.error('復原批次更新失敗', err));
       }
   };
 
@@ -1246,14 +1274,14 @@ const App: React.FC = () => {
       {isTrashModalOpen && <TrashModal items={deletedTransactions} loading={trashLoading} onClose={() => setIsTrashModalOpen(false)} onRestore={handleRestoreFromTrash} onPermanentlyDelete={handlePermanentlyDelete} />}
       {isMappingModalOpen && <CategoryMappingModal conflicts={conflictCategories} existingCustomOptions={customCategoryHistory} onConfirm={handleMappingConfirm} onCancel={() => { setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]); }} />}
       
-      {(lastDeletedTransaction || lastCanceledSplit) && (
+      {(lastDeletedTransaction || lastCanceledSplit || lastBatchUpdate) && (
         <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-bottom-5">
             <div className="bg-slate-800 text-white px-6 py-4 rounded-full shadow-2xl flex items-center gap-6">
                 <span className="text-sm font-bold">
-                    {lastDeletedTransaction ? `已移除「${lastDeletedTransaction.merchant}」紀錄` : "已取消分裝並合併項目"}
+                    {lastDeletedTransaction ? `已移除「${lastDeletedTransaction.merchant}」紀錄` : lastBatchUpdate ? lastBatchUpdate.description : "已取消分裝並合併項目"}
                 </span>
-                <button 
-                    onClick={lastDeletedTransaction ? handleUndoDelete : handleUndoCancelSplit} 
+                <button
+                    onClick={lastDeletedTransaction ? handleUndoDelete : lastBatchUpdate ? handleUndoBatchUpdate : handleUndoCancelSplit}
                     className="text-amber-400 font-bold text-sm hover:text-amber-300 flex items-center gap-1 border-l border-slate-700 pl-4"
                 >
                     <RotateCcw className="w-4 h-4" /> 復原 (Undo)
