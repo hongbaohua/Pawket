@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, FileSearch } from 'lucide-react';
+import { List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, FileSearch, History } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import ReconcileView from './components/ReconcileView';
 import SplitModal from './components/SplitModal';
@@ -14,7 +14,8 @@ import AccountsModal from './components/AccountsModal';
 import TransferModal from './components/TransferModal';
 import SharedExpenseModal from './components/SharedExpenseModal';
 import SharedExpenseListModal from './components/SharedExpenseListModal';
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant } from './types';
+import ActivityLogModal from './components/ActivityLogModal';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry } from './types';
 import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -24,7 +25,8 @@ import {
   deleteAllTransactions, fetchWishlistItems, upsertWishlistItems, deleteWishlistItem as dbDeleteWishlistItem,
   fetchDeletedTransactions, restoreTransaction, permanentlyDeleteTransaction,
   fetchMerchantAliases, upsertMerchantAlias, setReconcileStatus as dbSetReconcileStatus,
-  fetchSharedExpenses, upsertSharedExpense
+  fetchSharedExpenses, upsertSharedExpense,
+  fetchActivityLog, insertActivityLog, markActivityLogRestored
 } from './lib/db';
 import type { Session } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
@@ -699,17 +701,21 @@ const App: React.FC = () => {
           const changed = updated.filter(t => selectedIds.includes(t.id));
           upsertTransactions(userId, changed).catch(err => console.error('批次更新失敗', err));
       }
-      // 套用後要讓Ivy知道實際改了什麼＋一段時間內可以復原，不然像垃圾桶只救得回刪除，
-      // 這種「一次改很多筆」的大動作編輯沒有安全網（2026-08-02 Ivy誤觸後反應的問題）。
+      // 套用後要讓Ivy知道實際改了什麼＋可以復原，不然像垃圾桶只救得回刪除，這種
+      // 「一次改很多筆」的大動作編輯沒有安全網（2026-08-02 Ivy誤觸後反應的問題）。
+      // 兩層安全網：8秒內的浮動提示是「馬上發現手滑」用的快速復原；同時寫進
+      // activity_log是「事後才想起來」用的，隨時可以在「編輯歷程」裡回頭復原。
       const { l1, l2, l3 } = batchSource.category;
-      setLastBatchUpdate({
-          before,
-          description: `已把 ${selectedIds.length} 筆交易改成「${batchSource.merchant} → ${CATEGORY_LABELS[l1]}／${l2}${l3 ? `／${l3}` : ''}」`,
-      });
+      const description = `已把 ${selectedIds.length} 筆交易改成「${batchSource.merchant} → ${CATEGORY_LABELS[l1]}／${l2}${l3 ? `／${l3}` : ''}」`;
+      setLastBatchUpdate({ before, description });
       setLastDeletedTransaction(null);
       setLastCanceledSplit(null);
       if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
       undoTimeoutRef.current = window.setTimeout(() => setLastBatchUpdate(null), 8000);
+      if (userId) {
+          insertActivityLog(userId, { actionType: 'batch_correction', description, affectedTransactionIds: selectedIds, beforeSnapshot: before })
+              .catch(err => console.error('寫入編輯歷程失敗', err));
+      }
   };
 
   const handleUndoBatchUpdate = () => {
@@ -795,6 +801,37 @@ const App: React.FC = () => {
     } catch (err) {
         console.error('永久刪除失敗', err);
         alert(`永久刪除失敗。\n\n${formatSupabaseError(err)}`);
+    }
+  };
+
+  // 編輯歷程：目前只記錄批次修正這種大動作編輯，讀取邏輯比照垃圾桶（開啟時才抓，
+  // 不用一直放在記憶體裡）。
+  const [isActivityLogOpen, setIsActivityLogOpen] = useState(false);
+  const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
+  const [activityLogLoading, setActivityLogLoading] = useState(false);
+  const handleOpenActivityLog = async () => {
+    setIsActivityLogOpen(true);
+    setActivityLogLoading(true);
+    try {
+        setActivityLog(await fetchActivityLog());
+    } catch (err) {
+        console.error('讀取編輯歷程失敗', err);
+        alert(`讀取編輯歷程失敗。\n\n${formatSupabaseError(err)}`);
+    } finally {
+        setActivityLogLoading(false);
+    }
+  };
+  const handleRestoreActivityLog = async (entry: ActivityLogEntry) => {
+    if (!window.confirm(`確定要復原「${entry.description}」嗎？會把這 ${entry.affectedTransactionIds.length} 筆交易改回套用前的版本。`)) return;
+    try {
+        const beforeIds = new Set(entry.beforeSnapshot.map(t => t.id));
+        setTransactions(prev => prev.map(t => beforeIds.has(t.id) ? entry.beforeSnapshot.find(b => b.id === t.id)! : t));
+        await upsertTransactions(userId!, entry.beforeSnapshot);
+        await markActivityLogRestored(entry.id);
+        setActivityLog(prev => prev.map(e => e.id === entry.id ? { ...e, restoredAt: new Date().toISOString() } : e));
+    } catch (err) {
+        console.error('復原編輯歷程失敗', err);
+        alert(`復原失敗。\n\n${formatSupabaseError(err)}`);
     }
   };
 
@@ -996,6 +1033,7 @@ const App: React.FC = () => {
                  <button onClick={handleMatchAllAccounts} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-indigo-400 hover:bg-indigo-500 rounded-2xl transition active:scale-95 shadow-md shadow-indigo-100" title="一次性：把匯入交易的accountId/fromAccountId/toAccountId補上，可安全重複執行"><Wallet className="w-4 h-4" />配對帳戶(一次性)</button>
                  <button onClick={handleClearAllRecords} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-2xl transition active:scale-95 shadow-md shadow-rose-100" title="危險：清除所有交易紀錄(不影響帳戶本身)，無法復原"><Trash2 className="w-4 h-4" />清除所有紀錄</button>
                  <button onClick={handleOpenTrash} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="垃圾桶：救回不小心刪除的紀錄"><Trash2 className="w-4 h-4" />垃圾桶{deletedTransactions.length > 0 ? `(${deletedTransactions.length})` : ''}</button>
+                 <button onClick={handleOpenActivityLog} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="編輯歷程：查詢/復原批次修正這種大動作編輯"><History className="w-4 h-4" />編輯歷程</button>
                  <div className="h-full w-px bg-slate-200 mx-2 hidden sm:block"></div>
                  <button onClick={() => importInputRef.current?.click()} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95"><Upload className="w-4 h-4" />匯入</button>
                  <input type="file" ref={importInputRef} onChange={handleImport} className="hidden" accept="application/json" />
@@ -1276,6 +1314,7 @@ const App: React.FC = () => {
       {batchSource && <BatchCorrectionModal matches={batchCandidates} source={batchSource} allTransactions={transactions} onConfirm={handleBatchConfirm} onClose={() => { setBatchSource(null); setBatchCandidates([]); }} />}
       {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} settings={wishlistSettings} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={handleUpdateWishlistItems} onUpdateSettings={handleUpdateWishlistSettings} />}
       {isTrashModalOpen && <TrashModal items={deletedTransactions} loading={trashLoading} onClose={() => setIsTrashModalOpen(false)} onRestore={handleRestoreFromTrash} onPermanentlyDelete={handlePermanentlyDelete} />}
+      {isActivityLogOpen && <ActivityLogModal items={activityLog} loading={activityLogLoading} onClose={() => setIsActivityLogOpen(false)} onRestore={handleRestoreActivityLog} />}
       {isMappingModalOpen && <CategoryMappingModal conflicts={conflictCategories} existingCustomOptions={customCategoryHistory} onConfirm={handleMappingConfirm} onCancel={() => { setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]); }} />}
       
       {(lastDeletedTransaction || lastCanceledSplit || lastBatchUpdate) && (

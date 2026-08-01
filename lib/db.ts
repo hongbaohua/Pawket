@@ -3,7 +3,7 @@
 // 轉成資料表用的欄位格式（snake_case、攤平），反之亦然。
 
 import { supabase } from './supabaseClient';
-import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag, WishlistItem, ReconcileStatus, MerchantAlias, MerchantAliasCandidate, SharedExpense, SharedExpenseParticipant } from '../types';
+import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag, WishlistItem, ReconcileStatus, MerchantAlias, MerchantAliasCandidate, SharedExpense, SharedExpenseParticipant, ActivityLogEntry } from '../types';
 
 // ── 帳戶 ──
 
@@ -462,5 +462,55 @@ export const markParticipantSettled = async (
     .from('shared_expense_participants')
     .update({ settled: true, settle_method: settleMethod, settled_date: settledDate })
     .eq('id', participantId);
+  if (error) throw error;
+};
+
+// ── 編輯歷程紀錄（目前只記錄批次修正，見migration_007說明）──
+// beforeSnapshot直接存Transaction(camelCase)格式的JSON，不特別轉成TransactionRow——
+// 反正是不透明的jsonb欄位，復原時要直接餵給upsertTransactions，存camelCase省一次轉換。
+
+interface ActivityLogRow {
+  id: string;
+  action_type: 'batch_correction';
+  description: string;
+  affected_transaction_ids: string[];
+  before_snapshot: Transaction[];
+  restored_at: string | null;
+  created_at: string;
+}
+
+const rowToActivityLogEntry = (row: ActivityLogRow): ActivityLogEntry => ({
+  id: row.id,
+  actionType: row.action_type,
+  description: row.description,
+  affectedTransactionIds: row.affected_transaction_ids,
+  beforeSnapshot: row.before_snapshot,
+  restoredAt: row.restored_at || undefined,
+  createdAt: row.created_at,
+});
+
+// 最近100筆就好，這種紀錄不需要無限往回查，避免表越養越肥還要分頁。
+export const fetchActivityLog = async (): Promise<ActivityLogEntry[]> => {
+  const { data, error } = await supabase.from('activity_log').select('*').order('created_at', { ascending: false }).limit(100);
+  if (error) throw error;
+  return (data as ActivityLogRow[]).map(rowToActivityLogEntry);
+};
+
+export const insertActivityLog = async (
+  userId: string,
+  entry: { actionType: 'batch_correction'; description: string; affectedTransactionIds: string[]; beforeSnapshot: Transaction[] }
+): Promise<void> => {
+  const { error } = await supabase.from('activity_log').insert({
+    user_id: userId,
+    action_type: entry.actionType,
+    description: entry.description,
+    affected_transaction_ids: entry.affectedTransactionIds,
+    before_snapshot: entry.beforeSnapshot,
+  });
+  if (error) throw error;
+};
+
+export const markActivityLogRestored = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('activity_log').update({ restored_at: new Date().toISOString() }).eq('id', id);
   if (error) throw error;
 };

@@ -187,6 +187,19 @@ export interface AnalysisResult {
   rawText: string;
 }
 
+// 編輯歷程紀錄：目前只記錄「批次修正」這種一次改很多筆的大動作編輯（2026-08-02，
+// Ivy誤觸批次套用後完全查不出改了什麼才新增）。beforeSnapshot存的是受影響交易
+// 「套用前」的完整版本，復原時直接整批覆蓋回去。
+export interface ActivityLogEntry {
+  id: string;
+  actionType: 'batch_correction';
+  description: string;
+  affectedTransactionIds: string[];
+  beforeSnapshot: Transaction[];
+  restoredAt?: string;
+  createdAt: string;
+}
+
 export type TimeScope = 'all' | 'natural_month' | 'custom_cycle' | 'custom_range';
 
 export interface DateRange {

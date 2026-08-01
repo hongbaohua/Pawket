@@ -107,6 +107,18 @@ create table if not exists shared_expense_participants (
   settled_date date
 );
 
+-- ── 6. 編輯歷程紀錄（目前只記錄批次修正，見migration_007說明）──
+create table if not exists activity_log (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  action_type text not null,
+  description text not null,
+  affected_transaction_ids uuid[] not null,
+  before_snapshot jsonb not null,
+  restored_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
 -- ============================================================
 -- Row Level Security：確保每個使用者只能存取自己的資料
 -- ============================================================
