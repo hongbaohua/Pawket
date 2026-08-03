@@ -75,10 +75,14 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
     if (dataUrl.startsWith('data:image/')) {
       return analyzeBankStatementRowsFromFile(dataUrl);
     }
-    const buffer = dataUrlToArrayBuffer(dataUrl);
     let password: string | undefined;
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
+        // pdf.js的getDocument({data})會把這個ArrayBuffer transfer給worker、用完就detach掉，
+        // 同一個buffer只能用一次——密碼輸入錯誤要重試時，一定要重新產生一份新的buffer，
+        // 不能沿用同一個，不然會丟"Cannot perform Construct on a detached ArrayBuffer"
+        // （Ivy 2026-08-03實測PDF密碼重試流程時踩到）。
+        const buffer = dataUrlToArrayBuffer(dataUrl);
         const parsed = await extractPdfText(buffer, password);
         // 頁數防呆兩條路都要套用，避免掃描版PDF繞過去重演「整份丟給AI漏資料」的問題。
         if (parsed.pageCount > RECONCILE_MAX_PDF_PAGES) {
