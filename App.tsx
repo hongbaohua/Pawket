@@ -100,7 +100,13 @@ const App: React.FC = () => {
 
   const userId = session?.user.id;
 
-  const [view, setView] = useState<'dashboard' | 'transactions' | 'reconcile'>('dashboard');
+  // 記住目前在哪一頁，重新整理不要跳回首頁（Ivy 2026-08-03反應：在明細本/對帳
+  // 頁面重新整理，畫面卻整個跳回貓咪指揮中心，很容易搞丟正在看的內容）。
+  const [view, setView] = useState<'dashboard' | 'transactions' | 'reconcile'>(() => {
+    const saved = localStorage.getItem('pawket_view');
+    return saved === 'transactions' || saved === 'reconcile' ? saved : 'dashboard';
+  });
+  useEffect(() => { localStorage.setItem('pawket_view', view); }, [view]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [merchantAliases, setMerchantAliases] = useState<MerchantAlias[]>([]);
@@ -837,7 +843,10 @@ const App: React.FC = () => {
 
   const handleAddTransaction = () => {
     const today = new Date().toISOString().split('T')[0];
-    setEditingTransaction({ id: uuidv4(), date: today, merchant: '', amount: 0, originalText: 'Manual Add', type: 'expense', category: { l1: L1Category.VARIABLE, l2: STANDARD_CATEGORIES[L1Category.VARIABLE][0], l3: '' }, confidence: 1.0, isVerified: true, isSplit: false });
+    // amount故意用NaN(不是0)當「還沒填」的哨兵值，CalcInput才會顯示空白而不是
+    // 卡一個要手動刪掉的"0"（Ivy 2026-08-03反應的問題）。存檔前的驗證邏輯本來就會
+    // 擋NaN(視同沒填)，不會真的存進資料庫。
+    setEditingTransaction({ id: uuidv4(), date: today, merchant: '', amount: NaN, originalText: 'Manual Add', type: 'expense', category: { l1: L1Category.VARIABLE, l2: STANDARD_CATEGORIES[L1Category.VARIABLE][0], l3: '' }, confidence: 1.0, isVerified: true, isSplit: false });
   };
 
   const handleEditNickname = async () => {
@@ -953,6 +962,10 @@ const App: React.FC = () => {
            <span className="font-extrabold text-2xl tracking-tight text-slate-700 hidden lg:block">Paw<span className="text-amber-500">ket</span></span>
         </div>
         <nav className="flex flex-row lg:flex-col flex-1 lg:py-6 gap-1 lg:gap-4 lg:space-y-0 px-1 lg:px-4 overflow-x-auto lg:overflow-visible relative">
+          {/* 新增收支：故意放在側欄最上面、跟頁面導覽分開，不管現在在哪一頁(首頁/明細本/
+              對帳)都能直接點，不用先切到明細本才找得到新增按鈕（Ivy 2026-08反應過）。
+              EditTransactionModal是掛在畫面最外層渲染的，不受目前view影響，可以直接開。 */}
+          <button onClick={handleAddTransaction} className="shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold bg-emerald-400 hover:bg-emerald-500 text-white shadow-md shadow-emerald-100 active:scale-95"><Plus className="w-5 h-5 lg:w-6 lg:h-6 shrink-0" /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">新增收支</span></button>
           {/* 明細本是最常用的功能，排最前面；餵食帳單(舊的整批OCR新增功能)2026-07-27
               已移除，改用對帳(比對已有資料、只新增真正遺漏的部分，不會重複新增)。
               願望清單/帳戶管理比較像系統設定，移出主導覽、收進下面的「更多」選單，

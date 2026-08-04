@@ -127,7 +127,9 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     setAmount(parseFloat((grossAmount - discountSum).toFixed(2)));
   }, [showBreakdown, grossAmount, discounts]);
 
-  const addDiscountRow = () => setDiscounts(prev => [...prev, { label: '', amount: 0 }]);
+  // amount故意用NaN當「還沒填」的哨兵值，不是0——CalcInput會把NaN顯示成空白，
+  // 0則會照字面顯示"0"，變成使用者要先手動刪掉那個"0"才能打真正的金額。
+  const addDiscountRow = () => setDiscounts(prev => [...prev, { label: '', amount: NaN }]);
   const updateDiscountRow = (idx: number, field: 'label' | 'amount', value: string) => {
     setDiscounts(prev => prev.map((d, i) => i === idx ? { ...d, [field]: field === 'amount' ? parseFloat(value) || 0 : value } : d));
   };
