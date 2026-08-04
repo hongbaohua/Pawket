@@ -278,7 +278,7 @@ const App: React.FC = () => {
           // 品項文字移除、改成直接選「代購」性質後，搜尋「代購」完全找不到——因為
           // specialTag.type本身(proxy_purchase/work_advance)從來沒有被搜尋比對過，
           // 只搜了counterparty/note這些附加文字。這裡把性質對應的中文標籤也加進搜尋範圍。
-          const specialTagLabel = (tag?: SpecialTag) => tag?.type === 'proxy_purchase' ? '代購' : tag?.type === 'work_advance' ? '工作代墊' : '';
+          const specialTagLabel = (tag?: SpecialTag) => tag?.type === 'proxy_purchase' ? '代購' : tag?.type === 'work_advance' ? '工作代墊' : tag?.type === 'personal_loan' ? '借貸' : '';
           result = result.filter(t =>
               t.merchant.toLowerCase().includes(lowerTerm) ||
               (t.originalText || '').toLowerCase().includes(lowerTerm) ||
@@ -1117,8 +1117,8 @@ const App: React.FC = () => {
                             <span className="flex items-center gap-1.5 flex-wrap">
                               {t.merchant}
                               {t.specialTag && (
-                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter ${t.specialTag.type === 'proxy_purchase' ? 'bg-purple-100 text-purple-600' : 'bg-amber-100 text-amber-600'}`}>
-                                  {t.specialTag.type === 'proxy_purchase' ? '代購' : '工作代墊'}
+                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter ${t.specialTag.type === 'proxy_purchase' ? 'bg-purple-100 text-purple-600' : t.specialTag.type === 'work_advance' ? 'bg-amber-100 text-amber-600' : 'bg-sky-100 text-sky-600'}`}>
+                                  {t.specialTag.type === 'proxy_purchase' ? '代購' : t.specialTag.type === 'work_advance' ? '工作代墊' : '借貸'}
                                   {t.specialTag.counterparty ? `・${t.specialTag.counterparty}` : ''}
                                 </span>
                               )}

@@ -39,8 +39,11 @@ const CalcInput = React.forwardRef<HTMLInputElement, {
   placeholder?: string;
   readOnly?: boolean;
 }>(({ value, onCommit, className, placeholder, readOnly }, ref) => {
-  const [draft, setDraft] = useState(value != null ? String(value) : '');
-  useEffect(() => { setDraft(value != null ? String(value) : ''); }, [value]);
+  // value是NaN代表「這欄位還沒填」的哨兵值(不是使用者真的打了NaN)，顯示空白
+  // 而不是字面上的"0"——不然新增交易/新增折扣列時，輸入框會卡一個要先刪掉的"0"。
+  const isBlank = (v: number | undefined) => v == null || isNaN(v);
+  const [draft, setDraft] = useState(isBlank(value) ? '' : String(value));
+  useEffect(() => { setDraft(isBlank(value) ? '' : String(value)); }, [value]);
   return (
     <input
       ref={ref}
@@ -770,6 +773,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                   { key: 'none', label: '一般' },
                   { key: 'proxy_purchase', label: '代購' },
                   { key: 'work_advance', label: '工作代墊' },
+                  { key: 'personal_loan', label: '借貸' },
                 ] as const).map(opt => (
                   <button
                     key={opt.key}
@@ -787,7 +791,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                     type="text"
                     value={specialTagCounterparty}
                     onChange={(e) => setSpecialTagCounterparty(e.target.value)}
-                    placeholder={specialTagType === 'proxy_purchase' ? '代購人是誰？（不重要可以不填）' : '之後要跟誰報帳？'}
+                    placeholder={specialTagType === 'proxy_purchase' ? '代購人是誰？（不重要可以不填）' : specialTagType === 'work_advance' ? '之後要跟誰報帳？' : '借給誰／跟誰借的？'}
                     className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-purple-300"
                   />
                   <input

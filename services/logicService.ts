@@ -590,8 +590,14 @@ export const findSimilarTransactions = (
         const nameMatch = targetName.includes(candidateName) || candidateName.includes(targetName);
         const targetRaw = (target.originalText || '').toLowerCase();
         const candidateRaw = (t.originalText || '').toLowerCase();
-        const rawMatch = (targetRaw.length > 3 && candidateRaw.includes(targetRaw)) ||
-                         (candidateRaw.length > 3 && targetRaw.includes(candidateRaw));
+        // "manual add"是每一筆手動新增交易共用的通用佔位字串(不是真的抽自同一份來源文件)，
+        // 完全比對不到任何實際內容，卻會讓任兩筆手動新增的交易永遠rawMatch成立——
+        // 2026-08-03 Ivy改「借廖妤甄」的分類時，就被兩筆完全不相關、只是同樣手動新增的
+        // 舊交易(蝦皮$529、肯德基$455)誤判成「相似交易」跳出來問。這個佔位字串要排除，
+        // 不能拿來當「同一份原始資料」的證據。
+        const rawMatch = targetRaw !== 'manual add' && candidateRaw !== 'manual add' &&
+                         ((targetRaw.length > 3 && candidateRaw.includes(targetRaw)) ||
+                         (candidateRaw.length > 3 && targetRaw.includes(candidateRaw)));
         return nameMatch || rawMatch;
     });
 };
