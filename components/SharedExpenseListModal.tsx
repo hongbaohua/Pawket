@@ -1,9 +1,11 @@
 // 共同支出／代墊分帳：應收應付總覽彈窗，列出所有還沒結清的參與者項目，
 // 每項可以直接「標記已結清」，不用跳回原始交易一筆一筆找。
 import React, { useState, useMemo } from 'react';
-import { X, Users, Check, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { X, Users, Check, ArrowDownCircle, ArrowUpCircle, Link2 } from 'lucide-react';
 import { Transaction, Account, SharedExpense, SharedExpenseParticipant, L1Category } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+
+type SettleAction = 'none' | 'record_new' | 'link_existing';
 
 interface SharedExpenseListModalProps {
   sharedExpenses: SharedExpense[];
@@ -25,8 +27,9 @@ interface FlatItem {
 const SharedExpenseListModal: React.FC<SharedExpenseListModalProps> = ({ sharedExpenses, transactions, accounts, onClose, onSettle }) => {
   const [settlingId, setSettlingId] = useState<string | null>(null);
   const [settleMethod, setSettleMethod] = useState<NonNullable<SharedExpenseParticipant['settleMethod']>>('現金');
-  const [recordNow, setRecordNow] = useState(true);
+  const [settleAction, setSettleAction] = useState<SettleAction>('record_new');
   const [settlementAccountId, setSettlementAccountId] = useState(accounts.find(a => !a.isArchived)?.id || '');
+  const [linkedTransactionId, setLinkedTransactionId] = useState('');
 
   const items = useMemo<FlatItem[]>(() => {
     const result: FlatItem[] = [];
@@ -47,14 +50,15 @@ const SharedExpenseListModal: React.FC<SharedExpenseListModalProps> = ({ sharedE
   const startSettle = (participantId: string) => {
     setSettlingId(participantId);
     setSettleMethod('現金');
-    setRecordNow(true);
+    setSettleAction('record_new');
     setSettlementAccountId(accounts.find(a => !a.isArchived)?.id || '');
+    setLinkedTransactionId('');
   };
 
   const confirmSettle = (item: FlatItem) => {
     const p = item.participant;
     let additionalSettlement: Transaction | undefined;
-    if (recordNow) {
+    if (settleAction === 'record_new') {
       const isIncome = p.direction === 'they_owe_me';
       const l1 = isIncome ? L1Category.INCOME : L1Category.VARIABLE;
       // 跟SharedExpenseModal.tsx同樣的理由：不用「陣列第一項」的通用預設分類
@@ -74,7 +78,13 @@ const SharedExpenseListModal: React.FC<SharedExpenseListModalProps> = ({ sharedE
         isSplit: false,
       };
     }
-    onSettle(item.sharedExpenseId, { ...p, settled: true, settleMethod, settledDate: new Date().toISOString().split('T')[0] }, additionalSettlement);
+    onSettle(item.sharedExpenseId, {
+      ...p,
+      settled: true,
+      settleMethod,
+      settledDate: new Date().toISOString().split('T')[0],
+      settledTransactionId: settleAction === 'link_existing' ? (linkedTransactionId || undefined) : undefined,
+    }, additionalSettlement);
     setSettlingId(null);
   };
 
@@ -99,13 +109,39 @@ const SharedExpenseListModal: React.FC<SharedExpenseListModalProps> = ({ sharedE
                 <button key={m} type="button" onClick={() => setSettleMethod(m)} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border transition-all ${settleMethod === m ? 'bg-purple-500 text-white border-purple-500' : 'bg-white text-slate-500 border-slate-200'}`}>{m}</button>
               ))}
             </div>
-            <label className="flex items-center gap-2 text-[11px] font-bold text-slate-500 cursor-pointer">
-              <input type="checkbox" checked={recordNow} onChange={e => setRecordNow(e.target.checked)} className="w-3.5 h-3.5 accent-purple-500" />
-              順便記一筆{p.direction === 'they_owe_me' ? '收到這筆錢' : '付出這筆錢'}的交易
-            </label>
-            {recordNow && (
+            <div className="space-y-1">
+              {([
+                { key: 'none', label: '不用，只標記已結清' },
+                { key: 'record_new', label: `順便記一筆${p.direction === 'they_owe_me' ? '收到這筆錢' : '付出這筆錢'}的交易` },
+                { key: 'link_existing', label: '已經記過帳了，連結到那筆交易' },
+              ] as const).map(opt => (
+                <label key={opt.key} className="flex items-center gap-2 text-[11px] font-bold text-slate-500 cursor-pointer">
+                  <input
+                    type="radio"
+                    name={`list-settle-action-${p.id}`}
+                    checked={settleAction === opt.key}
+                    onChange={() => setSettleAction(opt.key)}
+                    className="w-3.5 h-3.5 accent-purple-500"
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+            {settleAction === 'record_new' && (
               <select value={settlementAccountId} onChange={e => setSettlementAccountId(e.target.value)} className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none">
                 {accounts.filter(a => !a.isArchived).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            )}
+            {settleAction === 'link_existing' && (
+              <select value={linkedTransactionId} onChange={e => setLinkedTransactionId(e.target.value)} className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none">
+                <option value="">選擇交易...</option>
+                {transactions
+                  .filter(t => t.type === (p.direction === 'they_owe_me' ? 'income' : 'expense'))
+                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                  .slice(0, 50)
+                  .map(t => (
+                    <option key={t.id} value={t.id}>{t.date}・{t.merchant || '（未命名）'}・${t.amount}</option>
+                  ))}
               </select>
             )}
             <div className="flex gap-2">

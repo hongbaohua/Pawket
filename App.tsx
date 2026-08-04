@@ -1309,6 +1309,7 @@ const App: React.FC = () => {
           transaction={managingSharedExpenseTx}
           existing={sharedExpenses.find(se => se.transactionId === managingSharedExpenseTx.id)}
           accounts={accounts}
+          allTransactions={transactions}
           onClose={() => setManagingSharedExpenseTx(null)}
           onSave={handleSaveSharedExpense}
         />
@@ -1331,14 +1332,17 @@ const App: React.FC = () => {
       {isMappingModalOpen && <CategoryMappingModal conflicts={conflictCategories} existingCustomOptions={customCategoryHistory} onConfirm={handleMappingConfirm} onCancel={() => { setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]); }} />}
       
       {(lastDeletedTransaction || lastCanceledSplit || lastBatchUpdate) && (
-        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-bottom-5">
-            <div className="bg-slate-800 text-white px-6 py-4 rounded-full shadow-2xl flex items-center gap-6">
-                <span className="text-sm font-bold">
+        <div className="fixed bottom-6 sm:bottom-10 left-1/2 -translate-x-1/2 z-[100] w-[calc(100vw-2rem)] max-w-md animate-in slide-in-from-bottom-5">
+            {/* 2026-08-04修正：原本用rounded-full(藥丸形)+沒有寬度上限，文字一長
+                （商家名稱、批次修正說明都可能很長）就會撐得比手機螢幕還寬、跑版，
+                改成有寬度上限+可以換行的圓角卡片，文字/按鈕不管多長都不會爆版。 */}
+            <div className="bg-slate-800 text-white px-5 py-4 rounded-3xl shadow-2xl flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+                <span className="text-sm font-bold leading-snug break-words flex-1 min-w-0">
                     {lastDeletedTransaction ? `已移除「${lastDeletedTransaction.merchant}」紀錄` : lastBatchUpdate ? lastBatchUpdate.description : "已取消分裝並合併項目"}
                 </span>
                 <button
                     onClick={lastDeletedTransaction ? handleUndoDelete : lastBatchUpdate ? handleUndoBatchUpdate : handleUndoCancelSplit}
-                    className="text-amber-400 font-bold text-sm hover:text-amber-300 flex items-center gap-1 border-l border-slate-700 pl-4"
+                    className="text-amber-400 font-bold text-sm hover:text-amber-300 flex items-center justify-center gap-1 shrink-0 sm:border-l sm:border-slate-700 sm:pl-4"
                 >
                     <RotateCcw className="w-4 h-4" /> 復原 (Undo)
                 </button>

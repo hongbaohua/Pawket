@@ -138,6 +138,10 @@ export interface SharedExpenseParticipant {
   settled: boolean;
   settleMethod?: '現金' | '轉帳' | 'LINE Pay Money' | '其他';
   settledDate?: string;
+  settledTransactionId?: string; // 選填：標記已結清時，連結到「已經記過帳的那筆交易」，
+                                  // 跟「順便記一筆」二選一——避免同一筆還款被算兩次
+                                  // （2026-08-04 Ivy反應：借款還錢自己已經先記過一筆，
+                                  // 標記已結清時卻沒地方連結，兩筆完全對不上）
 }
 
 export interface SharedExpense {

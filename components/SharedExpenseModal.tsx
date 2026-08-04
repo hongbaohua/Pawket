@@ -2,7 +2,7 @@
 // 預算分類)是完全不同的概念——這裡記錄「這筆錢部分是幫別人代墊，之後要跟對方收/付清」。
 // 刻意不調整任何花費統計/預算邏輯（Ivy 2026-07-27確認），純粹當追蹤用的帳本。
 import React, { useState } from 'react';
-import { X, Plus, Trash2, Users, Check } from 'lucide-react';
+import { X, Plus, Trash2, Users, Check, Link2 } from 'lucide-react';
 import { Transaction, Account, SharedExpense, SharedExpenseParticipant, L1Category } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -10,26 +10,33 @@ interface SharedExpenseModalProps {
   transaction: Transaction;
   existing?: SharedExpense;
   accounts: Account[];
+  allTransactions: Transaction[];
   onClose: () => void;
   onSave: (expense: SharedExpense, additionalSettlements: Transaction[]) => void;
 }
 
+// 標記已結清時，這筆還款/付款要怎麼處理：完全不管(可能還沒真的收到/付出，
+// 或不想追蹤這筆現金流動)／順便自動產生一筆新交易／連結到已經記過帳的那筆
+// （2026-08-04新增最後這個選項——Ivy自己已經先手動記過還款，標記已結清時
+// 卻只能「再記一筆(會重複算)」或「完全沒地方連結」，中間缺這一塊）。
+type SettleAction = 'none' | 'record_new' | 'link_existing';
+
 interface ParticipantDraft extends SharedExpenseParticipant {
   wasSettledBefore: boolean; // 進來這個畫面之前就已經結清了，用來判斷這次存檔要不要順便產生結算交易
-  recordSettlementNow: boolean;
+  settleAction: SettleAction;
   settlementAccountId: string;
 }
 
 const SETTLE_METHODS: NonNullable<SharedExpenseParticipant['settleMethod']>[] = ['現金', '轉帳', 'LINE Pay Money', '其他'];
 
-const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, existing, accounts, onClose, onSave }) => {
+const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, existing, accounts, allTransactions, onClose, onSave }) => {
   const [totalAmount, setTotalAmount] = useState<number>(existing?.totalAmount ?? transaction.amount);
   const [myShare, setMyShare] = useState<number>(existing?.myShare ?? transaction.amount);
   const [participants, setParticipants] = useState<ParticipantDraft[]>(
     (existing?.participants ?? []).map(p => ({
       ...p,
       wasSettledBefore: p.settled,
-      recordSettlementNow: false,
+      settleAction: 'none',
       settlementAccountId: accounts.find(a => !a.isArchived)?.id || '',
     }))
   );
@@ -44,7 +51,7 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
       direction: 'they_owe_me',
       settled: false,
       wasSettledBefore: false,
-      recordSettlementNow: false,
+      settleAction: 'none',
       settlementAccountId: accounts.find(a => !a.isArchived)?.id || '',
     }]);
   };
@@ -63,13 +70,15 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
       myShare,
       participants: participants
         .filter(p => p.name.trim())
-        .map(({ wasSettledBefore, recordSettlementNow, settlementAccountId, ...p }) => p),
+        .map(({ wasSettledBefore, settleAction, settlementAccountId, ...p }) => p),
     };
 
-    // 只有「這次才剛標成已結清」且勾了「順便記交易」的參與者才產生結算交易，
-    // 避免重新打開這個畫面再存一次時，已經結清過的舊資料又被重複記一筆。
+    // 只有「這次才剛標成已結清」且選了「順便記一筆新交易」的參與者才產生結算交易，
+    // 避免重新打開這個畫面再存一次時，已經結清過的舊資料又被重複記一筆；選「連結到
+    // 已經記過的交易」的話settledTransactionId已經在updateParticipant時寫進participant了，
+    // 不需要另外產生交易。
     const additionalSettlements: Transaction[] = participants
-      .filter(p => p.settled && !p.wasSettledBefore && p.recordSettlementNow && p.name.trim())
+      .filter(p => p.settled && !p.wasSettledBefore && p.settleAction === 'record_new' && p.name.trim())
       .map(p => {
         const isIncome = p.direction === 'they_owe_me';
         const l1 = isIncome ? L1Category.INCOME : L1Category.VARIABLE;
@@ -120,6 +129,12 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
                 <input type="number" value={myShare} onChange={e => setMyShare(parseFloat(e.target.value) || 0)} className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-purple-300" />
               </div>
             </div>
+            <p className="text-[11px] text-slate-400 mt-2">
+              「我的份額」是這筆錢裡面真的算自己的、不會跟任何人收/付的部分——
+              例如聚餐平分，自己吃的那份就是我的份額。<strong>如果是單純借錢給別人
+              （全部都要對方還），我的份額填0就好</strong>；如果是借別人的錢，
+              「我的份額」通常也是0（借來的錢不算自己賺的）。
+            </p>
             {Math.abs((myShare + participantsTotal) - totalAmount) > 0.5 && (
               <p className="text-[11px] text-amber-500 font-bold mt-2">我的份額 + 大家欠的金額加總（${(myShare + participantsTotal).toFixed(0)}）跟總金額（${totalAmount.toFixed(0)}）對不起來，先確認一下數字沒填錯，這裡不會擋存檔。</p>
             )}
@@ -189,11 +204,27 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
                         </button>
                       ))}
                     </div>
-                    <label className="flex items-center gap-2 text-[11px] font-bold text-slate-500 cursor-pointer">
-                      <input type="checkbox" checked={p.recordSettlementNow} onChange={e => updateParticipant(p.id, { recordSettlementNow: e.target.checked })} className="w-3.5 h-3.5 accent-purple-500" />
-                      順便記一筆{p.direction === 'they_owe_me' ? '收到這筆錢' : '付出這筆錢'}的交易
-                    </label>
-                    {p.recordSettlementNow && (
+                    {/* 2026-08-04新增：這筆還款/付款要不要順便記一筆新交易，還是已經
+                        另外記過帳了、只要連結過去就好，避免同一筆錢被算兩次 */}
+                    <div className="space-y-1">
+                      {([
+                        { key: 'none', label: '不用，只標記已結清' },
+                        { key: 'record_new', label: `順便記一筆${p.direction === 'they_owe_me' ? '收到這筆錢' : '付出這筆錢'}的交易` },
+                        { key: 'link_existing', label: '已經記過帳了，連結到那筆交易' },
+                      ] as const).map(opt => (
+                        <label key={opt.key} className="flex items-center gap-2 text-[11px] font-bold text-slate-500 cursor-pointer">
+                          <input
+                            type="radio"
+                            name={`settle-action-${p.id}`}
+                            checked={p.settleAction === opt.key}
+                            onChange={() => updateParticipant(p.id, { settleAction: opt.key })}
+                            className="w-3.5 h-3.5 accent-purple-500"
+                          />
+                          {opt.label}
+                        </label>
+                      ))}
+                    </div>
+                    {p.settleAction === 'record_new' && (
                       <select
                         value={p.settlementAccountId}
                         onChange={e => updateParticipant(p.id, { settlementAccountId: e.target.value })}
@@ -202,10 +233,32 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
                         {accounts.filter(a => !a.isArchived).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                       </select>
                     )}
+                    {p.settleAction === 'link_existing' && (
+                      <select
+                        value={p.settledTransactionId || ''}
+                        onChange={e => updateParticipant(p.id, { settledTransactionId: e.target.value || undefined })}
+                        className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none"
+                      >
+                        <option value="">選擇交易...</option>
+                        {allTransactions
+                          .filter(t => t.type === (p.direction === 'they_owe_me' ? 'income' : 'expense'))
+                          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                          .slice(0, 50)
+                          .map(t => (
+                            <option key={t.id} value={t.id}>{t.date}・{t.merchant || '（未命名）'}・${t.amount}</option>
+                          ))}
+                      </select>
+                    )}
                   </div>
                 )}
                 {p.settled && p.wasSettledBefore && (
-                  <p className="text-[11px] text-emerald-500 font-bold flex items-center gap-1"><Check className="w-3 h-3" />已結清{p.settledDate ? `（${p.settledDate}）` : ''}</p>
+                  <p className="text-[11px] text-emerald-500 font-bold flex items-center gap-1">
+                    <Check className="w-3 h-3" />已結清{p.settledDate ? `（${p.settledDate}）` : ''}
+                    {p.settledTransactionId && (() => {
+                      const linked = allTransactions.find(t => t.id === p.settledTransactionId);
+                      return linked ? <span className="text-slate-400 font-normal flex items-center gap-1"><Link2 className="w-3 h-3" />已連結：{linked.merchant}・${linked.amount}</span> : null;
+                    })()}
+                  </p>
                 )}
               </div>
             ))}

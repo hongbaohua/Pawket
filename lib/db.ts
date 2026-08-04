@@ -367,6 +367,7 @@ interface SharedExpenseParticipantRow {
   settled: boolean;
   settle_method: string | null;
   settled_date: string | null;
+  settled_transaction_id: string | null;
 }
 
 const rowToParticipant = (row: SharedExpenseParticipantRow): SharedExpenseParticipant => ({
@@ -377,6 +378,7 @@ const rowToParticipant = (row: SharedExpenseParticipantRow): SharedExpensePartic
   settled: row.settled,
   settleMethod: (row.settle_method as SharedExpenseParticipant['settleMethod']) || undefined,
   settledDate: row.settled_date || undefined,
+  settledTransactionId: row.settled_transaction_id || undefined,
 });
 
 // 兩張表各查一次(都很小，不用像fetchTransactions那樣分頁)，participants依
@@ -441,6 +443,7 @@ export const upsertSharedExpense = async (userId: string, expense: SharedExpense
       settled: p.settled,
       settle_method: p.settleMethod || null,
       settled_date: p.settledDate || null,
+      settled_transaction_id: p.settledTransactionId || null,
     }));
     const { error: upErr } = await supabase.from('shared_expense_participants').upsert(rows);
     if (upErr) throw upErr;

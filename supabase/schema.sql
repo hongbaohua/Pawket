@@ -104,7 +104,8 @@ create table if not exists shared_expense_participants (
   direction text not null check (direction in ('they_owe_me', 'i_owe_them')),
   settled boolean not null default false,
   settle_method text check (settle_method in ('現金', '轉帳', 'LINE Pay Money', '其他')),
-  settled_date date
+  settled_date date,
+  settled_transaction_id uuid references transactions(id) on delete set null
 );
 
 -- ── 6. 編輯歷程紀錄（目前只記錄批次修正，見migration_007說明）──
