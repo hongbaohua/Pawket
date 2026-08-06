@@ -138,7 +138,7 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
                   <div className="p-2.5 rounded-2xl bg-indigo-100 text-indigo-500">
                       <Target className="w-5 h-5" />
                   </div>
-                  {view === 'list' ? '願望清單' : (editingId ? '編輯項目' : '新增項目')}
+                  {view === 'list' ? '喵喵心願罐' : (editingId ? '編輯項目' : '新增項目')}
               </h3>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition">

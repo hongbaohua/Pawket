@@ -62,7 +62,7 @@ const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave
         <div className="flex justify-between items-center p-8 pb-6 shrink-0">
           <h3 className="text-2xl font-extrabold text-slate-700 flex items-center gap-3">
             <div className="p-2.5 bg-amber-100 text-amber-500 rounded-2xl"><Wallet className="w-6 h-6" /></div>
-            帳戶管理
+            碗盤總覽
           </h3>
           <button onClick={onClose} className="p-2 hover:bg-slate-50 rounded-full transition"><X className="w-6 h-6 text-slate-300" /></button>
         </div>
@@ -140,7 +140,7 @@ const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave
             </div>
             <div>
               <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">
-                對帳用：預期入帳延遲天數（選填，不填的話這個帳戶不能拿來對帳）
+                餵食核對用：預期入帳延遲天數（選填，不填的話這個帳戶不能拿來餵食核對）
               </label>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -168,7 +168,7 @@ const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave
               </div>
               <p className="text-[11px] text-slate-400 mt-2 leading-relaxed">
                 消費之後銀行通常要幾天才會在對帳單上顯示——現金/電子支付通常是0天（當下就算），
-                銀行簽帳卡/信用卡常見要等5-9天。這兩個數字是「對帳」功能比對用的，不影響一般記帳。
+                銀行簽帳卡/信用卡常見要等5-9天。這兩個數字是「餵食核對」功能比對用的，不影響一般記帳。
               </p>
             </div>
             <div className="flex gap-3 mt-2">

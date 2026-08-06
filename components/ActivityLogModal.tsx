@@ -19,7 +19,7 @@ const ActivityLogModal: React.FC<ActivityLogModalProps> = ({ items, loading, onC
         <div className="p-8 border-b border-orange-50 flex justify-between items-center bg-white/50">
           <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-slate-100 text-slate-500"><History className="w-5 h-5" /></div>
-            編輯歷程
+            重新裝碗紀錄
           </h3>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition"><X className="w-6 h-6 text-slate-400" /></button>
         </div>

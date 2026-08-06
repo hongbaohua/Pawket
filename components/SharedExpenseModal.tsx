@@ -111,7 +111,7 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
         <div className="p-8 border-b border-purple-100 flex justify-between items-center bg-white/50 backdrop-blur">
           <h3 className="text-2xl font-extrabold text-slate-700 flex items-center gap-3">
             <div className="p-2 bg-purple-100 text-purple-500 rounded-2xl"><Users className="w-6 h-6" /></div>
-            分攤明細
+            這碗跟誰分
           </h3>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition"><X className="w-6 h-6 text-slate-400" /></button>
         </div>
@@ -270,7 +270,7 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
 
         <div className="p-6 border-t border-purple-100 bg-white/50 flex justify-end gap-3">
           <button onClick={onClose} className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl font-bold transition">取消</button>
-          <button onClick={handleSave} className="px-8 py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl font-bold shadow-lg shadow-purple-100 transition active:scale-95">儲存分攤明細</button>
+          <button onClick={handleSave} className="px-8 py-3 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl font-bold shadow-lg shadow-purple-100 transition active:scale-95">存好這碗怎麼分</button>
         </div>
       </div>
     </div>

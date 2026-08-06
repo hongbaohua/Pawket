@@ -160,7 +160,7 @@ const SharedExpenseListModal: React.FC<SharedExpenseListModalProps> = ({ sharedE
         <div className="p-8 border-b border-purple-100 flex justify-between items-center bg-white/50 backdrop-blur">
           <h3 className="text-2xl font-extrabold text-slate-700 flex items-center gap-3">
             <div className="p-2 bg-purple-100 text-purple-500 rounded-2xl"><Users className="w-6 h-6" /></div>
-            應收應付
+            糧食往來簿
           </h3>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition"><X className="w-6 h-6 text-slate-400" /></button>
         </div>

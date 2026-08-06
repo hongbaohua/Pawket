@@ -121,7 +121,7 @@ const AccountBalances: React.FC<AccountBalancesProps> = ({ accounts, allTransact
       </div>
       <p className="text-[10px] text-slate-300 mt-3 leading-relaxed">
         這裡是「用App記錄以來」的即時累加金額，不是手動輸入的期初餘額。如果跟實際帳戶金額對不上，
-        代表有交易還沒記到App裡，之後可以用對帳功能抓落差。
+        代表有交易還沒記到App裡，之後可以用餵食核對功能抓落差。
       </p>
     </div>
   );

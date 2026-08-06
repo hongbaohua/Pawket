@@ -813,7 +813,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                       className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-500 rounded-xl text-xs font-bold transition"
                     >
                       <Users className="w-3.5 h-3.5" />
-                      {sharedExpenses.some(se => se.transactionId === transaction.id) ? '編輯分攤明細' : '設定分攤明細'}
+                      {sharedExpenses.some(se => se.transactionId === transaction.id) ? '編輯這碗跟誰分' : '這碗跟誰分'}
                     </button>
                   )}
                 </div>

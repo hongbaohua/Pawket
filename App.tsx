@@ -664,7 +664,7 @@ const App: React.FC = () => {
     if (missingAccountNames.size > 0) {
       alert(
         `已配對 ${updated.length} 筆交易。\n\n` +
-        `但找不到以下帳戶，這些交易先跳過沒配對，請先在帳戶管理建立好同名帳戶再重新點一次這顆按鈕：\n` +
+        `但找不到以下帳戶，這些交易先跳過沒配對，請先在碗盤總覽建立好同名帳戶再重新點一次這顆按鈕：\n` +
         [...missingAccountNames].join('、')
       );
     } else if (updated.length === 0) {
@@ -822,7 +822,7 @@ const App: React.FC = () => {
         setActivityLog(await fetchActivityLog());
     } catch (err) {
         console.error('讀取編輯歷程失敗', err);
-        alert(`讀取編輯歷程失敗。\n\n${formatSupabaseError(err)}`);
+        alert(`讀取重新裝碗紀錄失敗。\n\n${formatSupabaseError(err)}`);
     } finally {
         setActivityLogLoading(false);
     }
@@ -971,7 +971,7 @@ const App: React.FC = () => {
               願望清單/帳戶管理比較像系統設定，移出主導覽、收進下面的「更多」選單，
               騰出空間讓手機版也能顯示文字標籤（純icon太難辨識，Ivy反應過）。 */}
           <button onClick={() => setView('transactions')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'transactions' ? 'bg-amber-50 border-amber-100 text-amber-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><List className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'transactions' ? 'text-amber-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">明細本</span></button>
-          <button onClick={() => setView('reconcile')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'reconcile' ? 'bg-sky-50 border-sky-100 text-sky-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><FileSearch className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'reconcile' ? 'text-sky-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">對帳</span></button>
+          <button onClick={() => setView('reconcile')} className={`shrink-0 lg:w-full flex items-center gap-1.5 lg:gap-4 p-2 lg:p-4 rounded-2xl lg:rounded-3xl transition-all duration-300 font-bold group border-2 ${view === 'reconcile' ? 'bg-sky-50 border-sky-100 text-sky-500 shadow-sm' : 'border-transparent text-slate-400 hover:bg-orange-50/50'}`}><FileSearch className={`w-5 h-5 lg:w-6 lg:h-6 shrink-0 ${view === 'reconcile' ? 'text-sky-500' : 'text-slate-400'}`} /><span className="text-[10px] leading-tight lg:text-base whitespace-nowrap">餵食核對</span></button>
         </nav>
         {/* 用戶名稱/大頭貼是「總設定」入口：願望清單本身在側欄下方已經有常駐的卡片可以點
             （桌機版），不需要再開一個獨立按鈕；帳戶管理、登出這種比較像系統設定的動作
@@ -989,8 +989,8 @@ const App: React.FC = () => {
           {isUserMenuOpen && (
             <div className="absolute top-full right-0 lg:right-auto lg:left-4 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-orange-50 p-2 z-30 animate-in fade-in zoom-in-95 duration-150">
               <button onClick={() => { handleEditNickname(); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-amber-50 hover:text-amber-600 rounded-xl transition"><Pencil className="w-4 h-4" />編輯暱稱</button>
-              <button onClick={() => { setIsWishlistModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-indigo-50 hover:text-indigo-500 rounded-xl transition"><Target className="w-4 h-4" />願望清單</button>
-              <button onClick={() => { setIsAccountsModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-sky-50 hover:text-sky-500 rounded-xl transition"><Wallet className="w-4 h-4" />帳戶管理</button>
+              <button onClick={() => { setIsWishlistModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-indigo-50 hover:text-indigo-500 rounded-xl transition"><Target className="w-4 h-4" />喵喵心願罐</button>
+              <button onClick={() => { setIsAccountsModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-sky-50 hover:text-sky-500 rounded-xl transition"><Wallet className="w-4 h-4" />碗盤總覽</button>
               <div className="h-px bg-slate-100 my-1"></div>
               <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-400 hover:bg-rose-50 hover:text-rose-400 rounded-xl transition"><LogOut className="w-4 h-4" />登出</button>
             </div>
@@ -1005,7 +1005,7 @@ const App: React.FC = () => {
                  <p className={`text-xs font-bold mt-2 ${sidebarWishlistMetrics?.canAffordNow ? 'text-emerald-500' : 'text-rose-500'}`}>{sidebarWishlistMetrics?.canAffordNow ? '可動用餘額夠了！' : `還差 $${sidebarWishlistMetrics?.shortfall.toLocaleString()}`}</p>
                </>
              ) : (
-               <p className="text-sm font-bold text-indigo-300">還沒有想買的東西，點這裡設定願望清單</p>
+               <p className="text-sm font-bold text-indigo-300">還沒有想買的東西，點這裡設定喵喵心願罐</p>
              )}
            </div>
         </div>
@@ -1046,7 +1046,7 @@ const App: React.FC = () => {
                  <button onClick={handleMatchAllAccounts} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-indigo-400 hover:bg-indigo-500 rounded-2xl transition active:scale-95 shadow-md shadow-indigo-100" title="一次性：把匯入交易的accountId/fromAccountId/toAccountId補上，可安全重複執行"><Wallet className="w-4 h-4" />配對帳戶(一次性)</button>
                  <button onClick={handleClearAllRecords} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-2xl transition active:scale-95 shadow-md shadow-rose-100" title="危險：清除所有交易紀錄(不影響帳戶本身)，無法復原"><Trash2 className="w-4 h-4" />清除所有紀錄</button>
                  <button onClick={handleOpenTrash} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="垃圾桶：救回不小心刪除的紀錄"><Trash2 className="w-4 h-4" />垃圾桶{deletedTransactions.length > 0 ? `(${deletedTransactions.length})` : ''}</button>
-                 <button onClick={handleOpenActivityLog} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="編輯歷程：查詢/復原批次修正這種大動作編輯"><History className="w-4 h-4" />編輯歷程</button>
+                 <button onClick={handleOpenActivityLog} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="重新裝碗紀錄：查詢/復原批次修正這種大動作編輯"><History className="w-4 h-4" />重新裝碗紀錄</button>
                  <div className="h-full w-px bg-slate-200 mx-2 hidden sm:block"></div>
                  <button onClick={() => importInputRef.current?.click()} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95"><Upload className="w-4 h-4" />匯入</button>
                  <input type="file" ref={importInputRef} onChange={handleImport} className="hidden" accept="application/json" />

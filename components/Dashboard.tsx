@@ -302,7 +302,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <div className="flex justify-between items-center">
                       <h3 className="text-2xl font-extrabold text-slate-700 flex items-center gap-3">
                           <div className="p-2.5 bg-amber-100 text-amber-500 rounded-2xl"><Download className="w-6 h-6" /></div>
-                          匯出 PDF 報告
+                          匯出貓咪指揮官戰情報告
                       </h3>
                       <button onClick={() => setShowExportModal(false)} className="p-2 hover:bg-slate-50 rounded-full transition"><X className="w-6 h-6 text-slate-300" /></button>
                   </div>
@@ -387,9 +387,9 @@ const Dashboard: React.FC<DashboardProps> = ({
         <div className="relative flex flex-col md:flex-row md:justify-between md:items-center gap-4">
             {/* 手機版原本這個按鈕跟桌機版一樣大小、置中排在標題正下方，視覺上太搶眼、
                 位置也很突兀。改成手機版縮小成右上角的小圓形icon按鈕，桌機版維持原樣。 */}
-            <button onClick={() => setShowExportModal(true)} disabled={isExporting} className={`absolute top-0 right-0 md:static p-2.5 md:px-6 md:py-3 flex items-center gap-2 bg-white border border-slate-100 text-slate-600 font-bold rounded-full md:rounded-2xl hover:bg-amber-50 hover:text-amber-600 hover:border-amber-100 transition shadow-sm active:scale-95 ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`} title="匯出 PDF 報告">
+            <button onClick={() => setShowExportModal(true)} disabled={isExporting} className={`absolute top-0 right-0 md:static p-2.5 md:px-6 md:py-3 flex items-center gap-2 bg-white border border-slate-100 text-slate-600 font-bold rounded-full md:rounded-2xl hover:bg-amber-50 hover:text-amber-600 hover:border-amber-100 transition shadow-sm active:scale-95 ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`} title="匯出貓咪指揮官戰情報告">
                 {isExporting ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Download className="w-4 h-4 md:w-5 md:h-5" />}
-                <span className="hidden md:inline">{isExporting ? '生成中...' : '匯出 PDF 報告'}</span>
+                <span className="hidden md:inline">{isExporting ? '生成中...' : '匯出戰情報告'}</span>
             </button>
             <div className="flex flex-col items-center text-center md:items-start md:text-left pt-1 md:pt-0 pr-12 md:pr-0">
                 <h1 className="text-3xl font-extrabold text-slate-700 tracking-tight flex items-center justify-center md:justify-start gap-3">貓咪指揮中心<span className="text-sm bg-amber-100 text-amber-600 px-3 py-1 rounded-full font-bold">Pawket AI</span></h1>
@@ -444,7 +444,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       <div data-pdf-section data-pdf-header-container className="fixed -left-[9999px] top-0 p-12 bg-white w-[190mm] border-b-8 border-amber-400" style={{ zIndex: -100 }}>
           <div className="flex justify-between items-end">
               <div>
-                  <h2 className="text-5xl font-black text-slate-800 tracking-tighter mb-4">財務決策分析報告</h2>
+                  <h2 className="text-5xl font-black text-slate-800 tracking-tighter mb-4">貓咪指揮官戰情報告</h2>
                   <div className="flex items-center gap-4">
                       <div className="bg-amber-50 px-6 py-4 rounded-[24px] border border-amber-100">
                           <p className="text-xs font-bold text-amber-500 uppercase tracking-widest mb-1">報告分析期間</p>
@@ -483,7 +483,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       {/* SECTION 1.5: 願望清單 + 分類比率圓餅圖（Ivy要求這兩個放最前面） */}
       <div data-pdf-section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-6 rounded-[40px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增願望清單</div>}
+          {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-6 rounded-[40px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增喵喵心願罐</div>}
           <div className="bg-white p-6 rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 flex flex-col">
               <h4 className="font-bold text-slate-700 flex items-center gap-2"><PieIcon className="w-5 h-5 text-amber-400" />本期消費分類比率</h4>
               <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：本期全部支出依次分類(L2)加總；如果某個細項(L3)單獨超過總支出15%會拆成獨立一塊（例如飲料）；每塊列出裡面金額最高的商家/店家；超過9塊時，剩下的合併成灰色的「其他」。</p>
@@ -528,7 +528,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           onClick={onOpenSharedExpenses}
           className="bg-white p-6 rounded-[32px] shadow-xl shadow-orange-50/50 border border-orange-50 flex items-center justify-between gap-4 cursor-pointer hover:border-purple-100 transition"
         >
-          <h4 className="font-bold text-slate-700 flex items-center gap-2 shrink-0"><Users className="w-5 h-5 text-purple-400" />應收應付</h4>
+          <h4 className="font-bold text-slate-700 flex items-center gap-2 shrink-0"><Users className="w-5 h-5 text-purple-400" />糧食往來簿</h4>
           <div className="flex gap-6">
             <div className="text-right">
               <p className="text-[10px] font-bold text-emerald-500 uppercase flex items-center justify-end gap-1"><ArrowDownCircle className="w-3 h-3" />應收</p>

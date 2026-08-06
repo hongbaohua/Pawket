@@ -190,7 +190,7 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
     <div className="p-4 md:p-8 bg-white rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 min-h-[600px]">
       <h2 className="text-2xl font-extrabold text-slate-700 mb-2 flex items-center gap-3">
         <div className="p-3 bg-sky-100 rounded-2xl text-sky-500"><FileSearch className="w-6 h-6" /></div>
-        對帳
+        餵食核對
       </h2>
       <p className="text-sm text-slate-400 mb-6 ml-1">上傳一份銀行月結單，跟妳自己記的帳互相核對——不是精確比對商家名稱，是看日期+金額對不對得上。</p>
 
@@ -207,7 +207,7 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
 
       {selectedAccount && !accountReady && (
         <div className="p-5 bg-amber-50 border border-amber-100 rounded-3xl flex items-center justify-between gap-4 mb-6">
-          <p className="text-sm font-bold text-amber-600">「{selectedAccount.name}」還沒設定入帳延遲天數，要先設定才能對帳。</p>
+          <p className="text-sm font-bold text-amber-600">「{selectedAccount.name}」還沒設定入帳延遲天數，要先設定才能餵食核對。</p>
           <button onClick={onOpenAccountsModal} className="px-4 py-2 bg-amber-400 text-white rounded-xl font-bold text-sm hover:bg-amber-500 transition shrink-0">去設定</button>
         </div>
       )}
