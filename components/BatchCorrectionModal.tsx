@@ -57,28 +57,32 @@ const BatchCorrectionModal: React.FC<BatchCorrectionModalProps> = ({ matches, so
   return (
     <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200">
        <div className="bg-[#FFFBF5] w-full max-w-2xl rounded-[40px] shadow-2xl flex flex-col border-4 border-white max-h-[85vh] overflow-hidden">
-          {/* Header */}
+          {/* Header：2026-08-06 Ivy反應這裡文字太擠——三段說明(標題/主要說明/版本統計備註)
+              原本擠在同一個flex-1欄位裡只靠mt-1/mt-2小間距分隔，改成space-y+獨立的淺色卡片
+              包住版本統計備註，視覺上真的分開成三個區塊，行距也加大。 */}
           <div className="p-6 bg-indigo-50 border-b border-indigo-100 flex items-start gap-4">
-              <div className="p-3 bg-white rounded-full shadow-sm border border-indigo-100">
+              <div className="p-3 bg-white rounded-full shadow-sm border border-indigo-100 shrink-0">
                   <Sparkles className="w-6 h-6 text-indigo-500" />
               </div>
-              <div className="flex-1">
-                  <h3 className="text-xl font-extrabold text-slate-800">喵喵發現了 {matches.length} 筆相似交易！</h3>
-                  <p className="text-sm text-slate-500 mt-1">
-                      您剛剛把 <strong>{source.merchant}</strong> 改成「{source.category.l1}／{source.category.l2}{source.category.l3 ? `／${source.category.l3}` : ''}」。<br/>
+              <div className="flex-1 min-w-0 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                      <h3 className="text-xl font-extrabold text-slate-800 leading-snug">喵喵發現了 {matches.length} 筆相似交易！</h3>
+                      <button onClick={onClose} className="p-2 -mt-1 -mr-1 hover:bg-white/50 rounded-full transition text-slate-400 shrink-0">
+                          <X className="w-6 h-6" />
+                      </button>
+                  </div>
+                  <p className="text-sm text-slate-500 leading-relaxed">
+                      您剛剛把 <strong>{source.merchant}</strong> 改成「{source.category.l1}／{source.category.l2}{source.category.l3 ? `／${source.category.l3}` : ''}」。
                       下面這些交易的<strong>金額跟這筆差不到10%、商家名稱也對得上一部分</strong>，
                       猜測可能是同一家店的其他消費記錄——要不要一起套用剛剛這次的修改？
                       （不是完全比對，覺得不是同一家的話取消勾選就好，不會影響其他筆）
                   </p>
-                  <p className="text-xs text-slate-400 mt-2">
+                  <p className="text-xs text-slate-400 bg-white/60 rounded-xl px-3 py-2.5 leading-relaxed">
                       {newVersionCount > 0
                         ? `這次改成的寫法，資料庫裡另外還有 ${newVersionCount} 筆本來就是這樣分類的。`
                         : `這次改成的寫法，目前資料庫裡沒有其他紀錄用一樣的寫法——如果是這次手滑打錯，建議先按右上角 ✕ 取消，不要往下套用。`}
                   </p>
               </div>
-              <button onClick={onClose} className="p-2 hover:bg-white/50 rounded-full transition text-slate-400">
-                  <X className="w-6 h-6" />
-              </button>
           </div>
 
           {/* List */}

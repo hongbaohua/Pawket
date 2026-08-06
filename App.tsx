@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, FileSearch, History } from 'lucide-react';
+import { List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, FileSearch, History, Settings } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import ReconcileView from './components/ReconcileView';
 import SplitModal from './components/SplitModal';
@@ -15,6 +15,7 @@ import TransferModal from './components/TransferModal';
 import SharedExpenseModal from './components/SharedExpenseModal';
 import SharedExpenseListModal from './components/SharedExpenseListModal';
 import ActivityLogModal from './components/ActivityLogModal';
+import SettingsModal from './components/SettingsModal';
 import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry } from './types';
 import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
@@ -188,6 +189,16 @@ const App: React.FC = () => {
   const handleUpdateWishlistSettings = async (settings: WishlistSettings) => {
       const { error } = await supabase.auth.updateUser({ data: { wishlistDailyBuffer: settings.dailyBuffer, wishlistEmergencyFund: settings.emergencyFund } });
       if (error) { console.error('更新願望清單安全水位失敗', error); alert('儲存失敗，請檢查主控台錯誤訊息。'); }
+  };
+
+  // 系統設定：一樣存在 user_metadata。目前只有這一個開關，2026-08-06 Ivy反應她的舊資料已經
+  // 整理得差不多，不太需要「喵喵發現了N筆相似交易」這個提醒，但保留功能給以後的新帳戶/新用戶用，
+  // 所以預設是開著的(undefined視同true)，只有明確存過false才是關閉。
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const similarTransactionAlertsEnabled = session?.user.user_metadata?.similarTransactionAlertsEnabled !== false;
+  const handleUpdateSimilarTransactionAlerts = async (enabled: boolean) => {
+      const { error } = await supabase.auth.updateUser({ data: { similarTransactionAlertsEnabled: enabled } });
+      if (error) { console.error('更新相似交易提醒設定失敗', error); alert('儲存失敗，請檢查主控台錯誤訊息。'); }
   };
 
   // 願望清單的新增/編輯/刪除/排序全部都是透過整份陣列替換（見 WishlistModal），
@@ -473,7 +484,7 @@ const App: React.FC = () => {
     // 新增流程第3步問過「要不要分裝拆帳」，選是的話存檔後直接接著開分裝盤，不用存完再回去找按鈕點。
     if (options?.openSplitAfter) {
         setSplittingTransaction(updatedTx);
-    } else {
+    } else if (similarTransactionAlertsEnabled) {
         const candidates = findSimilarTransactions(updatedTx, transactions);
         if (candidates.length > 0) {
             setBatchSource(updatedTx);
@@ -991,6 +1002,7 @@ const App: React.FC = () => {
               <button onClick={() => { handleEditNickname(); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-amber-50 hover:text-amber-600 rounded-xl transition"><Pencil className="w-4 h-4" />編輯暱稱</button>
               <button onClick={() => { setIsWishlistModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-indigo-50 hover:text-indigo-500 rounded-xl transition"><Target className="w-4 h-4" />喵喵心願罐</button>
               <button onClick={() => { setIsAccountsModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-sky-50 hover:text-sky-500 rounded-xl transition"><Wallet className="w-4 h-4" />碗盤總覽</button>
+              <button onClick={() => { setIsSettingsModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 hover:text-slate-700 rounded-xl transition"><Settings className="w-4 h-4" />系統設定</button>
               <div className="h-px bg-slate-100 my-1"></div>
               <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-400 hover:bg-rose-50 hover:text-rose-400 rounded-xl transition"><LogOut className="w-4 h-4" />登出</button>
             </div>
@@ -1329,6 +1341,7 @@ const App: React.FC = () => {
       {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} settings={wishlistSettings} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={handleUpdateWishlistItems} onUpdateSettings={handleUpdateWishlistSettings} />}
       {isTrashModalOpen && <TrashModal items={deletedTransactions} loading={trashLoading} onClose={() => setIsTrashModalOpen(false)} onRestore={handleRestoreFromTrash} onPermanentlyDelete={handlePermanentlyDelete} />}
       {isActivityLogOpen && <ActivityLogModal items={activityLog} loading={activityLogLoading} onClose={() => setIsActivityLogOpen(false)} onRestore={handleRestoreActivityLog} />}
+      {isSettingsModalOpen && <SettingsModal similarTransactionAlertsEnabled={similarTransactionAlertsEnabled} onClose={() => setIsSettingsModalOpen(false)} onUpdateSimilarTransactionAlerts={handleUpdateSimilarTransactionAlerts} />}
       {isMappingModalOpen && <CategoryMappingModal conflicts={conflictCategories} existingCustomOptions={customCategoryHistory} onConfirm={handleMappingConfirm} onCancel={() => { setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]); }} />}
       
       {(lastDeletedTransaction || lastCanceledSplit || lastBatchUpdate) && (

@@ -69,11 +69,16 @@ Task: Read a photo of a single receipt/itemized bill (convenience store receipt,
 5. If the image contains multiple unrelated purchases or looks like a multi-transaction statement rather
    than a single receipt, do not force it into one coherent breakdown — extract whatever is legible.
    Low-confidence items are fine; the user can edit them by hand afterward.
+
+6. **merchant**: if the store/merchant name is printed on the receipt (usually near the top), extract it
+   as a short Traditional Chinese name (e.g. "7-ELEVEN", "全家便利商店", "五桐號"). If it's not legible or
+   not printed, omit this field entirely — do not guess.
 `;
 
 const RECEIPT_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
+    merchant: { type: Type.STRING },
     items: {
       type: Type.ARRAY,
       items: {
@@ -106,6 +111,7 @@ export interface ReceiptAnalysisResult {
   items: { name: string; unitPrice: number; quantity: number }[];
   discounts: { label: string; amount: number }[];
   mergedName: string;
+  merchant?: string;
 }
 
 const mapResponseToReceiptResult = (responseText: string): ReceiptAnalysisResult => {
@@ -120,7 +126,8 @@ const mapResponseToReceiptResult = (responseText: string): ReceiptAnalysisResult
       label: d.label || '',
       amount: typeof d.amount === 'number' ? d.amount : 0
     })),
-    mergedName: parsed.mergedName || ''
+    mergedName: parsed.mergedName || '',
+    merchant: parsed.merchant || undefined
   };
 };
 
