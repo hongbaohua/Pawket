@@ -342,8 +342,11 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   const dateRef = useRef<HTMLInputElement>(null);
   // l3Ref removed from validation scrolling
 
-  // Check if this is a "New" transaction (simple check: merchant is empty or amount is 0)
-  const isNew = transaction.amount === 0 && transaction.merchant === '';
+  // 是不是「新增中、還沒存進資料庫」的交易：用id判斷（在allTransactions裡找不到就是新的），
+  // 不能用「商家名稱空白/金額是0」判斷——2026-08-06新增「複製這筆」功能後，複製出來的草稿
+  // 商家/金額都帶著原本的值(非空)，但那筆id是全新的、還沒存檔，舊的判斷法會誤判成「編輯中」，
+  // 導致「這碗跟誰分」這種「只有已存在的交易才能設定」的按鈕在還沒存檔的草稿上就顯示出來。
+  const isNew = !allTransactions.some(t => t.id === transaction.id);
 
   // 2026-07-22 Ivy反應手機版一次列出所有欄位很容易漏填，改成分4步驟：
   // 1.日期/店家/收支/通道/帳戶 2.性質/品項/金額 3.分類(自動推薦)+分裝詢問 4.備註。

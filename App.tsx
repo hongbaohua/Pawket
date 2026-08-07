@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, FileSearch, History, Settings } from 'lucide-react';
+import { List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, FileSearch, History, Settings, Copy } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import ReconcileView from './components/ReconcileView';
 import SplitModal from './components/SplitModal';
@@ -860,6 +860,25 @@ const App: React.FC = () => {
     setEditingTransaction({ id: uuidv4(), date: today, merchant: '', amount: NaN, originalText: 'Manual Add', type: 'expense', category: { l1: L1Category.VARIABLE, l2: STANDARD_CATEGORIES[L1Category.VARIABLE][0], l3: '' }, confidence: 1.0, isVerified: true, isSplit: false });
   };
 
+  // 複製這筆：帶著原本所有內容開新增交易的填寫介面，使用者確認/微調後另存成一筆全新交易，
+  // 不影響原本那筆——適合常態性重複開銷快速複製一筆很像的，不用每個欄位重打
+  // （2026-08-06 Ivy要求）。id用新的，跟拆分/對帳/分帳明細有關的關聯欄位都要重置，
+  // 不然複製出來的新交易會誤指到原本那筆的split群組/對帳狀態/分帳紀錄。
+  const handleDuplicateTransaction = (t: Transaction) => {
+    setEditingTransaction({
+      ...t,
+      id: uuidv4(),
+      originalText: 'Manual Add',
+      confidence: 1.0,
+      isVerified: true,
+      isSplit: false,
+      parentId: undefined,
+      reconcileStatus: undefined,
+      deletedAt: undefined,
+      createdAt: undefined,
+    });
+  };
+
   const handleEditNickname = async () => {
     const current = session?.user.user_metadata?.nickname || '';
     const next = window.prompt('幫自己取個暱稱', current);
@@ -1214,6 +1233,7 @@ const App: React.FC = () => {
                             <div className="flex justify-end lg:justify-center gap-2">
                               <button onClick={() => setSplittingTransaction(t)} className="p-2 border rounded-xl hover:bg-purple-50 text-purple-400" title="拆帳分類"><Divide className="w-4 h-4" /></button>
                               <button onClick={() => setEditingTransaction(t)} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯項目"><Pencil className="w-4 h-4" /></button>
+                              <button onClick={() => handleDuplicateTransaction(t)} className="p-2 border rounded-xl hover:bg-sky-50 text-sky-400" title="複製這筆"><Copy className="w-4 h-4" /></button>
                               <button onClick={() => handleDeleteTransaction(t.id)} className="p-2 border rounded-xl hover:bg-rose-50 text-rose-400" title="刪除項目"><Trash2 className="w-4 h-4" /></button>
                             </div>
                           </td>
