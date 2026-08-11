@@ -6,13 +6,20 @@ import {
   ANOMALY_MIN_HISTORY_COUNT, ANOMALY_AMOUNT_MULTIPLIER, ANOMALY_MIN_AMOUNT,
   FREQUENCY_HISTORY_MONTHS, FREQUENCY_MULTIPLIER, FREQUENCY_MIN_COUNT,
   PIE_L3_PROMOTE_THRESHOLD, PIE_MAX_SLICES,
-  PACING_MIN_HISTORY_MONTHS, PACING_WARNING_MULTIPLIER, PACING_CRITICAL_MULTIPLIER, PACING_MIN_AMOUNT,
-  RECURRING_MIN_HISTORY_MONTHS, RECURRING_MONTH_COVERAGE_RATIO,
+  PACING_MIN_HISTORY_MONTHS, PACING_WARNING_MULTIPLIER, PACING_CRITICAL_MULTIPLIER, PACING_MIN_AMOUNT, PACING_MIN_PERIOD_PROGRESS,
+  RECURRING_MIN_HISTORY_MONTHS, RECURRING_MONTH_COVERAGE_RATIO, RECURRING_AMOUNT_BAND_RATIO, RECURRING_MIN_CONSISTENT_RATIO,
 } from '../config/financialRules';
 
 // Precision helper to avoid floating point errors
 const toCents = (val: number) => Math.round(val * 100);
 const fromCents = (val: number) => val / 100;
+
+// 「消費分析」類函式（圓餅圖/配速警示/固定週期性/異常提醒等，用來分析Ivy自己的花費習慣）
+// 一律用這個判斷，把有specialTag(代購/工作代墊/借貸)的支出排除在外——這些錢雖然真的
+// 從帳戶流出，但不是Ivy自己的消費，是先幫別人墊、之後會收回來的，混進消費分析只會讓
+// 統計失真（2026-08-11 Ivy反應）。跟「餘額/現金緩衝耗盡預警」這種看「錢真的流出去多少」
+// 的函式是不同的關注點，那些刻意不套用這個排除。
+const isPersonalConsumption = (t: Transaction): boolean => t.type === 'expense' && !t.specialTag;
 
 /**
  * Helper: Calculate Date Range based on Scope and Cycle Day
@@ -104,6 +111,14 @@ export const generateMonthlyPacingAlerts = (
   if (daysPassed <= 0) daysPassed = 1;
   const daysRemaining = Math.max(totalDaysInPeriod - daysPassed, 0);
 
+  // 這期已過的天數比例太小時，「配速」完全不可信——樣本只有小貓兩三天，隨便一筆單一
+  // 大額支出(例如一頓聚餐)就能把「照這個速度推算全月」的結果撐到爆表，但那只是單一
+  // 事件，不代表接下來每天都會這樣花。2026-08-11 Ivy反應「這個月才花$2000多，平常
+  // 整月$3000多，怎麼可能被標記超支」，查證後發現正是這個問題：期間才過35%，一頓
+  // 幾百元的聚餐就讓「配速」誤判成嚴重超支。至少要過這個比例的天數才開始判斷配速，
+  // 給樣本一點時間，避免靠極少數幾筆交易就下「你會爆超」的結論。
+  if (daysPassed / totalDaysInPeriod < PACING_MIN_PERIOD_PROGRESS) return [];
+
   // 用全部歷史資料，算每個L2次分類「每個有出現過的月份」花了多少，取中位數當合理月度基準
   // （中位數比平均值更不受單月爆買影響，跟願望清單安全水位建議值用同一套邏輯）。
   // 只看「變動支出」——固定支出(房租/電信/保費...)本來就是每月幾乎固定的已知數字，
@@ -111,9 +126,10 @@ export const generateMonthlyPacingAlerts = (
   // 按天數比例推算的邏輯去比對，扣款當天就會被誤判成大幅超支，這不是真的異常，
   // 只是這套配速邏輯本來就不適合用在「一次整筆扣款」的固定支出上（2026-07-23 Ivy
   // 實測時發現電信費多收$1，順勢指出這點——固定支出不需要列入這裡的超支提醒）。
+  // 也排除代購/工作代墊/借貸(specialTag)——那不是Ivy自己的消費，不該算進超支警示。
   const monthlyByL2: Record<string, Record<string, number>> = {}; // l2 -> yyyy-MM -> amount
   allTransactions.forEach(t => {
-    if (t.type !== 'expense' || t.category.l1 !== L1Category.VARIABLE) return;
+    if (!isPersonalConsumption(t) || t.category.l1 !== L1Category.VARIABLE) return;
     const l2 = t.category.l2;
     if (!l2) return;
     const monthKey = format(parseISO(t.date), 'yyyy-MM');
@@ -123,7 +139,7 @@ export const generateMonthlyPacingAlerts = (
 
   const currentSpentByL2: Record<string, number> = {};
   currentPeriodTransactions.forEach(t => {
-    if (t.type !== 'expense' || t.category.l1 !== L1Category.VARIABLE) return;
+    if (!isPersonalConsumption(t) || t.category.l1 !== L1Category.VARIABLE) return;
     const l2 = t.category.l2;
     if (!l2) return;
     currentSpentByL2[l2] = (currentSpentByL2[l2] || 0) + t.amount;
@@ -174,7 +190,7 @@ export const calculateProjectedPenalty = (
     if (!config.enabled) return { isOverspent: false, overage: 0, penaltyAmount: 0 };
 
     const variableSpending = transactions
-        .filter(t => t.type === 'expense' && t.category.l1 === L1Category.VARIABLE)
+        .filter(t => isPersonalConsumption(t) && t.category.l1 === L1Category.VARIABLE)
         .reduce((sum, t) => sum + t.amount, 0);
 
     const variableBudget = budgets.find(b => b.l1 === L1Category.VARIABLE)?.amount || 0;
@@ -203,7 +219,7 @@ export const calculateSuggestedBudget = (historyTransactions: Transaction[]): Bu
     };
     
     historyTransactions.forEach(t => {
-        if (t.type === 'expense') {
+        if (isPersonalConsumption(t)) {
             sums[t.category.l1] += t.amount;
         }
     });
@@ -227,7 +243,7 @@ export const analyzeFinancialHealth = (transactions: Transaction[]) => {
     [L1Category.INVESTMENT]: 0
   };
 
-  transactions.filter(t => t.type === 'expense').forEach(t => {
+  transactions.filter(isPersonalConsumption).forEach(t => {
     if (expenses[t.category.l1 as keyof typeof expenses] !== undefined) {
       expenses[t.category.l1 as keyof typeof expenses] += t.amount;
     }
@@ -256,7 +272,7 @@ export const getSeasonalTrends = (allTransactions: Transaction[]) => {
   const monthlyData: Record<string, number> = {};
 
   const variableTxs = allTransactions.filter(
-    t => t.type === 'expense' && t.category.l1 === L1Category.VARIABLE
+    t => isPersonalConsumption(t) && t.category.l1 === L1Category.VARIABLE
   );
 
   variableTxs.forEach(t => {
@@ -303,7 +319,7 @@ export const analyzeL3Anomalies = (
   const historyMap: Record<string, { sum: number; count: number }> = {};
   
   allTransactions.forEach(t => {
-      if (t.type !== 'expense') return;
+      if (!isPersonalConsumption(t)) return;
       const key = `${t.category.l2}-${t.category.l3}`;
       if (!historyMap[key]) historyMap[key] = { sum: 0, count: 0 };
       historyMap[key].sum += t.amount;
@@ -311,7 +327,7 @@ export const analyzeL3Anomalies = (
   });
 
   currentTransactions.forEach(t => {
-      if (t.type !== 'expense') return;
+      if (!isPersonalConsumption(t)) return;
       const key = `${t.category.l2}-${t.category.l3}`;
       const history = historyMap[key];
 
@@ -346,7 +362,7 @@ export const analyzeL2Frequency = (
   const currentCounts: Record<string, number> = {};
   
   currentTransactions.forEach(t => {
-      if (t.type === 'expense' && t.category.l1 === L1Category.VARIABLE) {
+      if (isPersonalConsumption(t) && t.category.l1 === L1Category.VARIABLE) {
           currentCounts[t.category.l2] = (currentCounts[t.category.l2] || 0) + 1;
       }
   });
@@ -356,7 +372,7 @@ export const analyzeL2Frequency = (
   const endAnalysisDate = endOfMonth(subMonths(currentDateAnchor, 1)); 
 
   allTransactions.forEach(t => {
-      if (t.type === 'expense' && t.category.l1 === L1Category.VARIABLE) {
+      if (isPersonalConsumption(t) && t.category.l1 === L1Category.VARIABLE) {
           const tDate = parseISO(t.date);
           if (isAfter(tDate, startAnalysisDate) && isBefore(tDate, endAnalysisDate)) {
               const monthKey = format(tDate, 'yyyy-MM');
@@ -454,7 +470,7 @@ const mergeMerchantTally = (target: MerchantTally, source: MerchantTally) => {
 // 什麼撐起來的。塊數超過PIE_MAX_SLICES會把剩下的合併成「其他」，一方面避免圓餅圖
 // 被塞成幾十塊看不清楚，一方面確保配色不會重複用完。
 export const getCategoryPieData = (transactions: Transaction[]): CategoryPieSlice[] => {
-  const expenseTxs = transactions.filter(t => t.type === 'expense');
+  const expenseTxs = transactions.filter(isPersonalConsumption);
   const total = expenseTxs.reduce((sum, t) => sum + t.amount, 0);
   if (total <= 0) return [];
 
@@ -527,7 +543,7 @@ export const detectRecurringExpenses = (allTransactions: Transaction[]): Recurri
   const byMerchant: Record<string, { months: Record<string, number>; lastDate: string }> = {};
 
   allTransactions.forEach(t => {
-    if (t.type !== 'expense' || !t.merchant) return;
+    if (!isPersonalConsumption(t) || !t.merchant) return;
     const monthKey = format(parseISO(t.date), 'yyyy-MM');
     if (!byMerchant[t.merchant]) byMerchant[t.merchant] = { months: {}, lastDate: t.date };
     byMerchant[t.merchant].months[monthKey] = (byMerchant[t.merchant].months[monthKey] || 0) + t.amount;
@@ -554,6 +570,15 @@ export const detectRecurringExpenses = (allTransactions: Transaction[]): Recurri
     const amounts = Object.values(data.months).sort((a, b) => a - b);
     const mid = Math.floor(amounts.length / 2);
     const median = amounts.length % 2 === 0 ? (amounts[mid - 1] + amounts[mid]) / 2 : amounts[mid];
+
+    // 只看「出現在幾成的月份」還不夠——像「常去一陣子的飲料店」「常搭但次數金額都不固定
+    // 的公車」也會通過上面的涵蓋率檢查，但每個月的金額差異很大，不是真的「固定」。
+    // 真正的固定週期性支出(訂閱制)大部分月份金額應該落在中位數附近，偶爾才會因為加購/
+    // 折扣有出入。用真實資料校準過這個門檻（見financialRules.ts的說明）。
+    const consistentCount = amounts.filter(a =>
+      a >= median * (1 - RECURRING_AMOUNT_BAND_RATIO) && a <= median * (1 + RECURRING_AMOUNT_BAND_RATIO)
+    ).length;
+    if (consistentCount / amounts.length < RECURRING_MIN_CONSISTENT_RATIO) return;
 
     results.push({ merchant, monthsPresent: monthKeys.length, monthsSpan, medianAmount: median, lastDate: data.lastDate });
   });

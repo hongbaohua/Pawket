@@ -3,8 +3,13 @@
 // 了原本的「餵食帳單」(Scanner.tsx，2026-07-27移除)——差異在於餵食帳單假設「都是新交易，
 // 猜完分類就整批新增」，完全不檢查是不是已經記過了；對帳則是「先跟已有資料比對，只有
 // 真正遺漏的才要新增」，架構上更安全。上傳+密碼詢問流程沿用原本Scanner.tsx那套邏輯
-// （直接重用services/pdfTextExtractor.ts），這裡只支援單一份檔案、不落地存對帳結果，
-// 跑完這次Ivy處理完就結束（見PROJECT_STATUS.md的設計說明）。
+// （直接重用services/pdfTextExtractor.ts），不落地存對帳結果，跑完這次Ivy處理完就結束
+// （見PROJECT_STATUS.md的設計說明）。
+// 2026-08-11：支援同一期一次上傳多份檔案再一起比對——Ivy實測發現中華郵政會把同一期
+// VISA明細拆成兩份PDF寄發，只上傳其中一份會讓另一份裡的交易(例如全支付/全聯那筆)
+// 找不到對應的銀行資料，被誤判成「妳記了，但官方紀錄一直沒出現」。所有檔案共用同一組
+// 密碼（貼合PDF密碼設定習慣，只問一次，除非真的失敗才重問），抽出來的BankStatementRow
+// 直接合併成一份清單再送進reconcile()一次比對，不用分開跑。
 import React, { useState, useRef, useMemo } from 'react';
 import { Upload, Lock, Loader2, FileSearch, CheckCircle2, AlertTriangle, HelpCircle, Plus, Pencil, X, RotateCcw } from 'lucide-react';
 import { Account, Transaction, BankStatementRow, MerchantAlias, ReconcileStatus, L1Category, STANDARD_CATEGORIES } from '../types';
@@ -41,31 +46,39 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
   const selectedAccount = accounts.find(a => a.id === selectedAccountId);
   const accountReady = selectedAccount && selectedAccount.postingDelayMin != null && selectedAccount.postingDelayMax != null;
 
-  const [previewDataUrl, setPreviewDataUrl] = useState<string | null>(null);
+  const [previewFiles, setPreviewFiles] = useState<{ name: string; dataUrl: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ bankRowMatches: BankRowMatch[]; manualUpdates: { transactionId: string; status: 'pending_settlement' | 'missing_official' }[] } | null>(null);
   const [aliasPicker, setAliasPicker] = useState<{ row: BankStatementRow; candidates: { userMerchant: string; count: number }[] } | null>(null);
 
-  // PDF密碼詢問，完全比照Scanner.tsx那套（Promise-based彈窗，答對一次就存起來給下次用）
+  // PDF密碼詢問，完全比照Scanner.tsx那套（Promise-based彈窗，答對一次就存起來給下次用）。
+  // passwordRef記住這一輪已經答對過的密碼，同一批多份檔案共用，不用每份都重問一次
+  // ——只有真的密碼不對(PdfPasswordRequiredError isRetry=true)才會再跳出來問。
   const [pdfPasswordPrompt, setPdfPasswordPrompt] = useState<{ isRetry: boolean; resolve: (pw: string | null) => void } | null>(null);
   const [pdfPasswordInput, setPdfPasswordInput] = useState('');
+  const passwordRef = useRef<string | undefined>(undefined);
   const askForPdfPassword = (isRetry: boolean): Promise<string | null> => {
     setPdfPasswordInput('');
     return new Promise(resolve => setPdfPasswordPrompt({ isRetry, resolve }));
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const files: File[] = Array.from(e.target.files || []);
     if (fileInputRef.current) fileInputRef.current.value = '';
-    if (!file) return;
+    if (files.length === 0) return;
     setError(null);
     setResult(null);
-    const fr = new FileReader();
-    fr.onloadend = () => setPreviewDataUrl(fr.result as string);
-    fr.readAsDataURL(file);
+    Promise.all(files.map(file => new Promise<{ name: string; dataUrl: string }>((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onloadend = () => resolve({ name: file.name, dataUrl: fr.result as string });
+      fr.onerror = reject;
+      fr.readAsDataURL(file);
+    }))).then(loaded => setPreviewFiles(prev => [...prev, ...loaded]));
   };
+
+  const removeFile = (name: string) => setPreviewFiles(prev => prev.filter(f => f.name !== name));
 
   // 三種來源都支援：電子PDF(有文字層，優先走這條，快又不耗視覺辨識額度)、掃描PDF(沒有
   // 文字層，退回視覺辨識)、照片(直接視覺辨識)——呼應原本Scanner.tsx「文字抽取失敗就退回
@@ -75,7 +88,7 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
     if (dataUrl.startsWith('data:image/')) {
       return analyzeBankStatementRowsFromFile(dataUrl);
     }
-    let password: string | undefined;
+    let password: string | undefined = passwordRef.current;
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
         // pdf.js的getDocument({data})會把這個ArrayBuffer transfer給worker、用完就detach掉，
@@ -84,9 +97,10 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
         // （Ivy 2026-08-03實測PDF密碼重試流程時踩到）。
         const buffer = dataUrlToArrayBuffer(dataUrl);
         const parsed = await extractPdfText(buffer, password);
+        if (password) passwordRef.current = password;
         // 頁數防呆兩條路都要套用，避免掃描版PDF繞過去重演「整份丟給AI漏資料」的問題。
         if (parsed.pageCount > RECONCILE_MAX_PDF_PAGES) {
-          throw new Error(`這份對帳單有${parsed.pageCount}頁，看起來涵蓋很長的期間。目前一次只支援一份月結單(通常1-2頁)，請分批上傳，不要整批貼歷史明細。`);
+          throw new Error(`這份對帳單有${parsed.pageCount}頁，看起來涵蓋很長的期間。目前一次只支援月結單(通常1-2頁)，請分批上傳，不要整批貼歷史明細。`);
         }
         if (looksLikeScannedPdf(parsed)) {
           return await analyzeBankStatementRowsFromFile(dataUrl);
@@ -106,14 +120,24 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
   };
 
   const handleParse = async () => {
-    if (!previewDataUrl || !selectedAccount || !accountReady) return;
+    if (previewFiles.length === 0 || !selectedAccount || !accountReady) return;
     setIsProcessing(true);
     setError(null);
     setResult(null);
     try {
-      const bankRows = await getBankRows(previewDataUrl);
+      // 多份檔案依序抽取後合併成一份清單，再一次送進reconcile()比對——這樣被拆成兩份
+      // PDF的同一期明細(例如中華郵政VISA)才不會因為只上傳其中一份，讓另一份裡的交易
+      // 找不到比對對象、被誤判成「官方紀錄一直沒出現」。
+      const bankRows: BankStatementRow[] = [];
+      for (const file of previewFiles) {
+        try {
+          bankRows.push(...await getBankRows(file.dataUrl));
+        } catch (err: any) {
+          throw new Error(`「${file.name}」解析失敗：${err?.message || '請確認檔案/密碼正確後重新上傳。'}`);
+        }
+      }
       if (bankRows.length === 0) {
-        setError('沒有從這份檔案讀到任何交易資料，請確認上傳的內容正確。');
+        setError('沒有從這些檔案讀到任何交易資料，請確認上傳的內容正確。');
         return;
       }
       const r = reconcile(selectedAccount, bankRows, transactions);
@@ -141,9 +165,10 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
   };
 
   const handleReset = () => {
-    setPreviewDataUrl(null);
+    setPreviewFiles([]);
     setResult(null);
     setError(null);
+    passwordRef.current = undefined;
   };
 
   const commitAddFromRow = (row: BankStatementRow, merchantName?: string) => {
@@ -214,25 +239,35 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
 
       {accountReady && (
         <>
-          {!previewDataUrl ? (
+          {previewFiles.length === 0 ? (
             <div
               className="border-4 border-dashed border-sky-100 rounded-[40px] p-12 flex flex-col items-center justify-center cursor-pointer hover:bg-sky-50/30 hover:border-sky-200 transition duration-300 group bg-[#FFFBF5]"
               onClick={() => fileInputRef.current?.click()}
             >
               <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mb-4 shadow-sm group-hover:scale-110 transition-transform"><Upload className="w-9 h-9 text-sky-400" /></div>
-              <p className="text-lg text-slate-600 font-extrabold">點擊上傳一份對帳單</p>
-              <p className="text-sm text-slate-400 mt-2 text-center font-medium">PDF、掃描檔、拍照都可以，一次一份，通常1-2頁的那種月結單</p>
+              <p className="text-lg text-slate-600 font-extrabold">點擊上傳對帳單</p>
+              <p className="text-sm text-slate-400 mt-2 text-center font-medium">PDF、掃描檔、拍照都可以，可以一次選多份——同一期的月結單被拆成好幾份寄發時，一起上傳再一起比對</p>
             </div>
           ) : (
-            <div className="flex items-center gap-4 p-4 bg-sky-50/50 border border-sky-100 rounded-3xl mb-4">
-              <FileSearch className="w-8 h-8 text-sky-400 shrink-0" />
-              <p className="flex-1 font-bold text-slate-600">已選好一份檔案，可以開始比對</p>
-              <button onClick={handleReset} className="p-2 hover:bg-white rounded-full text-slate-400 hover:text-rose-400 transition"><X className="w-5 h-5" /></button>
+            <div className="mb-4">
+              <div className="space-y-2 mb-3">
+                {previewFiles.map(f => (
+                  <div key={f.name} className="flex items-center gap-3 p-3 bg-sky-50/50 border border-sky-100 rounded-2xl">
+                    <FileSearch className="w-5 h-5 text-sky-400 shrink-0" />
+                    <p className="flex-1 font-bold text-slate-600 truncate text-sm">{f.name}</p>
+                    <button onClick={() => removeFile(f.name)} className="p-1.5 hover:bg-white rounded-full text-slate-400 hover:text-rose-400 transition shrink-0"><X className="w-4 h-4" /></button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => fileInputRef.current?.click()} className="flex-1 py-2.5 border-2 border-dashed border-sky-200 rounded-2xl text-sky-400 font-bold text-sm hover:bg-sky-50 transition">+ 再加一份同期的檔案</button>
+                <button onClick={handleReset} className="px-4 py-2.5 text-slate-400 font-bold text-sm hover:text-rose-400 transition">清空重來</button>
+              </div>
             </div>
           )}
-          <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="application/pdf,image/*" />
+          <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept="application/pdf,image/*" multiple />
 
-          {previewDataUrl && !result && (
+          {previewFiles.length > 0 && !result && (
             <button onClick={handleParse} disabled={isProcessing} className="w-full mt-2 py-4 bg-gradient-to-r from-sky-400 to-blue-400 text-white rounded-2xl font-bold text-lg shadow-lg shadow-sky-100 hover:shadow-sky-200 transition flex justify-center items-center gap-3">
               {isProcessing ? <><Loader2 className="w-5 h-5 animate-spin" />正在比對中...</> : <><FileSearch className="w-5 h-5" />開始比對</>}
             </button>
