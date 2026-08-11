@@ -48,15 +48,18 @@ export const PIE_L3_PROMOTE_THRESHOLD = 0.15; // 15%
 // 也確保顏色不會重複用完（配色數量要跟這個數字對得上，見Dashboard.tsx的COLORS）。
 export const PIE_MAX_SLICES = 9;
 
-// ── 10. 月度花費配速警示（取代舊的、跟寫死budgets比較的generateTimeWeightedAlerts） ──
-// 用「這個L2次分類過去每個月實際花多少」的中位數當作合理基準，
-// 依照這個月已經過了幾天算出「到今天應該花到多少才正常」，
-// 實際花費超過這個「到今天應該花多少」的倍數才觸發警示。
-export const PACING_MIN_HISTORY_MONTHS = 3;      // 這個L2次分類至少要有幾個月的歷史紀錄，才有可信的「合理基準」可比較
+// ── 10. 月度花費配速警示 ──
+// 2026-08-11重新設計：原本用「歷史中位數×已過天數比例」自動外推基準，Ivy反應這樣算出來
+// 的數字她看不懂哪來的、也不可靠（月初幾筆消費就能誤判成整月嚴重超支）。改成只跟使用者
+// 自己在系統設定裡確認過的「分類月預算」(categoryBudgets)比對，沒設定預算的分類不顯示
+// 配速警示——不再嘗試自動猜測基準。
 export const PACING_WARNING_MULTIPLIER = 1.3;    // 超過「到今天應該花多少」的幾倍，變黃色提醒
 export const PACING_CRITICAL_MULTIPLIER = 1.6;   // 超過「到今天應該花多少」的幾倍，變紅色警戒
 export const PACING_MIN_AMOUNT = 200;            // 「到今天應該花多少」低於這個數字不列入偵測，避免小額類別的正常波動也被標記
-export const PACING_MIN_PERIOD_PROGRESS = 0.4;   // 這期至少要過這個比例的天數才開始判斷配速，避免月初一兩筆大額支出就被當成整月都會超支（2026-08-11 Ivy實測反應「餐飲食品才花$2000多、平常整月$3000多，怎麼會被標記超支」，查出來是這個問題）
+
+// ── 10.5 分類預算建議值（系統算給使用者參考，不會自動套用） ──
+export const BUDGET_SUGGESTION_RECENT_MONTHS = 3;      // 「近期基準」用最近幾個月的中位數
+export const BUDGET_SUGGESTION_MIN_HISTORY_MONTHS = 3; // 這個次分類至少要有幾個月歷史紀錄，才列入建議清單（樣本太少的建議值容易誤導）
 
 // ── 11. 固定週期性支出偵測（例如訂閱制，不一定分類是「固定支出」，但行為模式每月固定出現） ──
 export const RECURRING_MIN_HISTORY_MONTHS = 3;     // 這個商家至少要出現過幾個不同月份才夠判斷是不是「幾乎每月都有」

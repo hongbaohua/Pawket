@@ -546,7 +546,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       {timeScope !== 'all' && alerts.length > 0 && (
           <div data-pdf-section className="bg-white p-6 rounded-[30px] border border-amber-100 shadow-sm">
             <h3 className="text-sm font-bold text-slate-500 flex items-center gap-2 uppercase tracking-wider"><AlertCircle className="w-4 h-4 text-rose-400" />需立即關注的項目</h3>
-            <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：只看變動支出（固定支出通常是每月固定金額、整筆扣款，不適合用「按天數配速」比較），拿這個次分類過去每個月實際花費的中位數當基準，依本期已過天數算出「到今天應該花多少」，實際花費明顯超過才會列在這裡。</p>
+            <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：只有在「系統設定→分類預算設定」裡自己確認過月預算的次分類才會列在這裡，依本期已過天數算出「到今天應該花多少」，實際花費明顯超過妳設定的預算才會提醒——沒設定預算的分類不會出現配速提醒。</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {alerts.slice(0, 4).map(alert => (
                     <div key={alert.id} className={`p-4 rounded-2xl border flex items-start gap-3 ${alert.level === 'critical' ? 'bg-rose-50 border-rose-100' : 'bg-amber-50 border-amber-100'}`}>

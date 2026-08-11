@@ -1,12 +1,13 @@
 
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig, MerchantAlias, MerchantAliasCandidate } from '../types';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig, MerchantAlias, MerchantAliasCandidate, LongTermReserve } from '../types';
 import { format, getDaysInMonth, getDate, startOfMonth, endOfMonth, addMonths, subMonths, differenceInDays, isAfter, isBefore, startOfDay, endOfDay, parseISO, startOfYear, getMonth, getYear, isSameMonth, differenceInMonths, subDays, addDays } from 'date-fns';
 import {
   RUNWAY_ANALYSIS_WINDOW_DAYS,
   ANOMALY_MIN_HISTORY_COUNT, ANOMALY_AMOUNT_MULTIPLIER, ANOMALY_MIN_AMOUNT,
   FREQUENCY_HISTORY_MONTHS, FREQUENCY_MULTIPLIER, FREQUENCY_MIN_COUNT,
   PIE_L3_PROMOTE_THRESHOLD, PIE_MAX_SLICES,
-  PACING_MIN_HISTORY_MONTHS, PACING_WARNING_MULTIPLIER, PACING_CRITICAL_MULTIPLIER, PACING_MIN_AMOUNT, PACING_MIN_PERIOD_PROGRESS,
+  PACING_WARNING_MULTIPLIER, PACING_CRITICAL_MULTIPLIER, PACING_MIN_AMOUNT,
+  BUDGET_SUGGESTION_RECENT_MONTHS, BUDGET_SUGGESTION_MIN_HISTORY_MONTHS,
   RECURRING_MIN_HISTORY_MONTHS, RECURRING_MONTH_COVERAGE_RATIO, RECURRING_AMOUNT_BAND_RATIO, RECURRING_MIN_CONSISTENT_RATIO,
 } from '../config/financialRules';
 
@@ -84,17 +85,18 @@ export const getDateRange = (
 };
 
 /**
- * 月度花費配速警示：取代舊的generateTimeWeightedAlerts（那個是跟寫死的budgets比較，
- * budgets從App做出來就沒被真實資料校準過，一直在跟假數字比對）。
- * 這裡改成用「這個L2次分類過去每個月實際花多少」的中位數當基準，
- * 依照這個月已經過了幾天算出「到今天應該花到多少才算正常」，
- * 實際花費超過這個基準的倍數才觸發警示，訊息直接給「還剩幾天、建議接下來怎麼控制」的具體建議。
+ * 月度花費配速警示：2026-08-11重新設計。原本用「歷史中位數×已過天數比例」自動外推
+ * 一個「應該花多少」，Ivy反應這樣算出來的基準她不知道哪來的、也不可靠（月初幾筆消費
+ * 就能讓配速誤判成整月嚴重超支，餐飲食品那次就是實例）。改成只跟Ivy自己在系統設定裡
+ * 確認過的「分類月預算」(categoryBudgets，見suggestCategoryBudgets)比對——這是她自己
+ * 看過近期/長期歷史數字後決定的基準，不是系統自動猜的。**沒有設定月預算的分類，
+ * 完全不會出現在這裡**，不再嘗試自動猜測基準，避免重演誤報問題。
  */
 export const generateMonthlyPacingAlerts = (
-  allTransactions: Transaction[],
   currentPeriodTransactions: Transaction[],
   periodStart: Date,
-  periodEnd: Date
+  periodEnd: Date,
+  categoryBudgets: Record<string, number>
 ): Alert[] => {
   const alerts: Alert[] = [];
   const now = new Date();
@@ -111,23 +113,62 @@ export const generateMonthlyPacingAlerts = (
   if (daysPassed <= 0) daysPassed = 1;
   const daysRemaining = Math.max(totalDaysInPeriod - daysPassed, 0);
 
-  // 這期已過的天數比例太小時，「配速」完全不可信——樣本只有小貓兩三天，隨便一筆單一
-  // 大額支出(例如一頓聚餐)就能把「照這個速度推算全月」的結果撐到爆表，但那只是單一
-  // 事件，不代表接下來每天都會這樣花。2026-08-11 Ivy反應「這個月才花$2000多，平常
-  // 整月$3000多，怎麼可能被標記超支」，查證後發現正是這個問題：期間才過35%，一頓
-  // 幾百元的聚餐就讓「配速」誤判成嚴重超支。至少要過這個比例的天數才開始判斷配速，
-  // 給樣本一點時間，避免靠極少數幾筆交易就下「你會爆超」的結論。
-  if (daysPassed / totalDaysInPeriod < PACING_MIN_PERIOD_PROGRESS) return [];
-
-  // 用全部歷史資料，算每個L2次分類「每個有出現過的月份」花了多少，取中位數當合理月度基準
-  // （中位數比平均值更不受單月爆買影響，跟願望清單安全水位建議值用同一套邏輯）。
-  // 只看「變動支出」——固定支出(房租/電信/保費...)本來就是每月幾乎固定的已知數字，
-  // 而且常常是月初一次整筆扣款(不是分散在整個月慢慢花)，用「到今天應該花多少」這種
-  // 按天數比例推算的邏輯去比對，扣款當天就會被誤判成大幅超支，這不是真的異常，
-  // 只是這套配速邏輯本來就不適合用在「一次整筆扣款」的固定支出上（2026-07-23 Ivy
-  // 實測時發現電信費多收$1，順勢指出這點——固定支出不需要列入這裡的超支提醒）。
+  // 只看「變動支出」——固定支出(房租/電信/保費...)常常是月初一次整筆扣款(不是分散在
+  // 整個月慢慢花)，用「到今天應該花多少」這種按天數比例推算的邏輯去比對，扣款當天就會
+  // 被誤判成大幅超支，這不是真的異常，只是這套配速邏輯本來就不適合用在「一次整筆扣款」
+  // 的固定支出上（2026-07-23 Ivy實測時發現電信費多收$1，順勢指出這點）。
   // 也排除代購/工作代墊/借貸(specialTag)——那不是Ivy自己的消費，不該算進超支警示。
-  const monthlyByL2: Record<string, Record<string, number>> = {}; // l2 -> yyyy-MM -> amount
+  const currentSpentByL2: Record<string, number> = {};
+  currentPeriodTransactions.forEach(t => {
+    if (!isPersonalConsumption(t) || t.category.l1 !== L1Category.VARIABLE) return;
+    const l2 = t.category.l2;
+    if (!l2) return;
+    currentSpentByL2[l2] = (currentSpentByL2[l2] || 0) + t.amount;
+  });
+
+  Object.entries(categoryBudgets).forEach(([l2, monthlyBudget]) => {
+    if (!monthlyBudget || monthlyBudget <= 0) return;
+
+    const expectedToDate = monthlyBudget * (daysPassed / totalDaysInPeriod);
+    if (expectedToDate < PACING_MIN_AMOUNT) return; // 太小的預算不列入偵測
+
+    const actual = currentSpentByL2[l2] || 0;
+    if (actual <= expectedToDate * PACING_WARNING_MULTIPLIER) return;
+
+    const percent = (actual / expectedToDate) * 100;
+    const isCritical = actual > expectedToDate * PACING_CRITICAL_MULTIPLIER;
+    const remainingBudget = Math.max(monthlyBudget - actual, 0);
+    const suggestionText = daysRemaining > 0
+      ? (remainingBudget > 0
+          ? `本月剩${daysRemaining}天，照你設定的預算還可以花$${Math.round(remainingBudget).toLocaleString()}，建議接下來每天控制在$${Math.round(remainingBudget / daysRemaining).toLocaleString()}以內。`
+          : `本月剩${daysRemaining}天，已經超過你設定的月預算了，建議這個類別先暫停消費。`)
+      : `這期間已經結束，實際花了預算的${Math.round(percent)}%。`;
+
+    alerts.push({
+      id: `pacing-${l2}`,
+      level: isCritical ? 'critical' : 'warning',
+      message: `${l2}這個月已經花到你設定預算的${Math.round(percent)}%（$${Math.round(actual).toLocaleString()}，月預算$${Math.round(monthlyBudget).toLocaleString()}）。${suggestionText}`,
+      metric: l2,
+      value: actual,
+      threshold: expectedToDate,
+    });
+  });
+
+  return alerts.sort((a, b) => (b.value / b.threshold) - (a.value / a.threshold));
+};
+
+export interface CategoryBudgetSuggestion {
+  l2: string;
+  recentMedian: number;   // 近期基準（最近幾個月的月度中位數，見BUDGET_SUGGESTION_RECENT_MONTHS）
+  overallMedian: number;  // 長期基準（全部歷史的月度中位數）
+  monthsOfHistory: number;
+}
+
+// 分類預算建議：只給參考數字，不自動套用——近期/長期分開列出，讓Ivy自己判斷「最近的習慣
+// 是不是跟長期不一樣」再決定要設多少，不是系統關起門幫她決定。只對變動支出(Variable)
+// 開放，固定支出金額通常已經接近固定，不需要「預算」這種概念。
+export const suggestCategoryBudgets = (allTransactions: Transaction[]): CategoryBudgetSuggestion[] => {
+  const monthlyByL2: Record<string, Record<string, number>> = {};
   allTransactions.forEach(t => {
     if (!isPersonalConsumption(t) || t.category.l1 !== L1Category.VARIABLE) return;
     const l2 = t.category.l2;
@@ -137,48 +178,32 @@ export const generateMonthlyPacingAlerts = (
     monthlyByL2[l2][monthKey] = (monthlyByL2[l2][monthKey] || 0) + t.amount;
   });
 
-  const currentSpentByL2: Record<string, number> = {};
-  currentPeriodTransactions.forEach(t => {
-    if (!isPersonalConsumption(t) || t.category.l1 !== L1Category.VARIABLE) return;
-    const l2 = t.category.l2;
-    if (!l2) return;
-    currentSpentByL2[l2] = (currentSpentByL2[l2] || 0) + t.amount;
-  });
-
-  Object.entries(monthlyByL2).forEach(([l2, months]) => {
-    const monthAmounts = Object.values(months);
-    if (monthAmounts.length < PACING_MIN_HISTORY_MONTHS) return; // 歷史月份太少，基準不可信
-
-    const sorted = [...monthAmounts].sort((a, b) => a - b);
+  const median = (vals: number[]): number => {
+    const sorted = [...vals].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
-    const median = sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  };
 
-    const expectedToDate = median * (daysPassed / totalDaysInPeriod);
-    if (expectedToDate < PACING_MIN_AMOUNT) return; // 太小的類別不列入偵測
+  const results: CategoryBudgetSuggestion[] = [];
+  Object.entries(monthlyByL2).forEach(([l2, months]) => {
+    const monthKeys = Object.keys(months).sort();
+    if (monthKeys.length < BUDGET_SUGGESTION_MIN_HISTORY_MONTHS) return; // 樣本太少，建議值容易誤導
 
-    const actual = currentSpentByL2[l2] || 0;
-    if (actual <= expectedToDate * PACING_WARNING_MULTIPLIER) return;
+    const overallMedian = median(Object.values(months));
+    const recentKeys = monthKeys.slice(-BUDGET_SUGGESTION_RECENT_MONTHS);
+    const recentMedian = median(recentKeys.map(k => months[k]));
 
-    const percent = (actual / expectedToDate) * 100;
-    const isCritical = actual > expectedToDate * PACING_CRITICAL_MULTIPLIER;
-    const remainingBudget = Math.max(median - actual, 0);
-    const suggestionText = daysRemaining > 0
-      ? (remainingBudget > 0
-          ? `本月剩${daysRemaining}天，照平常水準還可以花$${Math.round(remainingBudget).toLocaleString()}，建議接下來每天控制在$${Math.round(remainingBudget / daysRemaining).toLocaleString()}以內。`
-          : `本月剩${daysRemaining}天，已經超過平常整個月的水準了，建議這個類別先暫停消費。`)
-      : `這期間已經結束，實際花了平常的${Math.round(percent)}%。`;
-
-    alerts.push({
-      id: `pacing-${l2}`,
-      level: isCritical ? 'critical' : 'warning',
-      message: `${l2}這個月已經花到平常同期的${Math.round(percent)}%（$${Math.round(actual).toLocaleString()}，平常整個月約$${Math.round(median).toLocaleString()}）。${suggestionText}`,
-      metric: l2,
-      value: actual,
-      threshold: expectedToDate,
-    });
+    results.push({ l2, recentMedian, overallMedian, monthsOfHistory: monthKeys.length });
   });
 
-  return alerts.sort((a, b) => (b.value / b.threshold) - (a.value / a.threshold));
+  return results.sort((a, b) => b.overallMedian - a.overallMedian);
+};
+
+// 長期預留支出：算出「平均每個月應該為這些週期性大額支出多存多少錢」（每次繳費金額
+// 除以繳費週期月數再加總）。不追蹤精確到期日——真實資料完全不夠推算(保險費用全部歷史
+// 只出現過1筆)，這裡採用比較保守可靠的「每月均攤」版本，見PROJECT_STATUS.md說明。
+export const calculateLongTermReserveMonthly = (reserves: LongTermReserve[]): number => {
+  return reserves.reduce((sum, r) => sum + (r.frequencyMonths > 0 ? r.amount / r.frequencyMonths : 0), 0);
 };
 
 export const calculateProjectedPenalty = (
@@ -731,7 +756,7 @@ export const calculateWishlistMetrics = (
 // 幫使用者抓一個「不會太緊迫」的日常開銷保留／緊急預備金建議值：
 // 用最近12個月的固定+變動支出算中位數（比平均值更不受單月爆買影響）當「一般月份」代表值，
 // 日常開銷保留 = 1.5個月，緊急預備金 = 3個月。
-export const calculateSuggestedReserves = (allTransactions: Transaction[]): { monthlyBaseline: number; dailyBuffer: number; emergencyFund: number } => {
+export const calculateSuggestedReserves = (allTransactions: Transaction[], longTermReserves: LongTermReserve[] = []): { monthlyBaseline: number; dailyBuffer: number; emergencyFund: number } => {
     const now = new Date();
     const monthlyTotals: Record<string, number> = {};
     for (let i = 0; i < 12; i++) {
@@ -746,9 +771,13 @@ export const calculateSuggestedReserves = (allTransactions: Transaction[]): { mo
     const values = Object.values(monthlyTotals).sort((a, b) => a - b);
     const mid = Math.floor(values.length / 2);
     const monthlyBaseline = values.length % 2 !== 0 ? values[mid] : (values[mid - 1] + values[mid]) / 2;
+    // 2026-08-11新增：年繳/半年繳這種大額但低頻率的支出（保險費/稅務規費等），只在12個月裡
+    // 出現1-2次，取中位數時幾乎完全被稀釋掉，導致日常開銷保留看起來比實際能安心花的還多。
+    // 加上這些長期預留支出的月均攤金額，確保帳單到期時不會拿不出錢（見calculateLongTermReserveMonthly）。
+    const longTermReserveMonthly = calculateLongTermReserveMonthly(longTermReserves);
     return {
         monthlyBaseline,
-        dailyBuffer: Math.round(monthlyBaseline * 1.5),
+        dailyBuffer: Math.round((monthlyBaseline + longTermReserveMonthly) * 1.5),
         emergencyFund: Math.round(monthlyBaseline * 3),
     };
 };

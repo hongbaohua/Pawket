@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { WishlistItem, WishlistSettings, Transaction, Account } from '../types';
+import { WishlistItem, WishlistSettings, Transaction, Account, LongTermReserve } from '../types';
 import { calculateWishlistMetrics, calculateSuggestedReserves } from '../services/logicService';
 import { X, Target, Calendar, DollarSign, Save, Flag, Plus, Trash2, Edit2, ChevronLeft, RotateCcw, ChevronUp, ChevronDown, CheckCircle2, ShieldCheck, Wallet } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
@@ -9,13 +9,14 @@ interface WishlistModalProps {
   items: WishlistItem[];
   accounts: Account[];
   allTransactions: Transaction[];
+  longTermReserves: LongTermReserve[];
   settings: WishlistSettings;
   onClose: () => void;
   onUpdateItems: (items: WishlistItem[]) => void;
   onUpdateSettings: (settings: WishlistSettings) => void;
 }
 
-const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTransactions, settings, onClose, onUpdateItems, onUpdateSettings }) => {
+const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTransactions, longTermReserves, settings, onClose, onUpdateItems, onUpdateSettings }) => {
   const [view, setView] = useState<'list' | 'form'>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -31,7 +32,7 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
 
   const [tempDailyBuffer, setTempDailyBuffer] = useState(settings.dailyBuffer.toString());
   const [tempEmergencyFund, setTempEmergencyFund] = useState(settings.emergencyFund.toString());
-  const suggested = calculateSuggestedReserves(allTransactions);
+  const suggested = calculateSuggestedReserves(allTransactions, longTermReserves);
 
   useEffect(() => {
     return () => {
@@ -174,6 +175,9 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
                     </button>
                     <p className="text-[10px] text-slate-300 leading-relaxed flex items-center gap-1">
                         <Wallet className="w-3 h-3 shrink-0" /> 現金+金融卡總餘額 ${metrics.totalLiquidBalance.toLocaleString()}（不含電子支付/儲值卡/信用卡）
+                    </p>
+                    <p className="text-[10px] text-slate-300 leading-relaxed">
+                        「日常開銷保留」建議值已經把系統設定裡列的「長期預留支出」（保險費/稅務規費等年繳/半年繳的大額支出）平均攤進來，避免帳單到期時拿不出錢；去系統設定可以新增/調整這些項目。
                     </p>
                  </div>
 

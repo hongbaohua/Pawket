@@ -16,7 +16,7 @@ import SharedExpenseModal from './components/SharedExpenseModal';
 import SharedExpenseListModal from './components/SharedExpenseListModal';
 import ActivityLogModal from './components/ActivityLogModal';
 import SettingsModal from './components/SettingsModal';
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry } from './types';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, LongTermReserve } from './types';
 import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -201,6 +201,33 @@ const App: React.FC = () => {
       if (error) { console.error('更新相似交易提醒設定失敗', error); alert('儲存失敗，請檢查主控台錯誤訊息。'); }
   };
 
+  // 分類月預算：跟安全水位/相似交易提醒同一套user_metadata持久化機制。2026-08-11新增，
+  // 取代原本自動用歷史中位數外推的配速警示——只有Ivy自己在系統設定裡確認過預算的分類，
+  // 「需立即關注的項目」才會拿它來比對，見services/logicService.ts的generateMonthlyPacingAlerts。
+  // 用useMemo包住：沒設定過時的`?? {}`如果每次render都產生新的物件參考，會讓下面依賴
+  // categoryBudgets的useEffect無限觸發(setState→re-render→新物件→再觸發useEffect)，
+  // 用useMemo確保底層資料沒變時參考保持穩定。
+  const categoryBudgets: Record<string, number> = useMemo(
+    () => session?.user.user_metadata?.categoryBudgets ?? {},
+    [session?.user.user_metadata?.categoryBudgets]
+  );
+  const handleUpdateCategoryBudgets = async (budgets: Record<string, number>) => {
+      const { error } = await supabase.auth.updateUser({ data: { categoryBudgets: budgets } });
+      if (error) { console.error('更新分類預算失敗', error); alert('儲存失敗，請檢查主控台錯誤訊息。'); }
+  };
+
+  // 長期預留支出：同上，存在user_metadata，同樣用useMemo避免無限render。用來把保險費/
+  // 稅務規費這類年繳/半年繳的大額支出換算成月均攤金額，加進calculateSuggestedReserves
+  // 的日常開銷保留建議值裡。
+  const longTermReserves: LongTermReserve[] = useMemo(
+    () => session?.user.user_metadata?.longTermReserves ?? [],
+    [session?.user.user_metadata?.longTermReserves]
+  );
+  const handleUpdateLongTermReserves = async (reserves: LongTermReserve[]) => {
+      const { error } = await supabase.auth.updateUser({ data: { longTermReserves: reserves } });
+      if (error) { console.error('更新長期預留支出失敗', error); alert('儲存失敗，請檢查主控台錯誤訊息。'); }
+  };
+
   // 願望清單的新增/編輯/刪除/排序全部都是透過整份陣列替換（見 WishlistModal），
   // 所以同步邏輯統一放在這裡：先比對舊清單找出被刪掉的id單獨刪除，剩下的整份用陣列順序
   // 重新 upsert sort_order。畫面先樂觀更新，資料庫失敗才跳出來，不要讓她以為存好了其實沒存到。
@@ -372,12 +399,12 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (timeScope !== 'all') {
-        const newAlerts = generateMonthlyPacingAlerts(transactions, filteredTransactions, dateRange.startDate, dateRange.endDate);
+        const newAlerts = generateMonthlyPacingAlerts(filteredTransactions, dateRange.startDate, dateRange.endDate, categoryBudgets);
         setAlerts(newAlerts);
     } else {
         setAlerts([]);
     }
-  }, [transactions, filteredTransactions, dateRange, timeScope]);
+  }, [filteredTransactions, dateRange, timeScope, categoryBudgets]);
 
   useEffect(() => {
     const click = (e: MouseEvent) => { if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setIsAddMenuOpen(false); };
@@ -1358,10 +1385,15 @@ const App: React.FC = () => {
       {transferModalState.open && <TransferModal accounts={accounts} transaction={transferModalState.transaction} onClose={() => setTransferModalState({ open: false })} onSave={handleTransferSave} />}
       {isAccountsModalOpen && <AccountsModal accounts={accounts} onClose={() => setIsAccountsModalOpen(false)} onSave={handleSaveAccount} onArchive={handleArchiveAccount} />}
       {batchSource && <BatchCorrectionModal matches={batchCandidates} source={batchSource} allTransactions={transactions} onConfirm={handleBatchConfirm} onClose={() => { setBatchSource(null); setBatchCandidates([]); }} />}
-      {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} settings={wishlistSettings} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={handleUpdateWishlistItems} onUpdateSettings={handleUpdateWishlistSettings} />}
+      {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} longTermReserves={longTermReserves} settings={wishlistSettings} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={handleUpdateWishlistItems} onUpdateSettings={handleUpdateWishlistSettings} />}
       {isTrashModalOpen && <TrashModal items={deletedTransactions} loading={trashLoading} onClose={() => setIsTrashModalOpen(false)} onRestore={handleRestoreFromTrash} onPermanentlyDelete={handlePermanentlyDelete} />}
       {isActivityLogOpen && <ActivityLogModal items={activityLog} loading={activityLogLoading} onClose={() => setIsActivityLogOpen(false)} onRestore={handleRestoreActivityLog} />}
-      {isSettingsModalOpen && <SettingsModal similarTransactionAlertsEnabled={similarTransactionAlertsEnabled} onClose={() => setIsSettingsModalOpen(false)} onUpdateSimilarTransactionAlerts={handleUpdateSimilarTransactionAlerts} />}
+      {isSettingsModalOpen && <SettingsModal
+        similarTransactionAlertsEnabled={similarTransactionAlertsEnabled} onUpdateSimilarTransactionAlerts={handleUpdateSimilarTransactionAlerts}
+        allTransactions={transactions} categoryBudgets={categoryBudgets} onUpdateCategoryBudgets={handleUpdateCategoryBudgets}
+        longTermReserves={longTermReserves} onUpdateLongTermReserves={handleUpdateLongTermReserves}
+        onClose={() => setIsSettingsModalOpen(false)}
+      />}
       {isMappingModalOpen && <CategoryMappingModal conflicts={conflictCategories} existingCustomOptions={customCategoryHistory} onConfirm={handleMappingConfirm} onCancel={() => { setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]); }} />}
       
       {(lastDeletedTransaction || lastCanceledSplit || lastBatchUpdate) && (
