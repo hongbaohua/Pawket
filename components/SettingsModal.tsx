@@ -1,7 +1,7 @@
 // 系統設定：偏好設定的統一入口（2026-08-06 Ivy要求，不用每加一個設定就重新設計入口）。
 // 2026-08-11新增「分類預算設定」+「長期預留支出」——取代原本自動用歷史中位數外推的
 // 配速警示：系統只給「近期／長期」兩組參考數字，不自動套用，由Ivy自己確認金額才存檔。
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { X, Settings, Sparkles, Wallet, ShieldAlert, Plus, Trash2 } from 'lucide-react';
 import { Transaction, LongTermReserve } from '../types';
 import { suggestCategoryBudgets } from '../services/logicService';
@@ -27,6 +27,8 @@ const RESERVE_CANDIDATES: { name: string; l2: string; frequencyMonths: number; n
   { name: '電信網路', l2: '電信網路', frequencyMonths: 1, note: '通常月繳' },
   { name: '訂閱服務', l2: '訂閱服務', frequencyMonths: 1, note: '通常月繳' },
   { name: '水電瓦斯', l2: '水電瓦斯', frequencyMonths: 2, note: '台電/自來水通常雙月一期' },
+  { name: '健保', l2: '保險費用', frequencyMonths: 2, note: '自付額通常雙月一期(依投保身分而定，實際週期以繳款單為準)' },
+  { name: '勞保', l2: '保險費用', frequencyMonths: 1, note: '受雇通常月繳，職業工會投保則常見雙月一期，請照實際繳款單填' },
   { name: '保險費用', l2: '保險費用', frequencyMonths: 12, note: '月繳/季繳/半年繳/年繳都有可能，請照實際保單填，可新增多筆' },
   { name: '綜合所得稅', l2: '稅務規費', frequencyMonths: 12, note: '每年5-6月申報，需要補稅才會是現金流出' },
   { name: '房屋稅', l2: '稅務規費', frequencyMonths: 12, note: '每年5月開徵，僅房屋所有權人需要繳，租屋通常不適用' },
@@ -35,11 +37,6 @@ const RESERVE_CANDIDATES: { name: string; l2: string; frequencyMonths: number; n
   { name: '燃料使用費', l2: '稅務規費', frequencyMonths: 12, note: '自用車每年7月徵收，僅車主需要繳' },
   { name: '孝親費用', l2: '孝親費用', frequencyMonths: 1, note: '固定給家人生活費通常月繳，節日紅包則另計' },
   { name: '教育學費', l2: '教育學費', frequencyMonths: 6, note: '進修課程常見學期繳' },
-];
-
-const FREQUENCY_OPTIONS = [
-  { label: '月繳', value: 1 }, { label: '季繳', value: 3 },
-  { label: '半年繳', value: 6 }, { label: '年繳', value: 12 },
 ];
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -66,29 +63,47 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const [reserves, setReserves] = useState<LongTermReserve[]>(longTermReserves);
+  // 打字類欄位(名稱/金額/繳費週期)如果每個按鍵都立刻打一次Supabase存檔，連續打字時
+  // 好幾個請求會同時在飛，網路狀況不穩定時「先送出的」可能反而「後回來」，用比較舊的
+  // 內容把後面打的字蓋掉，畫面上看起來就像「打完存了、東西卻不見了」（2026-08-11 Ivy
+  // 反應新增之後看不見項目，查證後這是最可能的原因之一）。改成停止輸入500ms後才真的
+  // 存檔，中間只更新畫面上的local state，不會漏接、也不會被過時的舊請求蓋掉。
+  const saveTimeoutRef = useRef<number | null>(null);
+  const pendingSaveRef = useRef<LongTermReserve[] | null>(null);
+  const scheduleSave = (next: LongTermReserve[]) => {
+    setReserves(next);
+    pendingSaveRef.current = next;
+    if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = window.setTimeout(() => { onUpdateLongTermReserves(next); pendingSaveRef.current = null; }, 500);
+  };
+  const saveImmediately = (next: LongTermReserve[]) => {
+    setReserves(next);
+    pendingSaveRef.current = null;
+    if (saveTimeoutRef.current) { window.clearTimeout(saveTimeoutRef.current); saveTimeoutRef.current = null; }
+    onUpdateLongTermReserves(next);
+  };
+  // 關掉「系統設定」視窗時，如果還有debounce計時器沒到期(打完字馬上關視窗)，
+  // 立刻把最後一次的內容存下去，不要讓debounce時間差把這次編輯憑空吃掉。
+  useEffect(() => () => {
+    if (pendingSaveRef.current) onUpdateLongTermReserves(pendingSaveRef.current);
+  }, []);
+
   const addCandidate = (candidate: typeof RESERVE_CANDIDATES[number]) => {
     // 電信網路/訂閱服務有清楚的月繳紀錄，用最近的實際金額當預設值，其他候選項目金額留空給Ivy自己填。
     const recentTx = allTransactions
       .filter(t => t.type === 'expense' && t.category.l2 === candidate.l2)
       .sort((a, b) => b.date.localeCompare(a.date))[0];
     const defaultAmount = candidate.frequencyMonths === 1 && recentTx ? recentTx.amount : 0;
-    const next = [...reserves, { id: uuidv4(), name: candidate.name, l2: candidate.l2, amount: defaultAmount, frequencyMonths: candidate.frequencyMonths }];
-    setReserves(next);
-    onUpdateLongTermReserves(next);
+    saveImmediately([...reserves, { id: uuidv4(), name: candidate.name, l2: candidate.l2, amount: defaultAmount, frequencyMonths: candidate.frequencyMonths }]);
+  };
+  const addCustom = () => {
+    saveImmediately([...reserves, { id: uuidv4(), name: '', amount: 0, frequencyMonths: 1 }]);
   };
   const removeReserve = (id: string) => {
-    const next = reserves.filter(r => r.id !== id);
-    setReserves(next);
-    onUpdateLongTermReserves(next);
+    saveImmediately(reserves.filter(r => r.id !== id));
   };
-  // 直接算出新陣列、同時setState+存檔，不要拆成onChange先存local state、onBlur再讀
-  // state存檔——onBlur讀到的reserves是「這次render時」關進closure的舊值，如果同一個
-  // handler裡change完馬上存(例如下拉選單onChange)，會存到change之前的舊資料，
-  // 使用者選了新的繳費週期卻沒真的存到。
-  const updateReserveField = (id: string, field: 'amount' | 'frequencyMonths', value: number) => {
-    const next = reserves.map(r => r.id === id ? { ...r, [field]: value } : r);
-    setReserves(next);
-    onUpdateLongTermReserves(next);
+  const updateReserveField = <K extends 'name' | 'amount' | 'frequencyMonths'>(id: string, field: K, value: LongTermReserve[K]) => {
+    scheduleSave(reserves.map(r => r.id === id ? { ...r, [field]: value } : r));
   };
 
   const monthlyReserveTotal = reserves.reduce((sum, r) => sum + (r.frequencyMonths > 0 ? r.amount / r.frequencyMonths : 0), 0);
@@ -168,15 +183,22 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               <ShieldAlert className="w-4 h-4 text-rose-400" /> 長期預留支出
             </div>
             <p className="text-xs text-slate-400 leading-relaxed">
-              保險費、房租、水電、稅務規費這類金額大、但不是每月繳一次的支出，平常容易被忽略，等到真的到期時可能拿不出錢。
+              保險費、健保勞保、房租、水電、稅務規費這類金額大、但不是每月繳一次的支出，平常容易被忽略，等到真的到期時可能拿不出錢。
               這裡列出來的項目，會平均攤進喵喵心願罐「日常開銷保留」的建議值裡——不追蹤精確到期日，只是先把每月該多存的錢預留起來。
+              名稱、金額、繳費週期都可以自己填，繳費週期不限選項，例如健保雙月繳一次就填「2」即可。
             </p>
 
             {reserves.length > 0 && (
               <div className="space-y-2">
                 {reserves.map(r => (
                   <div key={r.id} className="flex items-center gap-2 p-2.5 bg-[#FFFBF5] rounded-xl border border-slate-100">
-                    <p className="flex-1 min-w-0 font-bold text-slate-700 text-sm truncate">{r.name}</p>
+                    <input
+                      type="text"
+                      value={r.name}
+                      onChange={e => updateReserveField(r.id, 'name', e.target.value)}
+                      placeholder="項目名稱（例如健保）"
+                      className="flex-1 min-w-0 p-2 bg-white border border-slate-200 rounded-xl font-bold text-sm text-slate-700 outline-none focus:border-rose-300"
+                    />
                     <span className="text-slate-400 text-sm font-bold shrink-0">$</span>
                     <input
                       type="number"
@@ -185,13 +207,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                       placeholder="每次金額"
                       className="w-20 p-2 bg-white border border-slate-200 rounded-xl font-mono font-bold text-sm text-slate-700 outline-none focus:border-rose-300 shrink-0"
                     />
-                    <select
-                      value={r.frequencyMonths}
-                      onChange={e => updateReserveField(r.id, 'frequencyMonths', Number(e.target.value))}
-                      className="p-2 bg-white border border-slate-200 rounded-xl font-bold text-xs text-slate-700 outline-none focus:border-rose-300 shrink-0"
-                    >
-                      {FREQUENCY_OPTIONS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-                    </select>
+                    <span className="text-slate-400 text-xs font-bold shrink-0">每</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={r.frequencyMonths || ''}
+                      onChange={e => updateReserveField(r.id, 'frequencyMonths', Number(e.target.value) || 1)}
+                      placeholder="1"
+                      title="每幾個月繳一次，例如健保雙月繳就填2"
+                      className="w-12 p-2 bg-white border border-slate-200 rounded-xl font-mono font-bold text-sm text-slate-700 outline-none focus:border-rose-300 shrink-0 text-center"
+                    />
+                    <span className="text-slate-400 text-xs font-bold shrink-0">個月繳一次</span>
                     <button onClick={() => removeReserve(r.id)} className="p-2 hover:bg-rose-50 rounded-xl text-slate-300 hover:text-rose-400 transition shrink-0"><Trash2 className="w-4 h-4" /></button>
                   </div>
                 ))}
@@ -199,23 +225,31 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             )}
 
-            {availableCandidates.length > 0 && (
-              <div className="pt-1 space-y-1.5">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">還沒加入的候選項目（不確定適不適用可以先不加）</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {availableCandidates.map(c => (
-                    <button
-                      key={c.name}
-                      onClick={() => addCandidate(c)}
-                      title={c.note}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-[#FFFBF5] border border-dashed border-slate-200 rounded-xl text-xs font-bold text-slate-500 hover:border-rose-300 hover:text-rose-500 transition"
-                    >
-                      <Plus className="w-3 h-3" /> {c.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            <div className="pt-1 space-y-1.5">
+              {availableCandidates.length > 0 && (
+                <>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">快速加入常見項目（不確定適不適用可以先不加，加入後名稱/金額/週期都能自己改）</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {availableCandidates.map(c => (
+                      <button
+                        key={c.name}
+                        onClick={() => addCandidate(c)}
+                        title={c.note}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-[#FFFBF5] border border-dashed border-slate-200 rounded-xl text-xs font-bold text-slate-500 hover:border-rose-300 hover:text-rose-500 transition"
+                      >
+                        <Plus className="w-3 h-3" /> {c.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              <button
+                onClick={addCustom}
+                className="flex items-center gap-1 px-3 py-1.5 bg-white border-2 border-dashed border-slate-200 rounded-xl text-xs font-bold text-slate-500 hover:border-rose-300 hover:text-rose-500 transition"
+              >
+                <Plus className="w-3 h-3" /> 自訂項目（不在上面清單裡的話，直接手動新增一筆）
+              </button>
+            </div>
           </div>
         </div>
 
