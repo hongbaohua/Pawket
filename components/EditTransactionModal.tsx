@@ -550,6 +550,11 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
         return;
     }
 
+    // 2026-08-13：編輯既有交易(不是新增)存檔前要二次確認——Ivy要求整個app的修改/刪除
+    // 都要有二次確認，不能等她發現某個功能沒做才補。用window.confirm是刻意的：原生
+    // 對話框不在畫面上跟原本的按鈕同一個位置，不會被連續點擊誤觸過去。
+    if (!isNew && !window.confirm(`確定要儲存對「${merchant || '這筆交易'}」的修改嗎？`)) return;
+
     // 當場儲值：選了電子錢包/儲值卡帳戶+勾了「有儲值」+填了金額跟來源帳戶，
     // 額外產生一筆帳戶互轉交易，把儲值本身也記錄下來(跟悠遊卡/MyCard儲值的既有處理方式一致)。
     const additionalTransfer: Transaction | undefined = (isWalletAccount && showTopUp && topUpAmount && topUpAmount > 0 && topUpFromAccountId)

@@ -96,7 +96,9 @@ const SplitModal: React.FC<SplitModalProps> = ({ transaction, allTransactions, o
 
   const handleSave = () => {
     if (isOverAssigned) return;
-    
+    // 2026-08-13：分裝拆帳一定是在改動既有交易的結構（不是新增），存檔前要二次確認。
+    if (!window.confirm('確定要套用這樣的分裝拆帳嗎？原本這筆會被拆成上面設定的幾筆子項目。')) return;
+
     // Maintain the same parentId if we are re-editing
     const commonParentId = transaction.parentId || transaction.id;
 

@@ -57,6 +57,9 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
   const handleDelete = (id: string) => {
       const index = items.findIndex(i => i.id === id);
       if (index === -1) return;
+      // 2026-08-13：刪除前也要二次確認（雖然已經有復原提示，但Ivy要求整個app的刪除
+      // 動作都要先問過，不能只靠事後復原）。
+      if (!window.confirm(`確定要刪除「${items[index].name}」嗎？`)) return;
       setLastDeletedItem({ item: items[index], index });
       onUpdateItems(items.filter(i => i.id !== id));
       if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
@@ -92,6 +95,8 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
       alert("請至少填寫名稱、金額，如果有時間限制也要填日期");
       return;
     }
+    // 2026-08-13：編輯既有項目(不是新增)要二次確認才存檔。
+    if (editingId && !window.confirm(`確定要儲存對「${formData.name}」的修改嗎？`)) return;
 
     const newItem: WishlistItem = {
       id: editingId || uuidv4(),

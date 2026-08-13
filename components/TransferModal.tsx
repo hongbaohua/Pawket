@@ -25,6 +25,8 @@ const TransferModal: React.FC<TransferModalProps> = ({ accounts, transaction, on
     if (!amount || amount <= 0) { setError('請輸入金額'); return; }
     if (!fromAccountId || !toAccountId) { setError('請選擇來源跟去向帳戶'); return; }
     if (fromAccountId === toAccountId) { setError('來源跟去向帳戶不能一樣'); return; }
+    // 2026-08-13：編輯既有的帳戶互轉(不是新增)存檔前要二次確認。
+    if (transaction && !window.confirm('確定要儲存對這筆帳戶互轉的修改嗎？')) return;
 
     const fromName = activeAccounts.find(a => a.id === fromAccountId)?.name || '';
     const toName = activeAccounts.find(a => a.id === toAccountId)?.name || '';

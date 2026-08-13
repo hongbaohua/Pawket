@@ -63,6 +63,8 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
   };
 
   const handleSave = () => {
+    // 2026-08-13：編輯既有分帳記錄(不是第一次設定)存檔前要二次確認。
+    if (existing && !window.confirm('確定要儲存對這筆分帳明細的修改嗎？')) return;
     const expense: SharedExpense = {
       id: existing?.id || uuidv4(),
       transactionId: transaction.id,

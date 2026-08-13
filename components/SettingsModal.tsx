@@ -129,6 +129,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     const trimmed = raw.trim();
     const next = { ...categoryBudgets };
     if (trimmed === '') {
+      // 2026-08-13：清空一個已經設定過的預算等於刪除它，要二次確認；設定/調整金額本身
+      // 是打完數字就blur的連續動作，不用每次都確認，只有「清掉變不設定」這個動作要問。
+      if (categoryBudgets[l2] === undefined) return;
+      if (!window.confirm(`確定要取消「${l2}」的月預算設定嗎？`)) {
+        setBudgetInputs(prev => ({ ...prev, [l2]: String(categoryBudgets[l2]) }));
+        return;
+      }
       delete next[l2];
     } else {
       const num = Number(trimmed);
@@ -176,6 +183,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     saveImmediately([...reserves, { id: uuidv4(), name: '', amount: 0, frequencyMonths: 1 }]);
   };
   const removeReserve = (id: string) => {
+    const target = reserves.find(r => r.id === id);
+    if (!window.confirm(`確定要刪除「${target?.name || '這個項目'}」嗎？`)) return;
     saveImmediately(reserves.filter(r => r.id !== id));
   };
   const updateReserveField = <K extends 'name' | 'amount' | 'frequencyMonths'>(id: string, field: K, value: LongTermReserve[K]) => {
