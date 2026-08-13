@@ -283,6 +283,7 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
                             placeholder="15000"
                             value={formData.targetAmount}
                             onChange={e => setFormData({...formData, targetAmount: e.target.value})}
+                            onFocus={e => e.target.select()}
                             className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-mono font-bold text-slate-700 focus:ring-4 focus:ring-indigo-50 focus:border-indigo-300 outline-none shadow-sm transition"
                          />
                       </div>

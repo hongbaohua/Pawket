@@ -316,6 +316,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         placeholder="不設定"
                         value={budgetInputs[s.l2] ?? ''}
                         onChange={e => setBudgetInputs(prev => ({ ...prev, [s.l2]: e.target.value }))}
+                        onFocus={e => e.target.select()}
                         onBlur={e => saveBudget(s.l2, e.target.value)}
                         className="w-24 p-2 bg-white border border-slate-200 rounded-xl font-mono font-bold text-sm text-slate-700 outline-none focus:border-amber-300"
                       />
@@ -360,6 +361,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         type="number"
                         value={r.amount || ''}
                         onChange={e => updateReserveField(r.id, 'amount', Number(e.target.value) || 0)}
+                        onFocus={e => e.target.select()}
                         placeholder="每次金額"
                         className="w-20 p-2 bg-white border border-slate-200 rounded-xl font-mono font-bold text-sm text-slate-700 outline-none focus:border-rose-300 shrink-0"
                       />
@@ -369,6 +371,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         min={1}
                         value={r.frequencyMonths || ''}
                         onChange={e => updateReserveField(r.id, 'frequencyMonths', Number(e.target.value) || 1)}
+                        onFocus={e => e.target.select()}
                         placeholder="1"
                         title="每幾個月繳一次，例如健保雙月繳就填2"
                         className="w-12 p-2 bg-white border border-slate-200 rounded-xl font-mono font-bold text-sm text-slate-700 outline-none focus:border-rose-300 shrink-0 text-center"

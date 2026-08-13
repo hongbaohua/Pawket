@@ -124,11 +124,11 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">總金額</label>
-                <input type="number" value={totalAmount} onChange={e => setTotalAmount(parseFloat(e.target.value) || 0)} className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-purple-300" />
+                <input type="number" value={totalAmount} onChange={e => setTotalAmount(parseFloat(e.target.value) || 0)} onFocus={e => e.target.select()} className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-purple-300" />
               </div>
               <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">我的份額</label>
-                <input type="number" value={myShare} onChange={e => setMyShare(parseFloat(e.target.value) || 0)} className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-purple-300" />
+                <input type="number" value={myShare} onChange={e => setMyShare(parseFloat(e.target.value) || 0)} onFocus={e => e.target.select()} className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-purple-300" />
               </div>
             </div>
             <p className="text-[11px] text-slate-400 mt-2">
@@ -157,6 +157,7 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
                     type="number"
                     value={p.owedAmount}
                     onChange={e => updateParticipant(p.id, { owedAmount: parseFloat(e.target.value) || 0 })}
+                    onFocus={e => e.target.select()}
                     placeholder="金額"
                     className="w-24 p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-purple-300 text-right"
                   />

@@ -54,6 +54,9 @@ const CalcInput = React.forwardRef<HTMLInputElement, {
       readOnly={readOnly}
       value={draft}
       onChange={e => setDraft(e.target.value)}
+      // 2026-08-13：Ivy反應數字欄位裡常常已經有個預設值，要先手動刪掉才能打新的很麻煩——
+      // 點進欄位時自動全選內容，直接打字就會整個覆蓋掉，不用自己刪。
+      onFocus={e => e.target.select()}
       onBlur={() => {
         const result = evalMathExpression(draft);
         if (result != null) {
@@ -959,15 +962,15 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                             <div className="grid grid-cols-2 gap-2 p-2 bg-sky-50/50 border border-sky-100 rounded-lg animate-in slide-in-from-top-1">
                               <div className="min-w-0">
                                 <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">原幣金額</label>
-                                <input type="number" value={fxInputs[idx]?.amount ?? ''} onChange={(e) => updateFxInput(idx, 'amount', e.target.value)} placeholder="例如：1000" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
+                                <input type="number" value={fxInputs[idx]?.amount ?? ''} onChange={(e) => updateFxInput(idx, 'amount', e.target.value)} onFocus={e => e.target.select()} placeholder="例如：1000" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
                               </div>
                               <div className="min-w-0">
                                 <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">匯率</label>
-                                <input type="number" step="0.01" value={fxInputs[idx]?.rate ?? ''} onChange={(e) => updateFxInput(idx, 'rate', e.target.value)} placeholder="例如：4.45" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
+                                <input type="number" step="0.01" value={fxInputs[idx]?.rate ?? ''} onChange={(e) => updateFxInput(idx, 'rate', e.target.value)} onFocus={e => e.target.select()} placeholder="例如：4.45" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
                               </div>
                               <div className="min-w-0">
                                 <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">折扣（選填，85折填0.85）</label>
-                                <input type="number" step="0.01" value={fxInputs[idx]?.discount ?? ''} onChange={(e) => updateFxInput(idx, 'discount', e.target.value)} placeholder="留空=無折扣" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
+                                <input type="number" step="0.01" value={fxInputs[idx]?.discount ?? ''} onChange={(e) => updateFxInput(idx, 'discount', e.target.value)} onFocus={e => e.target.select()} placeholder="留空=無折扣" className="w-full p-2 bg-white border border-sky-200 rounded-lg text-sm font-bold outline-none focus:border-sky-300" />
                               </div>
                               <div className="min-w-0 flex flex-col">
                                 <label className="text-[9px] font-bold text-sky-500 uppercase block mb-1">進位方式</label>

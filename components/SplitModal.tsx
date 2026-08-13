@@ -238,6 +238,7 @@ const SplitModal: React.FC<SplitModalProps> = ({ transaction, allTransactions, o
                               disabled={isMain}
                               value={displayAmount}
                               onChange={(e) => !isMain && updateSplit(split.id, 'amount', parseFloat(e.target.value))}
+                              onFocus={e => e.target.select()}
                               className={`w-full text-right font-mono outline-none rounded-xl px-4 py-3 border font-bold transition-colors text-base ${isMain ? 'bg-amber-100 border-amber-200 text-amber-900 cursor-not-allowed shadow-inner' : 'bg-slate-50 border-slate-100 focus:border-purple-300 text-slate-800'}`}
                           />
                       </div>

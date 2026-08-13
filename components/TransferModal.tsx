@@ -67,7 +67,7 @@ const TransferModal: React.FC<TransferModalProps> = ({ accounts, transaction, on
 
           <div>
             <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">金額</label>
-            <input type="number" value={amount || ''} onChange={e => setAmount(parseFloat(e.target.value))} className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:border-amber-300" placeholder="0" />
+            <input type="number" value={amount || ''} onChange={e => setAmount(parseFloat(e.target.value))} onFocus={e => e.target.select()} className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:border-amber-300" placeholder="0" />
           </div>
 
           <div className="flex items-center gap-2">

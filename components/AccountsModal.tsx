@@ -155,6 +155,7 @@ export const AccountsPanel: React.FC<AccountsPanelProps> = ({ accounts, onSave, 
                   min={0}
                   value={editing.postingDelayMin ?? ''}
                   onChange={e => setEditing({ ...editing, postingDelayMin: e.target.value === '' ? undefined : parseInt(e.target.value, 10) })}
+                  onFocus={e => e.target.select()}
                   placeholder="例如：0"
                   className="w-full p-3 bg-[#FFFBF5] border border-slate-100 rounded-2xl font-bold outline-none focus:border-amber-300"
                 />
@@ -166,6 +167,7 @@ export const AccountsPanel: React.FC<AccountsPanelProps> = ({ accounts, onSave, 
                   min={0}
                   value={editing.postingDelayMax ?? ''}
                   onChange={e => setEditing({ ...editing, postingDelayMax: e.target.value === '' ? undefined : parseInt(e.target.value, 10) })}
+                  onFocus={e => e.target.select()}
                   placeholder="例如：15"
                   className="w-full p-3 bg-[#FFFBF5] border border-slate-100 rounded-2xl font-bold outline-none focus:border-amber-300"
                 />

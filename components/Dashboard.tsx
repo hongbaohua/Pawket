@@ -258,9 +258,10 @@ const Dashboard: React.FC<DashboardProps> = ({
                   <div className="flex items-center gap-3">
                       <span className="text-sm font-bold text-slate-600">每月</span>
                       <input 
-                        type="number" min="1" max="31" 
-                        value={tempCycleDay} 
+                        type="number" min="1" max="31"
+                        value={tempCycleDay}
                         onChange={e => setTempCycleDay(parseInt(e.target.value))}
+                        onFocus={e => e.target.select()}
                         className="w-20 p-2 text-center bg-white border-2 border-amber-200 rounded-xl font-bold text-slate-900 outline-none focus:border-amber-400"
                       />
                       <span className="text-sm font-bold text-slate-600">號開始</span>
