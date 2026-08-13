@@ -185,14 +185,6 @@ export interface WishlistItem {
   purchasedDate?: string;
 }
 
-// 願望清單的「安全水位」設定：日常開銷保留＋緊急預備金，計算「可動用餘額」時要先扣掉，
-// 存在 Supabase Auth 的 user_metadata（跟暱稱同一套機制），使用者可以自己調整，
-// App 也會用 calculateSuggestedReserves 抓一個「不會太緊迫」的建議值給她參考。
-export interface WishlistSettings {
-  dailyBuffer: number;    // 日常開銷保留
-  emergencyFund: number;  // 緊急預備金
-}
-
 export interface Alert {
   id: string;
   level: 'critical' | 'warning' | 'info';

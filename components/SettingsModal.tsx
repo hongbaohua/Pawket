@@ -1,10 +1,13 @@
 // 系統設定：偏好設定的統一入口（2026-08-06 Ivy要求，不用每加一個設定就重新設計入口）。
 // 2026-08-11新增「分類預算設定」+「長期預留支出」——取代原本自動用歷史中位數外推的
 // 配速警示：系統只給「近期／長期」兩組參考數字，不自動套用，由Ivy自己確認金額才存檔。
+// 2026-08-13：Ivy指出「安全水位」跟「長期預留支出」關係密切，兩個原本分散在不同視窗
+// （安全水位在喵喵心願罐裡）容易搞混，改成全部集中在這裡；同時所有區塊改成手風琴式
+// （點標題展開/收合、一次只開一項），避免設定項目一多，畫面要一直往下滑才看得完。
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Settings, Sparkles, Wallet, ShieldAlert, Plus, Trash2 } from 'lucide-react';
+import { X, Settings, Sparkles, Wallet, ShieldAlert, ShieldCheck, Plus, Trash2, ChevronDown } from 'lucide-react';
 import { Transaction, LongTermReserve } from '../types';
-import { suggestCategoryBudgets } from '../services/logicService';
+import { suggestCategoryBudgets, calculateSuggestedReserves } from '../services/logicService';
 import { v4 as uuidv4 } from 'uuid';
 
 interface SettingsModalProps {
@@ -39,11 +42,50 @@ const RESERVE_CANDIDATES: { name: string; l2: string; frequencyMonths: number; n
   { name: '教育學費', l2: '教育學費', frequencyMonths: 6, note: '進修課程常見學期繳' },
 ];
 
+type SectionId = 'similar' | 'budget' | 'reserve';
+
+// 手風琴區塊：標題列本身就是展開/收合的按鈕，收合時標題旁會顯示一行摘要，
+// 不用展開就能看到現在的狀態；展開後標題右邊的箭頭會反轉，收合則會恢復。
+const AccordionSection: React.FC<{
+  id: SectionId;
+  icon: React.ReactNode;
+  title: string;
+  summary: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}> = ({ icon, title, summary, isExpanded, onToggle, children }) => (
+  <div className="bg-white border border-slate-100 rounded-2xl overflow-hidden">
+    <button
+      type="button"
+      onClick={onToggle}
+      className="w-full p-4 flex items-center justify-between gap-3 text-left hover:bg-slate-50/60 transition"
+    >
+      <div className="flex items-center gap-2 font-bold text-slate-700 text-sm min-w-0">
+        {icon}
+        <span className="shrink-0">{title}</span>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {!isExpanded && <span className="text-[11px] font-bold text-slate-400 truncate max-w-[140px] sm:max-w-none">{summary}</span>}
+        <ChevronDown className={`w-4 h-4 text-slate-300 transition-transform duration-200 shrink-0 ${isExpanded ? 'rotate-180' : ''}`} />
+      </div>
+    </button>
+    {isExpanded && (
+      <div className="px-4 pb-4 space-y-3 animate-in slide-in-from-top-1 duration-150">
+        {children}
+      </div>
+    )}
+  </div>
+);
+
 const SettingsModal: React.FC<SettingsModalProps> = ({
   similarTransactionAlertsEnabled, onUpdateSimilarTransactionAlerts,
   allTransactions, categoryBudgets, onUpdateCategoryBudgets,
   longTermReserves, onUpdateLongTermReserves, onClose,
 }) => {
+  const [expandedSection, setExpandedSection] = useState<SectionId | null>(null);
+  const toggleSection = (id: SectionId) => setExpandedSection(prev => prev === id ? null : id);
+
   const suggestions = suggestCategoryBudgets(allTransactions);
   const [budgetInputs, setBudgetInputs] = useState<Record<string, string>>(
     Object.fromEntries(Object.entries(categoryBudgets).map(([l2, v]) => [l2, String(v)]))
@@ -109,6 +151,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const monthlyReserveTotal = reserves.reduce((sum, r) => sum + (r.frequencyMonths > 0 ? r.amount / r.frequencyMonths : 0), 0);
   const availableCandidates = RESERVE_CANDIDATES.filter(c => !reserves.some(r => r.name === c.name));
 
+  // 安全水位：2026-08-13起不再是存檔的固定數字，改成每次打開都用目前的消費歷史+
+  // 長期預留支出現算——Ivy指出這個理想數字本來就會隨資料天天變化，存一個靜態快照
+  // 意義不大，所以這裡跟長期預留支出放在同一個區塊，唯讀顯示、不能手動輸入。
+  const suggested = calculateSuggestedReserves(allTransactions, reserves);
+  const budgetSetCount = Object.keys(categoryBudgets).length;
+
   return (
     <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
       <div className="bg-[#FFFBF5] rounded-[40px] shadow-2xl max-w-2xl w-full border-4 border-white overflow-hidden max-h-[90vh] flex flex-col">
@@ -120,31 +168,36 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-full transition"><X className="w-6 h-6 text-slate-400" /></button>
         </div>
 
-        <div className="p-8 space-y-6 overflow-y-auto flex-1">
-          <div className="p-4 bg-white border border-slate-100 rounded-2xl space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 font-bold text-slate-700 text-sm">
-                <Sparkles className="w-4 h-4 text-indigo-400" /> 喵喵發現相似交易提醒
-              </div>
-              <button
-                type="button"
-                onClick={() => onUpdateSimilarTransactionAlerts(!similarTransactionAlertsEnabled)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 ${similarTransactionAlertsEnabled ? 'bg-indigo-500 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}
-              >
-                {similarTransactionAlertsEnabled ? '已開啟' : '已關閉'}
-              </button>
-            </div>
+        <div className="p-8 space-y-3 overflow-y-auto flex-1">
+          <AccordionSection
+            id="similar"
+            icon={<Sparkles className="w-4 h-4 text-indigo-400" />}
+            title="喵喵發現相似交易提醒"
+            summary={similarTransactionAlertsEnabled ? '已開啟' : '已關閉'}
+            isExpanded={expandedSection === 'similar'}
+            onToggle={() => toggleSection('similar')}
+          >
             <p className="text-xs text-slate-400 leading-relaxed">
               新增或修改一筆交易時，如果資料庫裡已經有商家名稱／金額很像的其他紀錄，App會跳出來問要不要一起套用同樣的分類/名稱寫法——適合用來抓「同一家店，這次打的字詞卻不一樣」這種情況，避免同一家店在紀錄裡有好幾種不同寫法。
               如果目前的紀錄已經整理得差不多、不太需要這個提醒，可以先關掉；之後新增帳戶或發現需要時，隨時可以回來打開。
             </p>
-          </div>
+            <button
+              type="button"
+              onClick={() => onUpdateSimilarTransactionAlerts(!similarTransactionAlertsEnabled)}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition ${similarTransactionAlertsEnabled ? 'bg-indigo-500 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}
+            >
+              {similarTransactionAlertsEnabled ? '已開啟' : '已關閉'}
+            </button>
+          </AccordionSection>
 
-          {/* 分類預算設定 */}
-          <div className="p-4 bg-white border border-slate-100 rounded-2xl space-y-3">
-            <div className="flex items-center gap-2 font-bold text-slate-700 text-sm">
-              <Wallet className="w-4 h-4 text-amber-400" /> 分類預算設定
-            </div>
+          <AccordionSection
+            id="budget"
+            icon={<Wallet className="w-4 h-4 text-amber-400" />}
+            title="分類預算設定"
+            summary={budgetSetCount > 0 ? `${budgetSetCount} 個分類已設定` : '尚未設定'}
+            isExpanded={expandedSection === 'budget'}
+            onToggle={() => toggleSection('budget')}
+          >
             <p className="text-xs text-slate-400 leading-relaxed">
               「近3個月」是最近的花費習慣，「全部歷史」是長期基準，兩個都只是參考——系統不會自己套用，月預算要妳自己看過決定再填。
               <span className="font-bold text-slate-500">這兩個數字只根據 Pawket 裡實際有記錄的交易算出來</span>，如果妳知道有些花費沒記到（例如現金支付），
@@ -175,16 +228,19 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 ))}
               </div>
             )}
-          </div>
+          </AccordionSection>
 
-          {/* 長期預留支出 */}
-          <div className="p-4 bg-white border border-slate-100 rounded-2xl space-y-3">
-            <div className="flex items-center gap-2 font-bold text-slate-700 text-sm">
-              <ShieldAlert className="w-4 h-4 text-rose-400" /> 長期預留支出
-            </div>
+          <AccordionSection
+            id="reserve"
+            icon={<ShieldAlert className="w-4 h-4 text-rose-400" />}
+            title="長期預留支出與安全水位"
+            summary={reserves.length > 0 ? `${reserves.length} 個項目・每月${Math.round(monthlyReserveTotal).toLocaleString()}` : '尚未設定'}
+            isExpanded={expandedSection === 'reserve'}
+            onToggle={() => toggleSection('reserve')}
+          >
             <p className="text-xs text-slate-400 leading-relaxed">
               保險費、健保勞保、房租、水電、稅務規費這類金額大、但不是每月繳一次的支出，平常容易被忽略，等到真的到期時可能拿不出錢。
-              這裡列出來的項目，會平均攤進喵喵心願罐「日常開銷保留」的建議值裡——不追蹤精確到期日，只是先把每月該多存的錢預留起來。
+              這裡列出來的項目，會平均攤進下面「安全水位」的日常開銷保留裡——不追蹤精確到期日，只是先把每月該多存的錢預留起來。
               名稱、金額、繳費週期都可以自己填，繳費週期不限選項，例如健保雙月繳一次就填「2」即可。
             </p>
 
@@ -254,7 +310,25 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 <Plus className="w-3 h-3" /> 自訂項目（不在上面清單裡的話，直接手動新增一筆）
               </button>
             </div>
-          </div>
+
+            {/* 安全水位：唯讀、即時算出來，跟長期預留支出放在同一區塊方便對照 */}
+            <div className="pt-2 mt-2 border-t border-slate-100 space-y-2">
+              <p className="text-xs font-bold text-slate-500 flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5 text-rose-400" /> 目前的安全水位（自動計算，不用手動填）</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl">
+                  <p className="text-[10px] font-bold text-slate-400 mb-1">日常開銷保留</p>
+                  <p className="font-mono font-bold text-sm text-slate-700">${suggested.dailyBuffer.toLocaleString()}</p>
+                </div>
+                <div className="p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl">
+                  <p className="text-[10px] font-bold text-slate-400 mb-1">緊急預備金</p>
+                  <p className="font-mono font-bold text-sm text-slate-700">${suggested.emergencyFund.toLocaleString()}</p>
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-300 leading-relaxed">
+                算法：最近12個月固定+變動支出的月中位數 ${Math.round(suggested.monthlyBaseline).toLocaleString()}，日常開銷保留＝(月中位數＋上面長期預留支出的月均攤)×1.5，緊急預備金＝月中位數×3。喵喵心願罐算「現在買不買得起」時會直接用這兩個數字，隨資料自動更新，不用手動套用。
+              </p>
+            </div>
+          </AccordionSection>
         </div>
 
         <div className="p-6 border-t border-slate-100 bg-white/50 flex justify-end shrink-0">

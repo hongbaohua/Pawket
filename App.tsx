@@ -16,7 +16,8 @@ import SharedExpenseModal from './components/SharedExpenseModal';
 import SharedExpenseListModal from './components/SharedExpenseListModal';
 import ActivityLogModal from './components/ActivityLogModal';
 import SettingsModal from './components/SettingsModal';
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, LongTermReserve } from './types';
+import TransactionFilterPanel, { matchesCategoryFilter } from './components/TransactionFilterPanel';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, LongTermReserve } from './types';
 import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -180,17 +181,6 @@ const App: React.FC = () => {
   const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([]);
   const [isWishlistModalOpen, setIsWishlistModalOpen] = useState(false);
 
-  // 安全水位設定：存在 Supabase Auth 的 user_metadata（跟暱稱同一套機制），沒設定過就是0/0，
-  // WishlistModal 裡會提示一組「不會太緊迫」的建議值讓她套用。
-  const wishlistSettings: WishlistSettings = {
-      dailyBuffer: session?.user.user_metadata?.wishlistDailyBuffer ?? 0,
-      emergencyFund: session?.user.user_metadata?.wishlistEmergencyFund ?? 0,
-  };
-  const handleUpdateWishlistSettings = async (settings: WishlistSettings) => {
-      const { error } = await supabase.auth.updateUser({ data: { wishlistDailyBuffer: settings.dailyBuffer, wishlistEmergencyFund: settings.emergencyFund } });
-      if (error) { console.error('更新願望清單安全水位失敗', error); alert('儲存失敗，請檢查主控台錯誤訊息。'); }
-  };
-
   // 系統設定：一樣存在 user_metadata。目前只有這一個開關，2026-08-06 Ivy反應她的舊資料已經
   // 整理得差不多，不太需要「喵喵發現了N筆相似交易」這個提醒，但保留功能給以後的新帳戶/新用戶用，
   // 所以預設是開著的(undefined視同true)，只有明確存過false才是關閉。
@@ -250,8 +240,8 @@ const App: React.FC = () => {
 
   const sidebarWishlistMetrics = useMemo(() => {
       if (!topWishlistItem) return null;
-      return calculateWishlistMetrics(wishlistItems, accounts, transactions, wishlistSettings.dailyBuffer, wishlistSettings.emergencyFund).items[topWishlistItem.id];
-  }, [wishlistItems, accounts, transactions, wishlistSettings.dailyBuffer, wishlistSettings.emergencyFund, topWishlistItem]);
+      return calculateWishlistMetrics(wishlistItems, accounts, transactions, longTermReserves).items[topWishlistItem.id];
+  }, [wishlistItems, accounts, transactions, longTermReserves, topWishlistItem]);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTagFilters, setSelectedTagFilters] = useState<Set<string>>(new Set());
@@ -296,16 +286,6 @@ const App: React.FC = () => {
     return { filteredTransactions: filtered, dateRange: range };
   }, [timeScope, cycleStartDay, transactions, currentDate, customRange]);
 
-  const availableTags = useMemo(() => {
-    const l2Set = new Set<string>();
-    const l3Set = new Set<string>();
-    transactions.forEach(t => {
-        if (t.category.l2) l2Set.add(t.category.l2);
-        if (t.category.l3) l3Set.add(t.category.l3);
-    });
-    return { l2: Array.from(l2Set).sort(), l3: Array.from(l3Set).filter(tag => !l2Set.has(tag)).sort() };
-  }, [transactions]);
-
   const toggleTagFilter = (tag: string) => {
       setSelectedTagFilters(prev => {
           const next = new Set(prev);
@@ -337,7 +317,7 @@ const App: React.FC = () => {
           );
       }
       if (selectedTagFilters.size > 0) {
-          result = result.filter(t => selectedTagFilters.has(t.category.l2) || selectedTagFilters.has(t.category.l3));
+          result = result.filter(t => matchesCategoryFilter(t, selectedTagFilters));
       }
       return result.sort((a, b) => {
           const dateDiff = new Date(b.date).getTime() - new Date(a.date).getTime();
@@ -1070,7 +1050,7 @@ const App: React.FC = () => {
       </aside>
       <main className="flex-1 min-w-0 mt-16 lg:mt-0 lg:ml-80 p-4 lg:p-10 transition-all">
         {view === 'dashboard' && <Dashboard
-            alerts={alerts} budgets={budgets} transactions={filteredTransactions} allTransactions={transactions} wishlistItems={wishlistItems} wishlistSettings={wishlistSettings} onOpenWishlist={() => setIsWishlistModalOpen(true)} onPrint={handlePrint}
+            alerts={alerts} budgets={budgets} transactions={filteredTransactions} allTransactions={transactions} wishlistItems={wishlistItems} longTermReserves={longTermReserves} onOpenWishlist={() => setIsWishlistModalOpen(true)} onPrint={handlePrint}
             timeScope={timeScope} setTimeScope={setTimeScope} cycleStartDay={cycleStartDay} setCycleStartDay={setCycleStartDay} dateRangeLabel={dateRange.label}
             currentDate={currentDate} setCurrentDate={setCurrentDate} penaltyConfig={penaltyConfig} setPenaltyConfig={setPenaltyConfig}
             customRange={customRange} setCustomRange={setCustomRange} accounts={accounts}
@@ -1113,30 +1093,15 @@ const App: React.FC = () => {
             </div>
             <div className="px-8 py-6 border-b border-orange-50 bg-[#FFFBF5]/30 no-print">
                  <div className="flex flex-col gap-4">
-                     <div className="flex gap-3"><div className="relative flex-1"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" /><input type="text" placeholder="快速查找..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-white border border-slate-100 rounded-2xl shadow-sm text-slate-700 font-bold outline-none" />{searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-300"><X className="w-4 h-4" /></button>}</div><button onClick={() => setIsFilterExpanded(!isFilterExpanded)} className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all border ${isFilterExpanded ? 'bg-amber-100 text-amber-600 border-amber-200' : 'bg-white text-slate-500 border-slate-100'}`}><Filter className="w-5 h-5" /><span className="hidden sm:inline">標籤篩選{selectedTagFilters.size > 0 ? `(${selectedTagFilters.size})` : ''}</span></button></div>
+                     <div className="flex gap-3"><div className="relative flex-1"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" /><input type="text" placeholder="快速查找..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-white border border-slate-100 rounded-2xl shadow-sm text-slate-700 font-bold outline-none" />{searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-300"><X className="w-4 h-4" /></button>}</div><button onClick={() => setIsFilterExpanded(!isFilterExpanded)} className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all border ${isFilterExpanded ? 'bg-amber-100 text-amber-600 border-amber-200' : 'bg-white text-slate-500 border-slate-100'}`}>{isFilterExpanded ? <X className="w-5 h-5" /> : <Filter className="w-5 h-5" />}<span className="hidden sm:inline">分類篩選{selectedTagFilters.size > 0 ? `(${selectedTagFilters.size})` : ''}</span></button></div>
                      {isFilterExpanded && (
-                       <div className="p-4 bg-white border border-amber-100 rounded-2xl space-y-3 animate-in slide-in-from-top-1 duration-150">
-                         {availableTags.l2.length === 0 && availableTags.l3.length === 0 ? (
-                           <p className="text-sm text-slate-400 text-center py-2">目前還沒有分類標籤可以篩選喵～</p>
-                         ) : (
-                           <>
-                             <div className="flex flex-wrap gap-2">
-                               {[...availableTags.l2, ...availableTags.l3].map(tag => (
-                                 <button
-                                   key={tag}
-                                   type="button"
-                                   onClick={() => toggleTagFilter(tag)}
-                                   className={`px-3.5 py-1.5 rounded-full text-xs font-bold border transition-all ${selectedTagFilters.has(tag) ? 'bg-amber-400 text-white border-amber-400' : 'bg-[#FFFBF5] text-slate-500 border-slate-200 hover:border-amber-200'}`}
-                                 >
-                                   {tag}
-                                 </button>
-                               ))}
-                             </div>
-                             {selectedTagFilters.size > 0 && (
-                               <button type="button" onClick={() => setSelectedTagFilters(new Set())} className="text-xs font-bold text-slate-400 hover:text-rose-500 transition">清除篩選</button>
-                             )}
-                           </>
-                         )}
+                       <div className="p-4 bg-white border border-amber-100 rounded-2xl animate-in slide-in-from-top-1 duration-150">
+                         <TransactionFilterPanel
+                           transactions={transactions}
+                           selected={selectedTagFilters}
+                           onToggle={toggleTagFilter}
+                           onClear={() => setSelectedTagFilters(new Set())}
+                         />
                        </div>
                      )}
                  </div>
@@ -1385,7 +1350,7 @@ const App: React.FC = () => {
       {transferModalState.open && <TransferModal accounts={accounts} transaction={transferModalState.transaction} onClose={() => setTransferModalState({ open: false })} onSave={handleTransferSave} />}
       {isAccountsModalOpen && <AccountsModal accounts={accounts} onClose={() => setIsAccountsModalOpen(false)} onSave={handleSaveAccount} onArchive={handleArchiveAccount} />}
       {batchSource && <BatchCorrectionModal matches={batchCandidates} source={batchSource} allTransactions={transactions} onConfirm={handleBatchConfirm} onClose={() => { setBatchSource(null); setBatchCandidates([]); }} />}
-      {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} longTermReserves={longTermReserves} settings={wishlistSettings} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={handleUpdateWishlistItems} onUpdateSettings={handleUpdateWishlistSettings} />}
+      {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} longTermReserves={longTermReserves} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={handleUpdateWishlistItems} />}
       {isTrashModalOpen && <TrashModal items={deletedTransactions} loading={trashLoading} onClose={() => setIsTrashModalOpen(false)} onRestore={handleRestoreFromTrash} onPermanentlyDelete={handlePermanentlyDelete} />}
       {isActivityLogOpen && <ActivityLogModal items={activityLog} loading={activityLogLoading} onClose={() => setIsActivityLogOpen(false)} onRestore={handleRestoreActivityLog} />}
       {isSettingsModalOpen && <SettingsModal

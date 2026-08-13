@@ -704,6 +704,8 @@ export interface WishlistItemMetrics {
 
 export interface WishlistMetricsResult {
     totalLiquidBalance: number; // 現金+金融卡總餘額，跟清單裡有沒有項目無關，隨時都能算
+    dailyBuffer: number;        // 即時計算出來的日常開銷保留（見calculateSuggestedReserves）
+    emergencyFund: number;      // 即時計算出來的緊急預備金
     items: Record<string, WishlistItemMetrics>;
 }
 
@@ -711,13 +713,17 @@ export const calculateWishlistMetrics = (
     items: WishlistItem[],
     accounts: Account[],
     allTransactions: Transaction[],
-    dailyBuffer: number,
-    emergencyFund: number,
+    longTermReserves: LongTermReserve[] = [],
 ): WishlistMetricsResult => {
     // 只算現金＋金融卡帳戶（bank_debit），電子支付錢包/儲值卡/信用卡不算「可以拿來買大東西」的錢
     const liquidAccounts = accounts.filter(a => !a.isArchived && (a.type === 'cash' || a.type === 'bank_debit'));
     const balances = calculateAccountBalances(liquidAccounts, allTransactions);
     const totalLiquidBalance = liquidAccounts.reduce((sum, a) => sum + (balances[a.id] || 0), 0);
+
+    // 2026-08-13改成即時計算：Ivy指出「日常開銷保留/緊急預備金」存成一個固定數字、要手動點
+    // 「套用」才更新沒有意義——這個理想數字本來就會隨消費歷史/長期預留支出天天變化，存一個
+    // 靜態快照只會愈放愈舊。改成每次都用calculateSuggestedReserves現算，不再有獨立的手動輸入值。
+    const { dailyBuffer, emergencyFund } = calculateSuggestedReserves(allTransactions, longTermReserves);
 
     const now = new Date();
     const result: Record<string, WishlistItemMetrics> = {};
@@ -750,7 +756,7 @@ export const calculateWishlistMetrics = (
         reservedByEarlierItems += item.targetAmount;
     }
 
-    return { totalLiquidBalance, items: result };
+    return { totalLiquidBalance, dailyBuffer, emergencyFund, items: result };
 };
 
 // 幫使用者抓一個「不會太緊迫」的日常開銷保留／緊急預備金建議值：

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { WishlistItem, WishlistSettings, Transaction, Account, LongTermReserve } from '../types';
-import { calculateWishlistMetrics, calculateSuggestedReserves } from '../services/logicService';
+import { WishlistItem, Transaction, Account, LongTermReserve } from '../types';
+import { calculateWishlistMetrics } from '../services/logicService';
 import { X, Target, Calendar, DollarSign, Save, Flag, Plus, Trash2, Edit2, ChevronLeft, RotateCcw, ChevronUp, ChevronDown, CheckCircle2, ShieldCheck, Wallet } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -10,13 +10,11 @@ interface WishlistModalProps {
   accounts: Account[];
   allTransactions: Transaction[];
   longTermReserves: LongTermReserve[];
-  settings: WishlistSettings;
   onClose: () => void;
   onUpdateItems: (items: WishlistItem[]) => void;
-  onUpdateSettings: (settings: WishlistSettings) => void;
 }
 
-const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTransactions, longTermReserves, settings, onClose, onUpdateItems, onUpdateSettings }) => {
+const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTransactions, longTermReserves, onClose, onUpdateItems }) => {
   const [view, setView] = useState<'list' | 'form'>('list');
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -30,17 +28,15 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
       targetDate: string;
   }>({ name: '', targetAmount: '', hasDate: false, targetDate: '' });
 
-  const [tempDailyBuffer, setTempDailyBuffer] = useState(settings.dailyBuffer.toString());
-  const [tempEmergencyFund, setTempEmergencyFund] = useState(settings.emergencyFund.toString());
-  const suggested = calculateSuggestedReserves(allTransactions, longTermReserves);
-
   useEffect(() => {
     return () => {
         if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
     };
   }, []);
 
-  const metrics = calculateWishlistMetrics(items, accounts, allTransactions, settings.dailyBuffer, settings.emergencyFund);
+  // 2026-08-13起，日常開銷保留／緊急預備金改成即時算出來，不再是存檔的固定數字
+  // （Ivy指出這個理想數字本來就會隨消費歷史/長期預留支出天天變化，存靜態快照沒有意義）。
+  const metrics = calculateWishlistMetrics(items, accounts, allTransactions, longTermReserves);
 
   const startEdit = (item?: WishlistItem) => {
       if (item) {
@@ -89,18 +85,6 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
       onUpdateItems(items.map(i => i.id === id
           ? { ...i, isPurchased: !i.isPurchased, purchasedDate: !i.isPurchased ? new Date().toISOString().split('T')[0] : undefined }
           : i));
-  };
-
-  const handleSaveSettings = () => {
-      const daily = Number(tempDailyBuffer) || 0;
-      const emergency = Number(tempEmergencyFund) || 0;
-      onUpdateSettings({ dailyBuffer: daily, emergencyFund: emergency });
-  };
-
-  const applySuggested = () => {
-      setTempDailyBuffer(suggested.dailyBuffer.toString());
-      setTempEmergencyFund(suggested.emergencyFund.toString());
-      onUpdateSettings({ dailyBuffer: suggested.dailyBuffer, emergencyFund: suggested.emergencyFund });
   };
 
   const handleSave = () => {
@@ -153,31 +137,27 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
            {/* LIST VIEW */}
            {view === 'list' && (
                <>
-                 {/* 安全水位設定 */}
+                 {/* 安全水位（即時計算，唯讀）——2026-08-13起改成不用手動填/套用，數字每次
+                     開啟這裡都用最新的消費歷史+系統設定裡的「長期預留支出」重新算一次 */}
                  <div className="p-5 bg-white rounded-[24px] border border-slate-100 space-y-3">
                     <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                        <ShieldCheck className="w-3.5 h-3.5" /> 安全水位設定
+                        <ShieldCheck className="w-3.5 h-3.5" /> 目前的安全水位（自動計算）
                     </p>
                     <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <label className="text-[10px] font-bold text-slate-400 mb-1 block">日常開銷保留</label>
-                            <input type="number" value={tempDailyBuffer} onChange={e => setTempDailyBuffer(e.target.value)} onBlur={handleSaveSettings}
-                                className="w-full p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl font-mono font-bold text-sm text-slate-700 outline-none focus:border-indigo-300" />
+                        <div className="p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl">
+                            <p className="text-[10px] font-bold text-slate-400 mb-1">日常開銷保留</p>
+                            <p className="font-mono font-bold text-sm text-slate-700">${metrics.dailyBuffer.toLocaleString()}</p>
                         </div>
-                        <div>
-                            <label className="text-[10px] font-bold text-slate-400 mb-1 block">緊急預備金</label>
-                            <input type="number" value={tempEmergencyFund} onChange={e => setTempEmergencyFund(e.target.value)} onBlur={handleSaveSettings}
-                                className="w-full p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl font-mono font-bold text-sm text-slate-700 outline-none focus:border-indigo-300" />
+                        <div className="p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl">
+                            <p className="text-[10px] font-bold text-slate-400 mb-1">緊急預備金</p>
+                            <p className="font-mono font-bold text-sm text-slate-700">${metrics.emergencyFund.toLocaleString()}</p>
                         </div>
                     </div>
-                    <button onClick={applySuggested} className="text-[11px] font-bold text-indigo-400 hover:text-indigo-500">
-                        參考建議值：日常${suggested.dailyBuffer.toLocaleString()}／緊急${suggested.emergencyFund.toLocaleString()}（點此套用）
-                    </button>
                     <p className="text-[10px] text-slate-300 leading-relaxed flex items-center gap-1">
                         <Wallet className="w-3 h-3 shrink-0" /> 現金+金融卡總餘額 ${metrics.totalLiquidBalance.toLocaleString()}（不含電子支付/儲值卡/信用卡）
                     </p>
                     <p className="text-[10px] text-slate-300 leading-relaxed">
-                        「日常開銷保留」建議值已經把系統設定裡列的「長期預留支出」（保險費/稅務規費等年繳/半年繳的大額支出）平均攤進來，避免帳單到期時拿不出錢；去系統設定可以新增/調整這些項目。
+                        這兩個數字會隨最近的消費歷史自動變化，不用手動填。想調整長期預留支出（保險費/稅務規費等年繳/半年繳的大額支出，會平均攤進「日常開銷保留」）請到系統設定。
                     </p>
                  </div>
 

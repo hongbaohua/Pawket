@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { AlertCircle, TrendingUp, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper, Users, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
-import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, WishlistSettings, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange, SharedExpense } from '../types';
+import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, LongTermReserve, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange, SharedExpense } from '../types';
 import { addMonths, format, startOfMonth, endOfMonth, startOfDay, endOfDay, isValid, parseISO } from 'date-fns';
 import { analyzeFinancialHealth, getSeasonalTrends, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, getCategoryPieData, detectRecurringExpenses, calculateWishlistMetrics, WishlistItemMetrics, calculateProjectedPenalty, calculateRunway, getDateRange } from '../services/logicService';
 import html2canvas from 'html2canvas';
@@ -17,7 +17,7 @@ interface DashboardProps {
   allTransactions: Transaction[];
   accounts: Account[];
   wishlistItems: WishlistItem[];
-  wishlistSettings: WishlistSettings;
+  longTermReserves: LongTermReserve[];
   sharedExpenses: SharedExpense[];
   onOpenWishlist: () => void;
   onOpenSharedExpenses: () => void;
@@ -98,7 +98,7 @@ const WishlistCard = ({
 };
 
 const Dashboard: React.FC<DashboardProps> = ({
-    alerts, budgets, transactions, allTransactions, accounts, wishlistItems, wishlistSettings, sharedExpenses, onOpenWishlist, onOpenSharedExpenses, onPrint, timeScope, setTimeScope, cycleStartDay, setCycleStartDay, dateRangeLabel, currentDate, setCurrentDate, penaltyConfig, setPenaltyConfig, customRange, setCustomRange
+    alerts, budgets, transactions, allTransactions, accounts, wishlistItems, longTermReserves, sharedExpenses, onOpenWishlist, onOpenSharedExpenses, onPrint, timeScope, setTimeScope, cycleStartDay, setCycleStartDay, dateRangeLabel, currentDate, setCurrentDate, penaltyConfig, setPenaltyConfig, customRange, setCustomRange
 }) => {
   const expenses = transactions.filter(t => t.type === 'expense');
   const incomes = transactions.filter(t => t.type === 'income');
@@ -116,8 +116,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   const expenseBreakdown = useMemo(() => getCategoryBreakdown(transactions, 'expense', L1Category.VARIABLE), [transactions]); 
   const topWishlistItem = useMemo(() => wishlistItems.find(i => !i.isPurchased) || null, [wishlistItems]);
   const wishlistMetrics = useMemo(
-    () => calculateWishlistMetrics(wishlistItems, accounts, allTransactions, wishlistSettings.dailyBuffer, wishlistSettings.emergencyFund),
-    [wishlistItems, accounts, allTransactions, wishlistSettings.dailyBuffer, wishlistSettings.emergencyFund]
+    () => calculateWishlistMetrics(wishlistItems, accounts, allTransactions, longTermReserves),
+    [wishlistItems, accounts, allTransactions, longTermReserves]
   );
   const penaltyData = useMemo(() => timeScope === 'all' ? { isOverspent: false, overage: 0, penaltyAmount: 0 } : calculateProjectedPenalty(transactions, budgets, penaltyConfig), [transactions, budgets, penaltyConfig, timeScope]);
   const runwayData = useMemo(() => calculateRunway(allTransactions, accounts), [allTransactions, accounts]);
