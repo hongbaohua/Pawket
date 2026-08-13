@@ -433,9 +433,14 @@ export const analyzeL2Frequency = (
 
 export const getCategoryBreakdown = (transactions: Transaction[], type: 'income' | 'expense', l1Filter?: L1Category) => {
     const map: Record<string, { amount: number; l3Map: Record<string, number> }> = {};
-    
+
     transactions.forEach(t => {
         if (t.type !== type) return;
+        // 代購/工作代墊/借貸(specialTag)不是Ivy自己的真實收入/支出，兩種方向都要排除，
+        // 不然「借廖妤甄$500」會混進支出排行榜、「廖妤甄還$500」會混進收入來源分析——
+        // 這裡跟isPersonalConsumption()同一個原則，但那個helper只認expense，這裡income/
+        // expense都要擋，所以直接檢查specialTag本身。
+        if (t.specialTag) return;
         if (l1Filter && t.category.l1 !== l1Filter) return;
 
         if (!map[t.category.l2]) map[t.category.l2] = { amount: 0, l3Map: {} };

@@ -886,14 +886,18 @@ const App: React.FC = () => {
     });
   };
 
-  const handleEditNickname = async () => {
-    const current = session?.user.user_metadata?.nickname || '';
-    const next = window.prompt('幫自己取個暱稱', current);
-    if (next === null) return;
-    const trimmed = next.trim();
-    if (trimmed === current) return;
-    const { error } = await supabase.auth.updateUser({ data: { nickname: trimmed } });
+  // 2026-08-13：編輯暱稱從獨立的window.prompt彈窗，改成系統設定「用戶設定」區塊裡
+  // 的一般文字輸入框（跟其他設定項目一致的介面），這裡只留下實際存檔的邏輯。
+  const handleUpdateNickname = async (nickname: string) => {
+    const { error } = await supabase.auth.updateUser({ data: { nickname } });
     if (error) { console.error('更新暱稱失敗', error); alert('更新暱稱失敗，請檢查主控台錯誤訊息。'); }
+  };
+
+  // 變更登入密碼：Supabase已經有有效的session，updateUser({password})不需要重新輸入舊密碼。
+  // 回傳錯誤訊息字串給SettingsModal顯示，成功回傳null。
+  const handleChangePassword = async (password: string): Promise<string | null> => {
+    const { error } = await supabase.auth.updateUser({ password });
+    return error ? error.message : null;
   };
 
   const handlePrint = () => window.print();
@@ -1025,9 +1029,8 @@ const App: React.FC = () => {
           </div>
           {isUserMenuOpen && (
             <div className="absolute top-full right-0 lg:right-auto lg:left-4 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-orange-50 p-2 z-30 animate-in fade-in zoom-in-95 duration-150">
-              <button onClick={() => { handleEditNickname(); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-amber-50 hover:text-amber-600 rounded-xl transition"><Pencil className="w-4 h-4" />編輯暱稱</button>
-              <button onClick={() => { setIsWishlistModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-indigo-50 hover:text-indigo-500 rounded-xl transition"><Target className="w-4 h-4" />喵喵心願罐</button>
-              <button onClick={() => { setIsAccountsModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-sky-50 hover:text-sky-500 rounded-xl transition"><Wallet className="w-4 h-4" />碗盤總覽</button>
+              {/* 2026-08-13：編輯暱稱／喵喵心願罐／碗盤總覽都移進系統設定裡了（喵喵心願罐已經
+                  變成純預覽+唯讀安全水位，首頁的常駐卡片就能開，不用在這裡重複一個入口）。 */}
               <button onClick={() => { setIsSettingsModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 hover:text-slate-700 rounded-xl transition"><Settings className="w-4 h-4" />系統設定</button>
               <div className="h-px bg-slate-100 my-1"></div>
               <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-400 hover:bg-rose-50 hover:text-rose-400 rounded-xl transition"><LogOut className="w-4 h-4" />登出</button>
@@ -1170,6 +1173,20 @@ const App: React.FC = () => {
                                     {oweMe > 0 && <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-600">應收${oweMe}</span>}
                                     {oweThem > 0 && <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-100 text-rose-600">應付${oweThem}</span>}
                                   </>
+                                );
+                              })()}
+                              {/* 2026-08-13新增：這筆如果是某個分帳/借貸的「結清用交易」（點過「這碗跟誰分→
+                                  已結清」時連結進來的），標一個徽章讓對應的兩筆看得出彼此相關，不用自己猜。 */}
+                              {(() => {
+                                const settlingFor = sharedExpenses.find(se => se.participants.some(p => p.settledTransactionId === t.id));
+                                if (!settlingFor) return null;
+                                const participant = settlingFor.participants.find(p => p.settledTransactionId === t.id)!;
+                                const originalTx = transactions.find(tx => tx.id === settlingFor.transactionId);
+                                const label = participant.direction === 'they_owe_me' ? '已收回' : '已還款';
+                                return (
+                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-sky-100 text-sky-600" title={originalTx ? `對應 ${originalTx.date}「${originalTx.merchant}」的結清` : '結清用交易'}>
+                                    {label}{originalTx ? `・對應${originalTx.date}` : ''}
+                                  </span>
                                 );
                               })()}
                             </span>
@@ -1357,6 +1374,9 @@ const App: React.FC = () => {
         similarTransactionAlertsEnabled={similarTransactionAlertsEnabled} onUpdateSimilarTransactionAlerts={handleUpdateSimilarTransactionAlerts}
         allTransactions={transactions} categoryBudgets={categoryBudgets} onUpdateCategoryBudgets={handleUpdateCategoryBudgets}
         longTermReserves={longTermReserves} onUpdateLongTermReserves={handleUpdateLongTermReserves}
+        nickname={session?.user.user_metadata?.nickname || ''} onUpdateNickname={handleUpdateNickname}
+        userEmail={session?.user.email} onChangePassword={handleChangePassword}
+        accounts={accounts} onSaveAccount={handleSaveAccount} onArchiveAccount={handleArchiveAccount}
         onClose={() => setIsSettingsModalOpen(false)}
       />}
       {isMappingModalOpen && <CategoryMappingModal conflicts={conflictCategories} existingCustomOptions={customCategoryHistory} onConfirm={handleMappingConfirm} onCancel={() => { setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]); }} />}

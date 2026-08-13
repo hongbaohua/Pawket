@@ -59,40 +59,42 @@ const WishlistCard = ({
     const isUrgent = !metrics.canAffordNow && item.targetDate && (metrics.isOverdue || (metrics.daysRemaining != null && metrics.daysRemaining <= 14));
 
     const config = metrics.canAffordNow
-        ? { textColor: 'text-[#D4AF37]', lightBg: 'bg-[#FFFBE6]', borderColor: 'border-[#FFE082]', icon: <Trophy className="w-5 h-5 text-white" />, mascot: <PartyPopper className="w-12 h-12 text-[#FFD700]" />, message: '可以入手了！', glow: true }
+        ? { textColor: 'text-[#D4AF37]', lightBg: 'bg-[#FFFBE6]', borderColor: 'border-[#FFE082]', icon: <Trophy className="w-5 h-5 text-white" />, mascot: <PartyPopper className="w-6 h-6 text-[#FFD700]" />, message: '可以入手了！', glow: true }
         : isUrgent
-        ? { textColor: 'text-[#F57C00]', lightBg: 'bg-[#FFF3E0]', borderColor: 'border-[#FFCC80]', icon: <Flame className="w-5 h-5 text-white" />, mascot: <Cat className="w-12 h-12 text-[#FFB74D] -scale-x-100" />, message: '要加快囉', glow: false }
+        ? { textColor: 'text-[#F57C00]', lightBg: 'bg-[#FFF3E0]', borderColor: 'border-[#FFCC80]', icon: <Flame className="w-5 h-5 text-white" />, mascot: <Cat className="w-6 h-6 text-[#FFB74D] -scale-x-100" />, message: '要加快囉', glow: false }
         : item.targetDate
-        ? { textColor: 'text-[#4D80E6]', lightBg: 'bg-[#EEF4FF]', borderColor: 'border-[#BDD5FF]', icon: <Leaf className="w-5 h-5 text-white" />, mascot: <Cat className="w-12 h-12 text-[#4D80E6] -scale-x-100" />, message: '還有時間，繼續存', glow: false }
-        : { textColor: 'text-[#5DAA8E]', lightBg: 'bg-[#E0F7EF]', borderColor: 'border-[#A8E6CF]', icon: <Sprout className="w-5 h-5 text-[#5DAA8E]" />, mascot: <Cat className="w-12 h-12 text-[#5DAA8E]" />, message: '錢夠了就能買，不趕時間', glow: false };
+        ? { textColor: 'text-[#4D80E6]', lightBg: 'bg-[#EEF4FF]', borderColor: 'border-[#BDD5FF]', icon: <Leaf className="w-5 h-5 text-white" />, mascot: <Cat className="w-6 h-6 text-[#4D80E6] -scale-x-100" />, message: '還有時間，繼續存', glow: false }
+        : { textColor: 'text-[#5DAA8E]', lightBg: 'bg-[#E0F7EF]', borderColor: 'border-[#A8E6CF]', icon: <Sprout className="w-5 h-5 text-[#5DAA8E]" />, mascot: <Cat className="w-6 h-6 text-[#5DAA8E]" />, message: '錢夠了就能買，不趕時間', glow: false };
 
+    // 2026-08-13縮小：Ivy反應這塊佔的版面不需要這麼大，把大padding/大字體/大吉祥物icon
+    // 都收斂成跟其他分析卡片差不多的密度。
     return (
-        <div className={`bg-white p-6 rounded-[40px] shadow-xl border-2 flex flex-col relative overflow-hidden transition-all duration-500 ${config.borderColor} ${config.glow ? 'shadow-amber-200/50' : ''}`}>
-            <div className="flex justify-between items-start mb-4 z-10">
-                <div>
-                    <h4 className="font-extrabold text-slate-700 text-lg flex items-center gap-2"><Target className={`w-5 h-5 ${config.textColor}`} />{item.name}</h4>
-                    <p className={`text-xs font-bold ${config.textColor} mt-1 opacity-80`}>{config.message}</p>
+        <div className={`bg-white p-4 rounded-[24px] shadow-sm border-2 flex flex-col relative overflow-hidden transition-all duration-500 ${config.borderColor} ${config.glow ? 'shadow-amber-200/50' : ''}`}>
+            <div className="flex justify-between items-start mb-2 z-10">
+                <div className="min-w-0">
+                    <h4 className="font-extrabold text-slate-700 text-sm flex items-center gap-1.5 truncate"><Target className={`w-4 h-4 shrink-0 ${config.textColor}`} />{item.name}</h4>
+                    <p className={`text-[11px] font-bold ${config.textColor} mt-0.5 opacity-80`}>{config.message}</p>
                     {item.targetDate && (
-                        <p className="text-[10px] text-slate-400 mt-1">
-                            目標日期 {item.targetDate}{metrics.isOverdue ? '（已過期）' : metrics.daysRemaining != null ? `・還剩${metrics.daysRemaining}天` : ''}
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                            {item.targetDate}{metrics.isOverdue ? '（已過期）' : metrics.daysRemaining != null ? `・還剩${metrics.daysRemaining}天` : ''}
                         </p>
                     )}
                 </div>
-                <div className={`p-2 rounded-full bg-white shadow-sm border-2 ${config.borderColor} transition-colors duration-500 shrink-0`}>{config.mascot}</div>
+                <div className={`p-1.5 rounded-full bg-white shadow-sm border-2 ${config.borderColor} transition-colors duration-500 shrink-0`}>{config.mascot}</div>
             </div>
-            <div className={`p-5 rounded-[24px] ${config.lightBg} border ${config.borderColor} relative z-10 transition-colors duration-500`}>
+            <div className={`p-3 rounded-2xl ${config.lightBg} border ${config.borderColor} relative z-10 transition-colors duration-500`}>
                 <div className="flex justify-between items-end mb-1">
-                    <span className="text-xs font-bold text-slate-500">目標金額</span>
-                    <span className="text-xl font-black text-slate-700">${item.targetAmount.toLocaleString()}</span>
+                    <span className="text-[10px] font-bold text-slate-500">目標金額</span>
+                    <span className="text-base font-black text-slate-700">${item.targetAmount.toLocaleString()}</span>
                 </div>
                 {metrics.canAffordNow ? (
-                    <p className="text-sm font-bold text-emerald-600 flex items-center gap-1.5 mt-2"><CheckCircle2 className="w-4 h-4" /> 扣掉安全水位跟前面的願望，現在的餘額夠買了！</p>
+                    <p className="text-xs font-bold text-emerald-600 flex items-center gap-1 mt-1"><CheckCircle2 className="w-3.5 h-3.5" /> 餘額夠買了！</p>
                 ) : (
-                    <p className="text-sm font-bold text-rose-500 mt-2">還差 ${Math.round(metrics.shortfall).toLocaleString()}</p>
+                    <p className="text-xs font-bold text-rose-500 mt-1">還差 ${Math.round(metrics.shortfall).toLocaleString()}</p>
                 )}
-                {queueCount > 0 && <p className="text-[10px] text-slate-400 mt-2">後面還排了 {queueCount} 個願望在等這個買完</p>}
+                {queueCount > 0 && <p className="text-[10px] text-slate-400 mt-1">後面還排了 {queueCount} 個願望</p>}
             </div>
-            <button onClick={onOpenWishlist} className="text-[11px] font-bold text-slate-400 hover:text-indigo-500 mt-3 self-end">查看完整清單 →</button>
+            <button onClick={onOpenWishlist} className="text-[10px] font-bold text-slate-400 hover:text-indigo-500 mt-1.5 self-end">查看完整清單 →</button>
         </div>
     );
 };
@@ -100,8 +102,13 @@ const WishlistCard = ({
 const Dashboard: React.FC<DashboardProps> = ({
     alerts, budgets, transactions, allTransactions, accounts, wishlistItems, longTermReserves, sharedExpenses, onOpenWishlist, onOpenSharedExpenses, onPrint, timeScope, setTimeScope, cycleStartDay, setCycleStartDay, dateRangeLabel, currentDate, setCurrentDate, penaltyConfig, setPenaltyConfig, customRange, setCustomRange
 }) => {
-  const expenses = transactions.filter(t => t.type === 'expense');
-  const incomes = transactions.filter(t => t.type === 'income');
+  // 代購/工作代墊/借貸(specialTag)不是Ivy自己的真實收入/支出，本期消費分類比率(圓餅圖)
+  // 之前已經用isPersonalConsumption()排除了支出側，但這裡的淨現金流/支出結構/收入來源分析
+  // 是Dashboard自己另外算的，沒有套用到同一個排除規則——「借廖妤甄$500」會被當成真的
+  // 投資儲蓄支出、「廖妤甄還$500」會被當成真的收入，兩邊金額一樣時剛好抵消看不出來，
+  // 金額不一樣（例如部分還款）時淨現金流就會算錯。統一用specialTag直接過濾掉。
+  const expenses = transactions.filter(t => t.type === 'expense' && !t.specialTag);
+  const incomes = transactions.filter(t => t.type === 'income' && !t.specialTag);
   const expenseData = [{ name: CATEGORY_LABELS[L1Category.VARIABLE], value: expenses.filter(t => t.category.l1 === L1Category.VARIABLE).reduce((a, b) => a + b.amount, 0) }, { name: CATEGORY_LABELS[L1Category.FIXED], value: expenses.filter(t => t.category.l1 === L1Category.FIXED).reduce((a, b) => a + b.amount, 0) }, { name: CATEGORY_LABELS[L1Category.INVESTMENT], value: expenses.filter(t => t.category.l1 === L1Category.INVESTMENT).reduce((a, b) => a + b.amount, 0) }].filter(d => d.value > 0);
   const totalExpense = expenseData.reduce((acc, curr) => acc + curr.value, 0);
   const totalIncome = incomes.reduce((acc, curr) => acc + curr.amount, 0);
@@ -201,22 +208,22 @@ const Dashboard: React.FC<DashboardProps> = ({
   const navigateMonth = (direction: number) => setCurrentDate(addMonths(currentDate, direction));
   const handleMonthSelect = (monthIndex: number) => { setCurrentDate(new Date(pickerYear, monthIndex, 1)); setShowDatePicker(false); };
 
+  // 2026-08-13縮小：Ivy反應這塊目前作用不大（原本設計是要在這裡放專屬吉祥物Moewney，
+  // 但角色還沒設計出來），先把版面縮小騰出空間給更常用的分析區塊，等吉祥物設計好再放大。
   const MeowneyMascot = ({ status }: { status: 'safe' | 'caution' | 'alert' }) => {
-    let bgColor = "bg-emerald-50", message = "Meow~ 財務狀況很健康喔！", subMessage = "目前一切都在掌控中，繼續保持！", face = <Smile className="w-12 h-12 text-emerald-500" />;
-    if (timeScope === 'all') { bgColor = "bg-indigo-50"; message = "喵～這是我們的累積成果！"; subMessage = `目前共記錄了 ${allTransactions.length} 筆交易。`; face = <Cat className="w-12 h-12 text-indigo-500" />; }
-    else if (status === 'caution') { bgColor = "bg-amber-50"; message = "注意喔！花費有點快了..."; subMessage = "建議減少不必要的零食開銷。"; face = <Meh className="w-12 h-12 text-amber-500" />; }
-    else if (status === 'alert') { bgColor = "bg-rose-50"; if (isPenaltyActive) { message = "罰則啟動！下期預算縮減"; subMessage = `強制扣除 $${penaltyData.penaltyAmount.toFixed(0)}。`; face = <AlertOctagon className="w-12 h-12 text-rose-500" />; } else if (isDtiHigh) { message = "壓力山大！固定債務過高！"; subMessage = "DTI 償債比率危險。"; face = <Frown className="w-12 h-12 text-rose-500" />; } else { message = "喵嗚！超支了！快停下來！"; subMessage = "請立即檢視紅色項目！"; face = <Frown className="w-12 h-12 text-rose-500" />; } }
+    let bgColor = "bg-emerald-50", message = "Meow~ 財務狀況很健康喔！", subMessage = "目前一切都在掌控中，繼續保持！", face = <Smile className="w-6 h-6 text-emerald-500" />;
+    if (timeScope === 'all') { bgColor = "bg-indigo-50"; message = "喵～這是我們的累積成果！"; subMessage = `目前共記錄了 ${allTransactions.length} 筆交易。`; face = <Cat className="w-6 h-6 text-indigo-500" />; }
+    else if (status === 'caution') { bgColor = "bg-amber-50"; message = "注意喔！花費有點快了..."; subMessage = "建議減少不必要的零食開銷。"; face = <Meh className="w-6 h-6 text-amber-500" />; }
+    else if (status === 'alert') { bgColor = "bg-rose-50"; if (isPenaltyActive) { message = "罰則啟動！下期預算縮減"; subMessage = `強制扣除 $${penaltyData.penaltyAmount.toFixed(0)}。`; face = <AlertOctagon className="w-6 h-6 text-rose-500" />; } else if (isDtiHigh) { message = "壓力山大！固定債務過高！"; subMessage = "DTI 償債比率危險。"; face = <Frown className="w-6 h-6 text-rose-500" />; } else { message = "喵嗚！超支了！快停下來！"; subMessage = "請立即檢視紅色項目！"; face = <Frown className="w-6 h-6 text-rose-500" />; } }
     return (
-      <div className={`col-span-1 md:col-span-2 rounded-[40px] p-8 flex items-center justify-between shadow-sm border border-white relative overflow-hidden transition-colors duration-500 ${bgColor}`}>
-         <div className="z-10 flex flex-col justify-center h-full">
-            <div className="flex items-center gap-3 mb-2"><span className={`px-4 py-1.5 rounded-full text-sm font-bold bg-white/60 backdrop-blur shadow-sm flex items-center gap-2 ${timeScope === 'all' ? 'text-indigo-500' : status === 'alert' ? 'text-rose-500' : status === 'caution' ? 'text-amber-500' : 'text-emerald-500'}`}><ActivityIcon />{timeScope === 'all' ? '累積總覽模式' : 'Meowney 情緒指標'}</span></div>
-            <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight mb-2 ${timeScope === 'all' ? 'text-indigo-600' : status === 'alert' ? 'text-rose-600' : status === 'caution' ? 'text-amber-600' : 'text-emerald-600'}`}>{message}</h2>
-            <p className="text-slate-500 font-medium leading-relaxed max-w-md">{subMessage}</p>
+      <div className={`col-span-1 md:col-span-2 rounded-[28px] px-6 py-4 flex items-center justify-between shadow-sm border border-white relative overflow-hidden transition-colors duration-500 ${bgColor}`}>
+         <div className="z-10 flex flex-col justify-center min-w-0">
+            <div className="flex items-center gap-2 mb-1"><span className={`px-3 py-1 rounded-full text-xs font-bold bg-white/60 backdrop-blur shadow-sm flex items-center gap-1.5 ${timeScope === 'all' ? 'text-indigo-500' : status === 'alert' ? 'text-rose-500' : status === 'caution' ? 'text-amber-500' : 'text-emerald-500'}`}><ActivityIcon />{timeScope === 'all' ? '累積總覽模式' : 'Meowney 情緒指標'}</span></div>
+            <h2 className={`text-base md:text-lg font-extrabold tracking-tight ${timeScope === 'all' ? 'text-indigo-600' : status === 'alert' ? 'text-rose-600' : status === 'caution' ? 'text-amber-600' : 'text-emerald-600'}`}>{message}</h2>
+            <p className="text-xs text-slate-500 font-medium leading-relaxed max-w-md truncate">{subMessage}</p>
          </div>
-         <div className="relative w-32 h-32 md:w-40 md:h-40 shrink-0 hidden sm:block">
-             <div className={`w-full h-full rounded-full flex items-center justify-center bg-white shadow-xl shadow-black/5 border-4 transition-all duration-500 ${timeScope === 'all' ? 'border-indigo-200' : status === 'alert' ? 'border-rose-200 animate-pulse' : status === 'caution' ? 'border-amber-200' : 'border-emerald-200'}`}>{face}</div>
-             <div className={`absolute top-0 left-2 w-8 h-8 bg-white rounded-lg rotate-[-15deg] -z-10 border-t-4 ${timeScope === 'all' ? 'border-indigo-200' : status === 'alert' ? 'border-rose-200' : status === 'caution' ? 'border-amber-200' : 'border-emerald-200'}`}></div>
-             <div className={`absolute top-0 right-2 w-8 h-8 bg-white rounded-lg rotate-[15deg] -z-10 border-t-4 ${timeScope === 'all' ? 'border-indigo-200' : status === 'alert' ? 'border-rose-200' : status === 'caution' ? 'border-amber-200' : 'border-emerald-200'}`}></div>
+         <div className="relative w-14 h-14 shrink-0 hidden sm:block">
+             <div className={`w-full h-full rounded-full flex items-center justify-center bg-white shadow-md shadow-black/5 border-2 transition-all duration-500 ${timeScope === 'all' ? 'border-indigo-200' : status === 'alert' ? 'border-rose-200 animate-pulse' : status === 'caution' ? 'border-amber-200' : 'border-emerald-200'}`}>{face}</div>
          </div>
       </div>
     );
@@ -483,7 +490,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       {/* SECTION 1.5: 願望清單 + 分類比率圓餅圖（Ivy要求這兩個放最前面） */}
       <div data-pdf-section className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-6 rounded-[40px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增喵喵心願罐</div>}
+          {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-4 rounded-[24px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增喵喵心願罐</div>}
           <div className="bg-white p-6 rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 flex flex-col">
               <h4 className="font-bold text-slate-700 flex items-center gap-2"><PieIcon className="w-5 h-5 text-amber-400" />本期消費分類比率</h4>
               <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：本期全部支出依次分類(L2)加總；如果某個細項(L3)單獨超過總支出15%會拆成獨立一塊（例如飲料）；每塊列出裡面金額最高的商家/店家；超過9塊時，剩下的合併成灰色的「其他」。</p>
@@ -542,7 +549,34 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
       )}
 
-      {/* SECTION 2: Alerts */}
+      {/* SECTION 2: Category Insights（2026-08-13 Ivy要求把異常消費偵測/支出排行榜挪到更前面，
+          原本排最後兩塊搬到最前面：支出排行榜→異常消費偵測→收入來源分析） */}
+      <div data-pdf-section>
+          <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-2 mt-4 mb-4"><Search className="w-6 h-6 text-amber-400" />分類洞察</h3>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-lg shadow-orange-50/50 flex flex-col">
+                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><TrendingDown className="w-4 h-4 text-rose-400" /> 支出排行榜</h4>
+                  <p className="text-[10px] text-slate-300 mb-3">來源：本期支出依次分類(L2)加總，取前3高</p>
+                  <div className="flex-1 space-y-4">{expenseBreakdown.slice(0, 3).map((l2Item, idx) => (<div key={l2Item.l2} className="p-4 rounded-2xl border-2 border-slate-50 flex items-center justify-between"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-slate-400">{idx+1}</div><p className="font-bold text-slate-700">{l2Item.l2}</p></div><p className="font-bold text-slate-700">${l2Item.amount.toLocaleString()}</p></div>))}</div>
+              </div>
+              <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
+                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><AlertCircle className="w-4 h-4 text-pink-500" /> 異常消費偵測</h4>
+                  <p className="text-[10px] text-slate-300 mb-3">來源：單筆金額跟同次分類(L3)歷史平均比，超過2.2倍且該次分類有5筆以上歷史紀錄才提醒（這是單筆金額異常，跟上面「需立即關注」的整月配速異常是不同角度）</p>
+                  {anomalies.length === 0 ? (
+                    <p className="text-sm text-slate-300 font-medium py-2">這期間的消費都跟平常差不多，沒有明顯異常喵～</p>
+                  ) : (
+                    <div className="space-y-3">{anomalies.slice(0, 3).map((tx) => (<div key={tx.id} className="p-4 bg-pink-50/50 rounded-2xl border border-pink-100 flex items-start justify-between gap-3"><div className="flex-1 min-w-0"><p className="font-bold text-slate-700 text-sm truncate">{tx.merchant}</p><p className="text-xs text-slate-400 mt-1">{tx.category.l3 || tx.category.l2}平常約${Math.round(tx.avgAmount).toLocaleString()}，這筆高出{Math.round(tx.diffPercent)}%</p></div><span className="font-black text-pink-600 shrink-0">${tx.amount.toLocaleString()}</span></div>))}</div>
+                  )}
+              </div>
+              <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
+                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><Wallet className="w-4 h-4 text-emerald-400" /> 收入來源分析</h4>
+                  <p className="text-[10px] text-slate-300 mb-3">來源：本期收入依次分類(L2)加總，取前3高</p>
+                  <div className="space-y-3">{incomeBreakdown.slice(0, 3).map((item, idx) => (<div key={idx} className="flex justify-between items-center p-3 rounded-2xl bg-emerald-50/50"><span className="font-bold text-slate-700">{item.l2}</span><p className="font-bold text-emerald-600">${item.amount.toLocaleString()}</p></div>))}</div>
+              </div>
+          </div>
+      </div>
+
+      {/* SECTION 3: Alerts */}
       {timeScope !== 'all' && alerts.length > 0 && (
           <div data-pdf-section className="bg-white p-6 rounded-[30px] border border-amber-100 shadow-sm">
             <h3 className="text-sm font-bold text-slate-500 flex items-center gap-2 uppercase tracking-wider"><AlertCircle className="w-4 h-4 text-rose-400" />需立即關注的項目</h3>
@@ -558,7 +592,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           </div>
       )}
 
-      {/* SECTION 3: Financial Structure */}
+      {/* SECTION 4: Financial Structure */}
       <div data-pdf-section>
           <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-2 mt-4 mb-1"><BarChart3 className="w-6 h-6 text-amber-400" />財務結構分析</h3>
           <p className="text-[10px] text-slate-300 mb-4">2026-07-23：原本這裡有「潛在財富機會」（純假設性試算，跟實際投資無關）已移除；「償債比率(DTI)」名不符實（沒有貸款資料，實際算的是固定支出佔比），改名後跟下面的佔比長條圖合併成一張卡。</p>
@@ -589,34 +623,8 @@ const Dashboard: React.FC<DashboardProps> = ({
               <div className="bg-white p-6 rounded-[30px] shadow-xl shadow-orange-50/50 border border-orange-50 flex flex-col items-center justify-center text-center relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-400 to-emerald-400"></div>
                     <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">本期淨現金流</h4>
-                    <p className="text-[10px] text-slate-300 mb-4">來源：本期收入總額－本期支出總額</p>
+                    <p className="text-[10px] text-slate-300 mb-4">來源：本期收入總額－本期支出總額（代購/工作代墊/借貸不算在內，只看真的屬於自己的收支）</p>
                     <p className={`text-4xl font-black mb-2 ${netCashFlow >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{netCashFlow >= 0 ? '+' : ''}{netCashFlow.toLocaleString()}</p>
-              </div>
-          </div>
-      </div>
-
-      {/* SECTION 4: Category Insights */}
-      <div data-pdf-section>
-          <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-2 mt-4 mb-4"><Search className="w-6 h-6 text-amber-400" />分類洞察</h3>
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-              <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
-                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><Wallet className="w-4 h-4 text-emerald-400" /> 收入來源分析</h4>
-                  <p className="text-[10px] text-slate-300 mb-3">來源：本期收入依次分類(L2)加總，取前3高</p>
-                  <div className="space-y-3">{incomeBreakdown.slice(0, 3).map((item, idx) => (<div key={idx} className="flex justify-between items-center p-3 rounded-2xl bg-emerald-50/50"><span className="font-bold text-slate-700">{item.l2}</span><p className="font-bold text-emerald-600">${item.amount.toLocaleString()}</p></div>))}</div>
-              </div>
-              <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-lg shadow-orange-50/50 flex flex-col">
-                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><TrendingDown className="w-4 h-4 text-rose-400" /> 支出排行榜</h4>
-                  <p className="text-[10px] text-slate-300 mb-3">來源：本期支出依次分類(L2)加總，取前3高</p>
-                  <div className="flex-1 space-y-4">{expenseBreakdown.slice(0, 3).map((l2Item, idx) => (<div key={l2Item.l2} className="p-4 rounded-2xl border-2 border-slate-50 flex items-center justify-between"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-slate-400">{idx+1}</div><p className="font-bold text-slate-700">{l2Item.l2}</p></div><p className="font-bold text-slate-700">${l2Item.amount.toLocaleString()}</p></div>))}</div>
-              </div>
-              <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
-                  <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><AlertCircle className="w-4 h-4 text-pink-500" /> 異常消費偵測</h4>
-                  <p className="text-[10px] text-slate-300 mb-3">來源：單筆金額跟同次分類(L3)歷史平均比，超過2.2倍且該次分類有5筆以上歷史紀錄才提醒（這是單筆金額異常，跟上面「需立即關注」的整月配速異常是不同角度）</p>
-                  {anomalies.length === 0 ? (
-                    <p className="text-sm text-slate-300 font-medium py-2">這期間的消費都跟平常差不多，沒有明顯異常喵～</p>
-                  ) : (
-                    <div className="space-y-3">{anomalies.slice(0, 3).map((tx) => (<div key={tx.id} className="p-4 bg-pink-50/50 rounded-2xl border border-pink-100 flex items-start justify-between gap-3"><div className="flex-1 min-w-0"><p className="font-bold text-slate-700 text-sm truncate">{tx.merchant}</p><p className="text-xs text-slate-400 mt-1">{tx.category.l3 || tx.category.l2}平常約${Math.round(tx.avgAmount).toLocaleString()}，這筆高出{Math.round(tx.diffPercent)}%</p></div><span className="font-black text-pink-600 shrink-0">${tx.amount.toLocaleString()}</span></div>))}</div>
-                  )}
               </div>
           </div>
       </div>

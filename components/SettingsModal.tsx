@@ -2,13 +2,16 @@
 // 2026-08-11新增「分類預算設定」+「長期預留支出」——取代原本自動用歷史中位數外推的
 // 配速警示：系統只給「近期／長期」兩組參考數字，不自動套用，由Ivy自己確認金額才存檔。
 // 2026-08-13：Ivy指出「安全水位」跟「長期預留支出」關係密切，兩個原本分散在不同視窗
-// （安全水位在喵喵心願罐裡）容易搞混，改成全部集中在這裡；同時所有區塊改成手風琴式
-// （點標題展開/收合、一次只開一項），避免設定項目一多，畫面要一直往下滑才看得完。
-import React, { useState, useRef, useEffect } from 'react';
-import { X, Settings, Sparkles, Wallet, ShieldAlert, ShieldCheck, Plus, Trash2, ChevronDown } from 'lucide-react';
-import { Transaction, LongTermReserve } from '../types';
-import { suggestCategoryBudgets, calculateSuggestedReserves } from '../services/logicService';
+// （安全水位在喵喵心願罐裡）容易搞混，改成全部集中在這裡；同時原本散落在「總設定」
+// 下拉選單的編輯暱稱／碗盤總覽也一併移進來，全部做成手風琴式（點標題展開/收合、
+// 一次只開一項），避免設定項目一多，畫面要一直往下滑才看得完——唯獨「相似交易提醒」
+// 只是一個開關，不需要展開才能改，直接做成常駐的切換按鈕。
+import React, { useEffect, useRef, useState } from 'react';
+import { X, Settings, Sparkles, Wallet, ShieldAlert, ShieldCheck, Plus, Trash2, ChevronDown, UserCircle, Lock, Loader2, CheckCircle2 } from 'lucide-react';
+import { Account, LongTermReserve, Transaction } from '../types';
+import { calculateSuggestedReserves, suggestCategoryBudgets } from '../services/logicService';
 import { v4 as uuidv4 } from 'uuid';
+import { AccountsPanel } from './AccountsModal';
 
 interface SettingsModalProps {
   similarTransactionAlertsEnabled: boolean;
@@ -18,6 +21,13 @@ interface SettingsModalProps {
   onUpdateCategoryBudgets: (budgets: Record<string, number>) => void;
   longTermReserves: LongTermReserve[];
   onUpdateLongTermReserves: (reserves: LongTermReserve[]) => void;
+  nickname: string;
+  onUpdateNickname: (nickname: string) => void;
+  userEmail?: string;
+  onChangePassword: (password: string) => Promise<string | null>;
+  accounts: Account[];
+  onSaveAccount: (account: Omit<Account, 'id'> & { id?: string }) => Promise<void>;
+  onArchiveAccount: (accountId: string) => Promise<void>;
   onClose: () => void;
 }
 
@@ -42,10 +52,11 @@ const RESERVE_CANDIDATES: { name: string; l2: string; frequencyMonths: number; n
   { name: '教育學費', l2: '教育學費', frequencyMonths: 6, note: '進修課程常見學期繳' },
 ];
 
-type SectionId = 'similar' | 'budget' | 'reserve';
+type SectionId = 'user' | 'budget' | 'reserve' | 'accounts';
 
-// 手風琴區塊：標題列本身就是展開/收合的按鈕，收合時標題旁會顯示一行摘要，
-// 不用展開就能看到現在的狀態；展開後標題右邊的箭頭會反轉，收合則會恢復。
+// 手風琴區塊：標題列本身就是展開/收合的按鈕。收合時摘要文字獨立一行放在標題下面
+// （不是擠在標題右邊同一行）——標題本身較長時（例如「長期預留支出與安全水位」）
+// 跟摘要文字同一行會互相重疊到，拆成兩行才不會擠在一起。
 const AccordionSection: React.FC<{
   id: SectionId;
   icon: React.ReactNode;
@@ -59,16 +70,16 @@ const AccordionSection: React.FC<{
     <button
       type="button"
       onClick={onToggle}
-      className="w-full p-4 flex items-center justify-between gap-3 text-left hover:bg-slate-50/60 transition"
+      className="w-full p-4 text-left hover:bg-slate-50/60 transition"
     >
-      <div className="flex items-center gap-2 font-bold text-slate-700 text-sm min-w-0">
-        {icon}
-        <span className="shrink-0">{title}</span>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
-        {!isExpanded && <span className="text-[11px] font-bold text-slate-400 truncate max-w-[140px] sm:max-w-none">{summary}</span>}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 font-bold text-slate-700 text-sm min-w-0">
+          {icon}
+          <span className="truncate">{title}</span>
+        </div>
         <ChevronDown className={`w-4 h-4 text-slate-300 transition-transform duration-200 shrink-0 ${isExpanded ? 'rotate-180' : ''}`} />
       </div>
+      {!isExpanded && <p className="text-[11px] font-bold text-slate-400 truncate mt-1 ml-6">{summary}</p>}
     </button>
     {isExpanded && (
       <div className="px-4 pb-4 space-y-3 animate-in slide-in-from-top-1 duration-150">
@@ -81,10 +92,33 @@ const AccordionSection: React.FC<{
 const SettingsModal: React.FC<SettingsModalProps> = ({
   similarTransactionAlertsEnabled, onUpdateSimilarTransactionAlerts,
   allTransactions, categoryBudgets, onUpdateCategoryBudgets,
-  longTermReserves, onUpdateLongTermReserves, onClose,
+  longTermReserves, onUpdateLongTermReserves,
+  nickname, onUpdateNickname, userEmail, onChangePassword,
+  accounts, onSaveAccount, onArchiveAccount,
+  onClose,
 }) => {
   const [expandedSection, setExpandedSection] = useState<SectionId | null>(null);
   const toggleSection = (id: SectionId) => setExpandedSection(prev => prev === id ? null : id);
+
+  // 用戶設定：暱稱＋密碼
+  const [nicknameDraft, setNicknameDraft] = useState(nickname);
+  useEffect(() => setNicknameDraft(nickname), [nickname]);
+  const saveNickname = () => {
+    const trimmed = nicknameDraft.trim();
+    if (trimmed !== nickname) onUpdateNickname(trimmed);
+  };
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwStatus, setPwStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const [pwError, setPwError] = useState('');
+  const submitPasswordChange = async () => {
+    if (newPassword.length < 6) { setPwStatus('error'); setPwError('新密碼至少要6碼'); return; }
+    if (newPassword !== confirmPassword) { setPwStatus('error'); setPwError('兩次輸入的新密碼不一樣'); return; }
+    setPwStatus('saving');
+    const err = await onChangePassword(newPassword);
+    if (err) { setPwStatus('error'); setPwError(err); }
+    else { setPwStatus('success'); setNewPassword(''); setConfirmPassword(''); }
+  };
 
   const suggestions = suggestCategoryBudgets(allTransactions);
   const [budgetInputs, setBudgetInputs] = useState<Record<string, string>>(
@@ -156,6 +190,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   // 意義不大，所以這裡跟長期預留支出放在同一個區塊，唯讀顯示、不能手動輸入。
   const suggested = calculateSuggestedReserves(allTransactions, reserves);
   const budgetSetCount = Object.keys(categoryBudgets).length;
+  const activeAccountCount = accounts.filter(a => !a.isArchived).length;
 
   return (
     <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm flex items-center justify-center z-[100] p-4 animate-in fade-in duration-200">
@@ -170,25 +205,77 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
         <div className="p-8 space-y-3 overflow-y-auto flex-1">
           <AccordionSection
-            id="similar"
-            icon={<Sparkles className="w-4 h-4 text-indigo-400" />}
-            title="喵喵發現相似交易提醒"
-            summary={similarTransactionAlertsEnabled ? '已開啟' : '已關閉'}
-            isExpanded={expandedSection === 'similar'}
-            onToggle={() => toggleSection('similar')}
+            id="user"
+            icon={<UserCircle className="w-4 h-4 text-amber-400" />}
+            title="用戶設定"
+            summary={nickname || '尚未設定暱稱'}
+            isExpanded={expandedSection === 'user'}
+            onToggle={() => toggleSection('user')}
           >
-            <p className="text-xs text-slate-400 leading-relaxed">
-              新增或修改一筆交易時，如果資料庫裡已經有商家名稱／金額很像的其他紀錄，App會跳出來問要不要一起套用同樣的分類/名稱寫法——適合用來抓「同一家店，這次打的字詞卻不一樣」這種情況，避免同一家店在紀錄裡有好幾種不同寫法。
-              如果目前的紀錄已經整理得差不多、不太需要這個提醒，可以先關掉；之後新增帳戶或發現需要時，隨時可以回來打開。
-            </p>
-            <button
-              type="button"
-              onClick={() => onUpdateSimilarTransactionAlerts(!similarTransactionAlertsEnabled)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition ${similarTransactionAlertsEnabled ? 'bg-indigo-500 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}
-            >
-              {similarTransactionAlertsEnabled ? '已開啟' : '已關閉'}
-            </button>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">暱稱</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={nicknameDraft}
+                  onChange={e => setNicknameDraft(e.target.value)}
+                  onBlur={saveNickname}
+                  placeholder="幫自己取個暱稱"
+                  className="flex-1 min-w-0 p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl font-bold text-sm text-slate-700 outline-none focus:border-amber-300"
+                />
+                <button type="button" onClick={saveNickname} className="px-4 py-2.5 bg-amber-400 hover:bg-amber-500 text-white rounded-xl font-bold text-xs transition shrink-0">儲存</button>
+              </div>
+            </div>
+
+            <div className="pt-2 mt-1 border-t border-slate-100 space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1"><Lock className="w-3 h-3" /> 登入帳戶密碼</label>
+              {userEmail && <p className="text-[11px] text-slate-400">登入信箱：{userEmail}</p>}
+              <input
+                type="password"
+                value={newPassword}
+                onChange={e => { setNewPassword(e.target.value); setPwStatus('idle'); }}
+                placeholder="新密碼（至少6碼）"
+                className="w-full p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl font-bold text-sm text-slate-700 outline-none focus:border-amber-300"
+              />
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={e => { setConfirmPassword(e.target.value); setPwStatus('idle'); }}
+                placeholder="再輸入一次新密碼"
+                className="w-full p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl font-bold text-sm text-slate-700 outline-none focus:border-amber-300"
+              />
+              <button
+                type="button"
+                onClick={submitPasswordChange}
+                disabled={pwStatus === 'saving' || !newPassword}
+                className="w-full flex items-center justify-center gap-2 py-2.5 bg-slate-700 hover:bg-slate-800 text-white rounded-xl font-bold text-xs transition disabled:opacity-50"
+              >
+                {pwStatus === 'saving' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '更新密碼'}
+              </button>
+              {pwStatus === 'error' && <p className="text-[11px] text-rose-500 font-bold">{pwError}</p>}
+              {pwStatus === 'success' && <p className="text-[11px] text-emerald-500 font-bold flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> 密碼已更新，下次登入請用新密碼。</p>}
+            </div>
           </AccordionSection>
+
+          {/* 喵喵發現相似交易提醒：只是一個開關，不需要點開才能改，直接做成常駐切換按鈕 */}
+          <div className="bg-white border border-slate-100 rounded-2xl p-4 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 font-bold text-slate-700 text-sm min-w-0">
+                <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />
+                <span className="truncate">喵喵發現相似交易提醒</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => onUpdateSimilarTransactionAlerts(!similarTransactionAlertsEnabled)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 ${similarTransactionAlertsEnabled ? 'bg-indigo-500 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}
+              >
+                {similarTransactionAlertsEnabled ? '已開啟' : '已關閉'}
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              新增或修改一筆交易時，如果資料庫裡已經有商家名稱／金額很像的其他紀錄，App會跳出來問要不要一起套用同樣的分類/名稱寫法。整理得差不多、不太需要提醒的話可以關掉，隨時能再打開。
+            </p>
+          </div>
 
           <AccordionSection
             id="budget"
@@ -328,6 +415,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 算法：最近12個月固定+變動支出的月中位數 ${Math.round(suggested.monthlyBaseline).toLocaleString()}，日常開銷保留＝(月中位數＋上面長期預留支出的月均攤)×1.5，緊急預備金＝月中位數×3。喵喵心願罐算「現在買不買得起」時會直接用這兩個數字，隨資料自動更新，不用手動套用。
               </p>
             </div>
+          </AccordionSection>
+
+          <AccordionSection
+            id="accounts"
+            icon={<Wallet className="w-4 h-4 text-sky-400" />}
+            title="碗盤總覽"
+            summary={`${activeAccountCount} 個帳戶`}
+            isExpanded={expandedSection === 'accounts'}
+            onToggle={() => toggleSection('accounts')}
+          >
+            <AccountsPanel accounts={accounts} onSave={onSaveAccount} onArchive={onArchiveAccount} />
           </AccordionSection>
         </div>
 
