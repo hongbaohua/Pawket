@@ -775,6 +775,9 @@ export const calculateSuggestedReserves = (allTransactions: Transaction[], longT
     }
     allTransactions.forEach(t => {
         if (t.type !== 'expense') return;
+        // 2026-08-13補：代購/工作代墊/借貸(specialTag)不是Ivy自己的真實支出，這裡漏了
+        // 排除——跟Dashboard淨現金流那次修的是同一個原則，只是這個函式當時沒有一起改到。
+        if (t.specialTag) return;
         if (t.category.l1 !== L1Category.FIXED && t.category.l1 !== L1Category.VARIABLE) return;
         const key = format(parseISO(t.date), 'yyyy-MM');
         if (key in monthlyTotals) monthlyTotals[key] += t.amount;
