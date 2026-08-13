@@ -191,34 +191,38 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             {reserves.length > 0 && (
               <div className="space-y-2">
                 {reserves.map(r => (
-                  <div key={r.id} className="flex items-center gap-2 p-2.5 bg-[#FFFBF5] rounded-xl border border-slate-100">
-                    <input
-                      type="text"
-                      value={r.name}
-                      onChange={e => updateReserveField(r.id, 'name', e.target.value)}
-                      placeholder="項目名稱（例如健保）"
-                      className="flex-1 min-w-0 p-2 bg-white border border-slate-200 rounded-xl font-bold text-sm text-slate-700 outline-none focus:border-rose-300"
-                    />
-                    <span className="text-slate-400 text-sm font-bold shrink-0">$</span>
-                    <input
-                      type="number"
-                      value={r.amount || ''}
-                      onChange={e => updateReserveField(r.id, 'amount', Number(e.target.value) || 0)}
-                      placeholder="每次金額"
-                      className="w-20 p-2 bg-white border border-slate-200 rounded-xl font-mono font-bold text-sm text-slate-700 outline-none focus:border-rose-300 shrink-0"
-                    />
-                    <span className="text-slate-400 text-xs font-bold shrink-0">每</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={r.frequencyMonths || ''}
-                      onChange={e => updateReserveField(r.id, 'frequencyMonths', Number(e.target.value) || 1)}
-                      placeholder="1"
-                      title="每幾個月繳一次，例如健保雙月繳就填2"
-                      className="w-12 p-2 bg-white border border-slate-200 rounded-xl font-mono font-bold text-sm text-slate-700 outline-none focus:border-rose-300 shrink-0 text-center"
-                    />
-                    <span className="text-slate-400 text-xs font-bold shrink-0">個月繳一次</span>
-                    <button onClick={() => removeReserve(r.id)} className="p-2 hover:bg-rose-50 rounded-xl text-slate-300 hover:text-rose-400 transition shrink-0"><Trash2 className="w-4 h-4" /></button>
+                  <div key={r.id} className="p-2.5 bg-[#FFFBF5] rounded-xl border border-slate-100 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={r.name}
+                        onChange={e => updateReserveField(r.id, 'name', e.target.value)}
+                        placeholder="項目名稱（例如健保）"
+                        className="flex-1 min-w-0 p-2 bg-white border border-slate-200 rounded-xl font-bold text-sm text-slate-700 outline-none focus:border-rose-300"
+                      />
+                      <button onClick={() => removeReserve(r.id)} className="p-2 hover:bg-rose-50 rounded-xl text-slate-300 hover:text-rose-400 transition shrink-0"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-slate-400 text-sm font-bold shrink-0">$</span>
+                      <input
+                        type="number"
+                        value={r.amount || ''}
+                        onChange={e => updateReserveField(r.id, 'amount', Number(e.target.value) || 0)}
+                        placeholder="每次金額"
+                        className="w-20 p-2 bg-white border border-slate-200 rounded-xl font-mono font-bold text-sm text-slate-700 outline-none focus:border-rose-300 shrink-0"
+                      />
+                      <span className="text-slate-400 text-xs font-bold shrink-0">每</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={r.frequencyMonths || ''}
+                        onChange={e => updateReserveField(r.id, 'frequencyMonths', Number(e.target.value) || 1)}
+                        placeholder="1"
+                        title="每幾個月繳一次，例如健保雙月繳就填2"
+                        className="w-12 p-2 bg-white border border-slate-200 rounded-xl font-mono font-bold text-sm text-slate-700 outline-none focus:border-rose-300 shrink-0 text-center"
+                      />
+                      <span className="text-slate-400 text-xs font-bold shrink-0">個月繳一次</span>
+                    </div>
                   </div>
                 ))}
                 <p className="text-[10px] text-slate-400 text-right">平均每月預留：<span className="font-bold text-rose-500">${Math.round(monthlyReserveTotal).toLocaleString()}</span></p>
