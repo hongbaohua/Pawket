@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Plus, Pencil, Trash2, RotateCcw, Wallet, CreditCard, Landmark, Coins, Banknote, Archive } from 'lucide-react';
+import { X, Plus, Pencil, RotateCcw, Wallet, CreditCard, Landmark, Coins, Banknote, Archive } from 'lucide-react';
 import { Account, AccountType } from '../types';
 
 // 順序照「誰是真正的錢、誰是衍生出來的」排：現金/銀行/信用卡是原始金流，
@@ -112,8 +112,8 @@ export const AccountsPanel: React.FC<AccountsPanelProps> = ({ accounts, onSave, 
                       <div key={acc.id} className="flex items-center justify-between p-4 bg-[#FFFBF5] rounded-2xl border border-orange-50">
                         <p className="font-bold text-slate-700">{acc.name}</p>
                         <div className="flex gap-2">
-                          <button onClick={() => setEditing(acc)} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯"><Pencil className="w-4 h-4" /></button>
-                          <button onClick={() => handleArchive(acc)} className="p-2 border rounded-xl hover:bg-rose-50 text-rose-400" title="封存（不會刪除底下的交易紀錄）"><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => setEditing(acc)} className="px-3 py-2 border rounded-xl hover:bg-amber-50 flex items-center gap-1.5 text-xs font-bold text-slate-600"><Pencil className="w-4 h-4" />編輯</button>
+                          <button onClick={() => handleArchive(acc)} className="px-3 py-2 border rounded-xl hover:bg-rose-50 text-rose-400 flex items-center gap-1.5 text-xs font-bold" title="封存（不會刪除底下的交易紀錄，之後可以在「已封存帳戶」取消封存）"><Archive className="w-4 h-4" />封存</button>
                         </div>
                       </div>
                     ))}
