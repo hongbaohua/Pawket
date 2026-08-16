@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Plus, Pencil, Trash2, Wallet, CreditCard, Landmark, Coins, Banknote } from 'lucide-react';
+import { X, Plus, Pencil, Trash2, RotateCcw, Wallet, CreditCard, Landmark, Coins, Banknote, Archive } from 'lucide-react';
 import { Account, AccountType } from '../types';
 
 // 順序照「誰是真正的錢、誰是衍生出來的」排：現金/銀行/信用卡是原始金流，
@@ -47,6 +47,7 @@ export const AccountsPanel: React.FC<AccountsPanelProps> = ({ accounts, onSave, 
   const activeAccounts = accounts
     .filter(a => !a.isArchived)
     .sort((a, b) => TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type));
+  const archivedAccounts = accounts.filter(a => a.isArchived);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,6 +56,19 @@ export const AccountsPanel: React.FC<AccountsPanelProps> = ({ accounts, onSave, 
     // 全站餘額計算，改錯比改錯一筆交易的影響範圍大很多。新增帳戶不用額外確認
     // （還沒有任何資料依賴它，改錯了直接刪掉重建就好）。
     if (editing.id && !window.confirm(`確定要儲存對「${editing.name.trim()}」的修改嗎？`)) return;
+    // 2026-08-13新增：新增帳戶時如果名稱跟現有帳戶(含已封存的)重複，先提醒一下——
+    // Ivy曾經因為原本的帳戶被封存、畫面上看起來像消失了，另外新增一個同名帳戶，
+    // 結果新帳戶餘額從0開始算，兩筆帳的錢對不起來。這個提醒沒辦法防住所有情況，
+    // 但至少同名這種最明顯的訊號可以先攔一次。
+    if (!editing.id) {
+      const dup = accounts.find(a => a.name === editing.name.trim());
+      if (dup) {
+        const msg = dup.isArchived
+          ? `已經有一個叫「${dup.name}」的帳戶，只是被封存了（在下面「已封存帳戶」可以取消封存）。真的要另外新增一個同名的新帳戶嗎？`
+          : `已經有一個叫「${dup.name}」的帳戶了。真的要再新增一個同名的帳戶嗎？`;
+        if (!window.confirm(msg)) return;
+      }
+    }
     setSaving(true);
     try {
       // 機構名稱欄位目前沒有另外的用途（對帳模組是用accountId直接對應，不是靠這個文字欄位），
@@ -67,8 +81,17 @@ export const AccountsPanel: React.FC<AccountsPanelProps> = ({ accounts, onSave, 
   };
 
   const handleArchive = (acc: Account) => {
-    if (!window.confirm(`確定要封存「${acc.name}」嗎？封存後這個帳戶不會再出現在選單裡，但底下的交易紀錄不會被刪除，之後有需要可以請 Claude Code 幫忙復原。`)) return;
+    if (!window.confirm(`確定要封存「${acc.name}」嗎？封存後這個帳戶不會再出現在選單裡，但底下的交易紀錄不會被刪除，之後想恢復可以在下面「已封存帳戶」裡點取消封存。`)) return;
     onArchive(acc.id);
+  };
+
+  // 2026-08-13新增：之前封存帳戶之後畫面上完全沒地方看得到/救回來，等於「消失了」——
+  // Ivy有一次真的因為這樣以為帳戶不見了，另外新增一個同名的帳戶，結果新帳戶餘額從0
+  // 開始算，舊帳戶854筆真實歷史反而看不到，害她一度以為錢憑空少了一大筆。比照垃圾桶
+  // 救回交易的邏輯，這裡也要能直接復原，不用每次都跑資料庫查詢。
+  const handleRestore = (acc: Account) => {
+    if (!window.confirm(`確定要把「${acc.name}」重新啟用嗎？之後會再出現在帳戶選單裡。`)) return;
+    onSave({ ...acc, isArchived: false });
   };
 
   return (
@@ -100,6 +123,23 @@ export const AccountsPanel: React.FC<AccountsPanelProps> = ({ accounts, onSave, 
             })}
             {activeAccounts.length === 0 && <p className="text-center text-slate-300 py-6">還沒有任何帳戶</p>}
           </div>
+
+          {archivedAccounts.length > 0 && (
+            <div className="mb-6">
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 ml-1 flex items-center gap-1.5">
+                <Archive className="w-3.5 h-3.5" /> 已封存帳戶
+              </p>
+              <div className="space-y-2">
+                {archivedAccounts.map(acc => (
+                  <div key={acc.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                    <p className="font-bold text-slate-400">{acc.name}</p>
+                    <button onClick={() => handleRestore(acc)} className="p-2 border rounded-xl hover:bg-emerald-50 text-emerald-500 flex items-center gap-1.5 text-xs font-bold px-3" title="取消封存，重新啟用這個帳戶"><RotateCcw className="w-4 h-4" />取消封存</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <button
             onClick={() => setEditing(emptyForm())}
             className="w-full flex items-center justify-center gap-2 py-3 bg-amber-400 hover:bg-amber-500 text-white rounded-2xl font-bold shadow-lg shadow-amber-100 active:scale-95 transition"
