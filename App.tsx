@@ -22,7 +22,7 @@ import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, cal
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 import {
-  seedDefaultAccountsIfEmpty, fetchTransactions, createAccount, updateAccount, archiveAccount,
+  seedDefaultAccountsIfEmpty, fetchTransactions, createAccount, updateAccount, archiveAccount, deleteAccount,
   upsertTransaction, upsertTransactions, deleteTransaction as dbDeleteTransaction, deleteTransactionsByParentId,
   deleteAllTransactions, fetchWishlistItems, upsertWishlistItems, deleteWishlistItem as dbDeleteWishlistItem,
   fetchDeletedTransactions, restoreTransaction, permanentlyDeleteTransaction,
@@ -166,6 +166,14 @@ const App: React.FC = () => {
   const handleArchiveAccount = async (accountId: string) => {
     await archiveAccount(accountId);
     setAccounts(prev => prev.map(a => a.id === accountId ? { ...a, isArchived: true } : a));
+  };
+
+  // 2026-08-13新增：只能對已封存的帳戶做，用來清掉像「誤觸封存後又建了一個同名新
+  // 帳戶」這種確定不需要的空帳戶——確認訊息裡已經講清楚底下如果還有交易紀錄不會被
+  // 刪除，只是會失去帳戶標籤，讓Ivy自己判斷要不要繼續。
+  const handleDeleteAccount = async (accountId: string) => {
+    await deleteAccount(accountId);
+    setAccounts(prev => prev.filter(a => a.id !== accountId));
   };
   
   const [timeScope, setTimeScope] = useState<TimeScope>('natural_month');
@@ -1365,7 +1373,7 @@ const App: React.FC = () => {
         />
       )}
       {transferModalState.open && <TransferModal accounts={accounts} transaction={transferModalState.transaction} onClose={() => setTransferModalState({ open: false })} onSave={handleTransferSave} />}
-      {isAccountsModalOpen && <AccountsModal accounts={accounts} onClose={() => setIsAccountsModalOpen(false)} onSave={handleSaveAccount} onArchive={handleArchiveAccount} />}
+      {isAccountsModalOpen && <AccountsModal accounts={accounts} onClose={() => setIsAccountsModalOpen(false)} onSave={handleSaveAccount} onArchive={handleArchiveAccount} onDelete={handleDeleteAccount} />}
       {batchSource && <BatchCorrectionModal matches={batchCandidates} source={batchSource} allTransactions={transactions} onConfirm={handleBatchConfirm} onClose={() => { setBatchSource(null); setBatchCandidates([]); }} />}
       {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} longTermReserves={longTermReserves} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={handleUpdateWishlistItems} />}
       {isTrashModalOpen && <TrashModal items={deletedTransactions} loading={trashLoading} onClose={() => setIsTrashModalOpen(false)} onRestore={handleRestoreFromTrash} onPermanentlyDelete={handlePermanentlyDelete} />}
@@ -1376,7 +1384,7 @@ const App: React.FC = () => {
         longTermReserves={longTermReserves} onUpdateLongTermReserves={handleUpdateLongTermReserves}
         nickname={session?.user.user_metadata?.nickname || ''} onUpdateNickname={handleUpdateNickname}
         userEmail={session?.user.email} onChangePassword={handleChangePassword}
-        accounts={accounts} onSaveAccount={handleSaveAccount} onArchiveAccount={handleArchiveAccount}
+        accounts={accounts} onSaveAccount={handleSaveAccount} onArchiveAccount={handleArchiveAccount} onDeleteAccount={handleDeleteAccount}
         onClose={() => setIsSettingsModalOpen(false)}
       />}
       {isMappingModalOpen && <CategoryMappingModal conflicts={conflictCategories} existingCustomOptions={customCategoryHistory} onConfirm={handleMappingConfirm} onCancel={() => { setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]); }} />}

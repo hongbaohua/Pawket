@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Plus, Pencil, RotateCcw, Wallet, CreditCard, Landmark, Coins, Banknote, Archive } from 'lucide-react';
+import { X, Plus, Pencil, RotateCcw, Trash2, Wallet, CreditCard, Landmark, Coins, Banknote, Archive } from 'lucide-react';
 import { Account, AccountType } from '../types';
 
 // 順序照「誰是真正的錢、誰是衍生出來的」排：現金/銀行/信用卡是原始金流，
@@ -35,12 +35,13 @@ interface AccountsPanelProps {
   accounts: Account[];
   onSave: (account: Omit<Account, 'id'> & { id?: string }) => Promise<void>;
   onArchive: (accountId: string) => Promise<void>;
+  onDelete: (accountId: string) => Promise<void>;
 }
 
 // 帳戶管理的實際內容（列表＋編輯表單），不含外層彈窗框——這樣「碗盤總覽」既可以是
 // 獨立彈窗(AccountsModal，餵食核對「去設定」按鈕還在用)，也可以直接嵌進系統設定的
 // 手風琴區塊裡(2026-08-13 Ivy要求)，不用維護兩份重複的表單邏輯。
-export const AccountsPanel: React.FC<AccountsPanelProps> = ({ accounts, onSave, onArchive }) => {
+export const AccountsPanel: React.FC<AccountsPanelProps> = ({ accounts, onSave, onArchive, onDelete }) => {
   const [editing, setEditing] = useState<(Omit<Account, 'id'> & { id?: string }) | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -94,6 +95,15 @@ export const AccountsPanel: React.FC<AccountsPanelProps> = ({ accounts, onSave, 
     onSave({ ...acc, isArchived: false });
   };
 
+  // 2026-08-13新增：Ivy明確要求「封存」不夠，誤建的重複帳戶要能真的刪掉、不該一直
+  // 留著。只開放在「已封存帳戶」這裡刪除（不能直接刪正在用的帳戶），並且把底下如果
+  // 還有交易紀錄會發生什麼事講清楚，讓她自己判斷要不要繼續——這跟db.ts的
+  // deleteAccount註解是同一個考量。
+  const handleDelete = (acc: Account) => {
+    if (!window.confirm(`確定要永久刪除「${acc.name}」嗎？這個動作沒辦法復原。如果這個帳戶底下還有交易紀錄，交易本身不會被刪除，但會失去「屬於這個帳戶」的標籤，變成未指定帳戶。`)) return;
+    onDelete(acc.id);
+  };
+
   return (
     <>
       {!editing && (
@@ -133,7 +143,10 @@ export const AccountsPanel: React.FC<AccountsPanelProps> = ({ accounts, onSave, 
                 {archivedAccounts.map(acc => (
                   <div key={acc.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                     <p className="font-bold text-slate-400">{acc.name}</p>
-                    <button onClick={() => handleRestore(acc)} className="p-2 border rounded-xl hover:bg-emerald-50 text-emerald-500 flex items-center gap-1.5 text-xs font-bold px-3" title="取消封存，重新啟用這個帳戶"><RotateCcw className="w-4 h-4" />取消封存</button>
+                    <div className="flex gap-2">
+                      <button onClick={() => handleRestore(acc)} className="p-2 border rounded-xl hover:bg-emerald-50 text-emerald-500 flex items-center gap-1.5 text-xs font-bold px-3" title="取消封存，重新啟用這個帳戶"><RotateCcw className="w-4 h-4" />取消封存</button>
+                      <button onClick={() => handleDelete(acc)} className="p-2 border rounded-xl hover:bg-rose-50 text-rose-400 flex items-center gap-1.5 text-xs font-bold px-3" title="永久刪除，沒辦法復原"><Trash2 className="w-4 h-4" />永久刪除</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -235,9 +248,10 @@ interface AccountsModalProps {
   onClose: () => void;
   onSave: (account: Omit<Account, 'id'> & { id?: string }) => Promise<void>;
   onArchive: (accountId: string) => Promise<void>;
+  onDelete: (accountId: string) => Promise<void>;
 }
 
-const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave, onArchive }) => {
+const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave, onArchive, onDelete }) => {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
       <div className="bg-white w-full max-w-xl rounded-[40px] shadow-2xl border-4 border-white max-h-[85vh] flex flex-col overflow-hidden">
@@ -250,7 +264,7 @@ const AccountsModal: React.FC<AccountsModalProps> = ({ accounts, onClose, onSave
         </div>
 
         <div className="px-8 pb-8 overflow-y-auto">
-          <AccountsPanel accounts={accounts} onSave={onSave} onArchive={onArchive} />
+          <AccountsPanel accounts={accounts} onSave={onSave} onArchive={onArchive} onDelete={onDelete} />
         </div>
       </div>
     </div>

@@ -70,6 +70,15 @@ export const archiveAccount = async (accountId: string): Promise<void> => {
   if (error) throw error;
 };
 
+// 2026-08-13新增：真的永久刪除一個帳戶（只能對已封存的帳戶做，UI層會擋）。
+// 用來清掉像「誤觸封存後又建了一個同名新帳戶」這種確定沒有交易紀錄、留著只是雜訊
+// 的空帳戶——如果帳戶底下還有交易，它們不會被刪除，只是account_id會被清空(schema
+// on delete set null)，變成「未指定帳戶」，這點會在UI的確認訊息裡講清楚讓使用者自己判斷。
+export const deleteAccount = async (accountId: string): Promise<void> => {
+  const { error } = await supabase.from('accounts').delete().eq('id', accountId);
+  if (error) throw error;
+};
+
 // 新帳號預設只給「現金」——銀行卡、電子支付都是使用者自己的東西，不該幫她亂猜、亂建。
 export const seedDefaultAccountsIfEmpty = async (userId: string): Promise<Account[]> => {
   const existing = await fetchAccounts();

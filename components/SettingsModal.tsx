@@ -28,6 +28,7 @@ interface SettingsModalProps {
   accounts: Account[];
   onSaveAccount: (account: Omit<Account, 'id'> & { id?: string }) => Promise<void>;
   onArchiveAccount: (accountId: string) => Promise<void>;
+  onDeleteAccount: (accountId: string) => Promise<void>;
   onClose: () => void;
 }
 
@@ -94,7 +95,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   allTransactions, categoryBudgets, onUpdateCategoryBudgets,
   longTermReserves, onUpdateLongTermReserves,
   nickname, onUpdateNickname, userEmail, onChangePassword,
-  accounts, onSaveAccount, onArchiveAccount,
+  accounts, onSaveAccount, onArchiveAccount, onDeleteAccount,
   onClose,
 }) => {
   const [expandedSection, setExpandedSection] = useState<SectionId | null>(null);
@@ -437,7 +438,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             isExpanded={expandedSection === 'accounts'}
             onToggle={() => toggleSection('accounts')}
           >
-            <AccountsPanel accounts={accounts} onSave={onSaveAccount} onArchive={onArchiveAccount} />
+            <AccountsPanel accounts={accounts} onSave={onSaveAccount} onArchive={onArchiveAccount} onDelete={onDeleteAccount} />
           </AccordionSection>
         </div>
 
