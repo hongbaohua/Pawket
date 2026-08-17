@@ -620,86 +620,6 @@ const App: React.FC = () => {
     }
   };
 
-  // 配對帳戶：全面重整用，取代之前5個個別的一次性按鈕。只靠 originalText/merchant
-  // 字串解析配對，不依賴任何匯入當下才存在的暫時欄位，任何時間點都能安全重跑。
-  // 規則細節見 專案文件/PROJECT_STATUS.md 第5.8節。
-  const handleMatchAllAccounts = async () => {
-    if (!userId) return;
-    const byName = (name: string) => accounts.find(a => a.name === name && !a.isArchived);
-    const paymentTagToAccountName: Record<string, string | null> = {
-      '不指定': null, // 文化幣、姊姊的卡付的錢，不歸Ivy自己的任何帳戶
-      '中華郵政低信心': '中華郵政',
-      '中華郵政': '中華郵政',
-      '二技悠遊卡': '二技悠遊卡',
-      '五專悠遊卡': '五專悠遊卡',
-      '悠遊付錢包': '悠遊付錢包',
-      'MyCard': 'MyCard',
-      '麥當勞點點卡': '麥當勞點點卡',
-    };
-
-    const updated: Transaction[] = [];
-    const missingAccountNames = new Set<string>();
-
-    for (const t of transactions) {
-      if (t.type === 'transfer') {
-        if (t.fromAccountId && t.toAccountId) continue;
-        const m = t.merchant.match(/^帳戶互轉：(.+?) → (.+)$/);
-        if (!m) continue;
-        const fromAcc = byName(m[1]);
-        const toAcc = byName(m[2]);
-        if (!fromAcc) missingAccountNames.add(m[1]);
-        if (!toAcc) missingAccountNames.add(m[2]);
-        if (!fromAcc || !toAcc) continue;
-        updated.push({ ...t, fromAccountId: fromAcc.id, toAccountId: toAcc.id });
-        continue;
-      }
-      if (t.accountId) continue;
-      const tagMatch = t.originalText?.match(/\(支付:([^)]+)\)/);
-      if (tagMatch) {
-        const targetName = paymentTagToAccountName[tagMatch[1]];
-        if (targetName === undefined) { missingAccountNames.add(`未知標籤:${tagMatch[1]}`); continue; }
-        if (targetName === null) continue; // 不指定，故意跳過不配對帳戶
-        const acc = byName(targetName);
-        if (!acc) { missingAccountNames.add(targetName); continue; }
-        updated.push({ ...t, accountId: acc.id });
-        continue;
-      }
-      let targetName: string | null = null;
-      if (t.originalText?.startsWith('中信對帳單匯入')) targetName = '中國信託';
-      else if (t.originalText?.startsWith('中華郵政對帳單匯入') || t.originalText?.startsWith('VISA金融卡對帳單')) targetName = '中華郵政';
-      else if (t.originalText?.startsWith('現金支出日記帳匯入')) targetName = '現金';
-      else if (t.originalText?.startsWith('二技悠遊卡餘額分頁匯入')) targetName = '二技悠遊卡';
-      if (!targetName) continue;
-      const acc = byName(targetName);
-      if (!acc) { missingAccountNames.add(targetName); continue; }
-      updated.push({ ...t, accountId: acc.id });
-    }
-
-    if (updated.length > 0) {
-      const updatedIds = new Set(updated.map(u => u.id));
-      setTransactions(prev => prev.map(t => updatedIds.has(t.id) ? updated.find(u => u.id === t.id)! : t));
-      try {
-        await upsertTransactions(userId, updated);
-      } catch (err) {
-        console.error('配對帳戶失敗', err);
-        alert(`配對失敗！\n\n${formatSupabaseError(err)}`);
-        return;
-      }
-    }
-
-    if (missingAccountNames.size > 0) {
-      alert(
-        `已配對 ${updated.length} 筆交易。\n\n` +
-        `但找不到以下帳戶，這些交易先跳過沒配對，請先在碗盤總覽建立好同名帳戶再重新點一次這顆按鈕：\n` +
-        [...missingAccountNames].join('、')
-      );
-    } else if (updated.length === 0) {
-      alert('沒有需要配對的交易，可能都已經配對過了。');
-    } else {
-      alert(`已配對 ${updated.length} 筆交易的帳戶！`);
-    }
-  };
-
   const handleTagAction = (action: 'rename' | 'delete', l1: L1Category, oldName: string, newName?: string) => {
       const affectedIds = transactions.filter(t => t.category.l1 === l1 && t.category.l2 === oldName).map(t => t.id);
       let updated: Transaction[] = [];
@@ -1081,7 +1001,7 @@ const App: React.FC = () => {
         {view === 'transactions' && (
           <div className="bg-white rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 overflow-hidden">
             <div className="p-8 border-b border-orange-50 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white gap-4">
-              <div><h2 className="text-2xl font-extrabold text-slate-700 flex items-center gap-2"><div className="w-2 h-8 bg-amber-400 rounded-full"></div>罐罐明細本</h2><p className="text-slate-400 text-sm mt-1 ml-4 font-medium">共 {processedTransactions.length} 筆紀錄</p></div>
+              <div className="shrink-0"><h2 className="text-2xl font-extrabold text-slate-700 flex items-center gap-2 whitespace-nowrap"><div className="w-2 h-8 bg-amber-400 rounded-full shrink-0"></div>罐罐明細本</h2><p className="text-slate-400 text-sm mt-1 ml-4 font-medium whitespace-nowrap">共 {processedTransactions.length} 筆紀錄</p></div>
               <div className="flex flex-wrap gap-2 no-print">
                  <div className="relative" ref={addMenuRef}>
                    <button onClick={() => setIsAddMenuOpen(prev => !prev)} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-emerald-400 hover:bg-emerald-500 rounded-2xl transition active:scale-95 shadow-md shadow-emerald-100"><Plus className="w-4 h-4" />新增</button>
@@ -1092,7 +1012,6 @@ const App: React.FC = () => {
                      </div>
                    )}
                  </div>
-                 <button onClick={handleMatchAllAccounts} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-indigo-400 hover:bg-indigo-500 rounded-2xl transition active:scale-95 shadow-md shadow-indigo-100" title="一次性：把匯入交易的accountId/fromAccountId/toAccountId補上，可安全重複執行"><Wallet className="w-4 h-4" />配對帳戶(一次性)</button>
                  <button onClick={handleClearAllRecords} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-2xl transition active:scale-95 shadow-md shadow-rose-100" title="危險：清除所有交易紀錄(不影響帳戶本身)，無法復原"><Trash2 className="w-4 h-4" />清除所有紀錄</button>
                  <button onClick={handleOpenTrash} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="垃圾桶：救回不小心刪除的紀錄"><Trash2 className="w-4 h-4" />垃圾桶{deletedTransactions.length > 0 ? `(${deletedTransactions.length})` : ''}</button>
                  <button onClick={handleOpenActivityLog} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="重新裝碗紀錄：查詢/復原批次修正這種大動作編輯"><History className="w-4 h-4" />重新裝碗紀錄</button>
