@@ -156,12 +156,26 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   };
   const removeItemRow = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx));
   // 2026-07-24 Ivy反應：品項單價都填好了，填折扣時卻要她自己手算原始金額——
-  // 品項合計本來就算得出來，不該要她重算一次。提供「帶入品項合計」按鈕(不是自動覆蓋，
-  // 避免她正在手動調整金額時被意外蓋掉)，讓她一鍵把品項單價×數量的加總填進去。
+  // 品項合計本來就算得出來，不該要她重算一次。
   const itemsSubtotal = useMemo(
     () => items.reduce((sum, it) => sum + (it.unitPrice != null ? it.unitPrice * (it.quantity || 1) : 0), 0),
     [items]
   );
+  // 2026-08-13：原本是「帶入品項合計」按鈕要手動點一下才套用(刻意設計成不自動覆蓋，
+  // 避免手動調整金額時被意外蓋掉)。Ivy反應這樣還是要多點一次，改成品項合計一有變動
+  // 就自動代入——依賴陣列只放itemsSubtotal，不放amount/grossAmount，所以只有「品項
+  // 內容變動」才會觸發自動代入，使用者事後手動調整實付金額/原始金額不會被這個effect
+  // 蓋掉(除非又去改了品項，那時候品項合計改變、視為品項才是目前的依據，會重新代入)。
+  useEffect(() => {
+    if (itemsSubtotal <= 0) return;
+    const rounded = parseFloat(itemsSubtotal.toFixed(2));
+    // 故意只在依賴陣列放itemsSubtotal，不放showBreakdown——這裡只回應「品項內容
+    // 變動」，不回應「使用者切換要不要展開折扣區塊」，不然收合/展開折扣區塊本身
+    // 就會意外把已經算好的實付金額(原始金額-折扣)蓋回品項合計，蓋掉折扣的效果。
+    if (showBreakdown) setGrossAmount(rounded);
+    else setAmount(rounded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsSubtotal]);
   const toggleItemExpanded = (idx: number) => setExpandedItemIdx(prev => {
     const next = new Set(prev);
     if (next.has(idx)) next.delete(idx); else next.add(idx);
@@ -220,13 +234,11 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     setItems(resultingItems);
     if (receiptResult.discounts.length > 0) {
       setDiscounts(prev => [...prev, ...receiptResult.discounts]);
-      setShowBreakdown(true);
       // 2026-07-27 Ivy實測抓到的bug：有折扣時展開折扣區塊後，實付金額=原始金額-折扣，
-      // 但原始金額(grossAmount)沒有跟著品項自動帶入，會停留在舊值(新增交易通常是0)，
-      // 沒手動點「帶入品項合計」的話折扣一減就變負數。這裡直接比照那顆按鈕的邏輯自動帶入，
-      // 不用等她自己想起來要點。
-      const resultingSubtotal = resultingItems.reduce((sum, it) => sum + (it.unitPrice != null ? it.unitPrice * (it.quantity || 1) : 0), 0);
-      if (resultingSubtotal > 0) setGrossAmount(parseFloat(resultingSubtotal.toFixed(2)));
+      // 原始金額(grossAmount)要跟著品項自動帶入才不會折扣一減就變負數——現在由品項
+      // 合計變動時的通用自動代入effect處理(見itemsSubtotal那個useEffect)，這裡
+      // 只要負責把showBreakdown打開就好，不用自己重算一次。
+      setShowBreakdown(true);
     }
     setReceiptResult(null);
     setReceiptPendingAction(null);
@@ -366,26 +378,30 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   // 商家歷史推薦：同一個商家過去最常用的帳戶/付款通道/分類，選好商家後自動帶出，
   // 使用者接下來的步驟還是可以手動調整，不會被鎖死。
   const merchantDefaults = useMemo(() => {
-    const counts: Record<string, { accountId: Record<string, number>; paymentChannel: Record<string, number>; l1: Record<string, number>; l2: Record<string, number> }> = {};
+    const counts: Record<string, { accountId: Record<string, number>; paymentChannel: Record<string, number>; l1: Record<string, number>; l2: Record<string, number>; l3: Record<string, number> }> = {};
     allTransactions.forEach(t => {
       if (!t.merchant) return;
-      if (!counts[t.merchant]) counts[t.merchant] = { accountId: {}, paymentChannel: {}, l1: {}, l2: {} };
+      if (!counts[t.merchant]) counts[t.merchant] = { accountId: {}, paymentChannel: {}, l1: {}, l2: {}, l3: {} };
       if (t.accountId) counts[t.merchant].accountId[t.accountId] = (counts[t.merchant].accountId[t.accountId] || 0) + 1;
       if (t.paymentChannel) counts[t.merchant].paymentChannel[t.paymentChannel] = (counts[t.merchant].paymentChannel[t.paymentChannel] || 0) + 1;
       counts[t.merchant].l1[t.category.l1] = (counts[t.merchant].l1[t.category.l1] || 0) + 1;
       if (t.category.l2) counts[t.merchant].l2[t.category.l2] = (counts[t.merchant].l2[t.category.l2] || 0) + 1;
+      // 2026-08-13新增：細項(l3，例如早餐/飲料)之前完全沒有跟著商家歷史帶出來，
+      // 每次都要手動選——同一個商家絕大多數時候細項也是同一個，一起帶。
+      if (t.category.l3) counts[t.merchant].l3[t.category.l3] = (counts[t.merchant].l3[t.category.l3] || 0) + 1;
     });
     const pickTop = (rec: Record<string, number>): string | undefined => {
       const entries = Object.entries(rec);
       return entries.length > 0 ? entries.sort((a, b) => b[1] - a[1])[0][0] : undefined;
     };
-    const result: Record<string, { accountId?: string; paymentChannel?: string; l1?: L1Category; l2?: string }> = {};
+    const result: Record<string, { accountId?: string; paymentChannel?: string; l1?: L1Category; l2?: string; l3?: string }> = {};
     Object.entries(counts).forEach(([merchantName, data]) => {
       result[merchantName] = {
         accountId: pickTop(data.accountId),
         paymentChannel: pickTop(data.paymentChannel),
         l1: pickTop(data.l1) as L1Category | undefined,
         l2: pickTop(data.l2),
+        l3: pickTop(data.l3),
       };
     });
     return result;
@@ -402,6 +418,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     if (defaults.paymentChannel) setPaymentChannel(defaults.paymentChannel);
     if (defaults.l1) setL1(defaults.l1);
     if (defaults.l2) setL2(defaults.l2);
+    if (defaults.l3) setL3(defaults.l3);
   };
   const handleMerchantBlur = () => applyMerchantDefaults(merchant);
 
@@ -1012,15 +1029,6 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                    onCommit={n => setAmount(n)}
                    className={`w-full p-4 border rounded-2xl font-bold transition outline-none shadow-sm ${showBreakdown ? 'bg-slate-50 text-slate-500' : 'bg-white text-slate-700'} ${errors.amount ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200 focus:border-amber-300 focus:ring-4 focus:ring-amber-50'}`}
                 />
-                {!showBreakdown && itemsSubtotal > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setAmount(parseFloat(itemsSubtotal.toFixed(2)))}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-amber-500 bg-amber-50 px-2 py-1 rounded-lg hover:bg-amber-100 transition"
-                  >
-                    帶入品項合計 ${itemsSubtotal.toFixed(0)}
-                  </button>
-                )}
               </div>
             </div>
 
@@ -1047,15 +1055,6 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                         onCommit={n => setGrossAmount(n)}
                         className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl font-bold text-slate-700 outline-none focus:border-amber-300"
                       />
-                      {itemsSubtotal > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setGrossAmount(parseFloat(itemsSubtotal.toFixed(2)))}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-amber-500 bg-white px-2 py-1 rounded-lg hover:bg-amber-50 transition border border-amber-100"
-                        >
-                          帶入品項合計 ${itemsSubtotal.toFixed(0)}
-                        </button>
-                      )}
                     </div>
                   </div>
                   <div className="space-y-2">
