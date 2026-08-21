@@ -923,6 +923,12 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                       {sharedExpenses.some(se => se.transactionId === transaction.id) ? '編輯這碗跟誰分' : '這碗跟誰分'}
                     </button>
                   )}
+                  {isNew && (
+                    <p className="text-[11px] text-purple-400 font-bold px-1">
+                      「這碗跟誰分」要先存檔這筆才能設定：把這筆存好後，回罐罐明細本點開這筆、
+                      再進來一次，就會看到這個按鈕了。
+                    </p>
+                  )}
                 </div>
               )}
             </div>
