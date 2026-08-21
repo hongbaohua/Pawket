@@ -490,11 +490,18 @@ const App: React.FC = () => {
     }
   };
 
-  const handleEditSave = (updatedTx: Transaction, options?: { openSplitAfter?: boolean; additionalTransfer?: Transaction }) => {
+  const handleEditSave = (updatedTx: Transaction, options?: { openSplitAfter?: boolean; additionalTransfer?: Transaction; pendingSharedExpense?: SharedExpense; pendingAdditionalSettlements?: Transaction[] }) => {
     setTransactions(prev => {
       const next = prev.some(t => t.id === updatedTx.id) ? prev.map(t => t.id === updatedTx.id ? updatedTx : t) : [updatedTx, ...prev];
-      return options?.additionalTransfer ? [options.additionalTransfer, ...next] : next;
+      const withTransfer = options?.additionalTransfer ? [options.additionalTransfer, ...next] : next;
+      return options?.pendingAdditionalSettlements?.length ? [...options.pendingAdditionalSettlements, ...withTransfer] : withTransfer;
     });
+    // 新增交易時順手在同一個表單設定了「這碗跟誰分」(2026-08-21新增，見
+    // EditTransactionModal的pendingSharedExpense)：這筆分帳資料本地state先更新。
+    if (options?.pendingSharedExpense) {
+      const expense = options.pendingSharedExpense;
+      setSharedExpenses(prev => prev.some(se => se.id === expense.id) ? prev.map(se => se.id === expense.id ? expense : se) : [...prev, expense]);
+    }
     setEditingTransaction(null);
     // 新增流程第3步問過「要不要分裝拆帳」，選是的話存檔後直接接著開分裝盤，不用存完再回去找按鈕點。
     if (options?.openSplitAfter) {
@@ -507,10 +514,23 @@ const App: React.FC = () => {
         }
     }
     if (userId) {
-      upsertTransaction(userId, updatedTx).catch(err => console.error('儲存交易失敗', err));
+      // pendingSharedExpense/pendingAdditionalSettlements要等這筆交易本身真的存進
+      // transactions表之後才能寫入——shared_expenses.transaction_id是外鍵，指向的
+      // 這筆交易如果還沒存在，會直接違反外鍵限制寫入失敗，所以用.then()接在後面，
+      // 不能跟upsertTransaction並行送出(見schema.sql shared_expenses表定義)。
+      const txSaved = upsertTransaction(userId, updatedTx).catch(err => console.error('儲存交易失敗', err));
       // 當場儲值：連帶產生的那筆帳戶互轉也要一併存進資料庫，不然重整頁面就消失了。
       if (options?.additionalTransfer) {
         upsertTransaction(userId, options.additionalTransfer).catch(err => console.error('儲存儲值交易失敗', err));
+      }
+      if (options?.pendingSharedExpense) {
+        const expense = options.pendingSharedExpense;
+        txSaved.then(() => upsertSharedExpense(userId, expense).catch(err => console.error('儲存分攤明細失敗', err)));
+      }
+      if (options?.pendingAdditionalSettlements?.length) {
+        options.pendingAdditionalSettlements.forEach(tx => {
+          txSaved.then(() => upsertTransaction(userId, tx).catch(err => console.error('儲存結算交易失敗', err)));
+        });
       }
     }
     // 對帳模組「新增這筆」流程：這次存檔如果是為了補一列銀行對帳單資料，把這次確認的

@@ -32,13 +32,29 @@ const SETTLE_METHODS: NonNullable<SharedExpenseParticipant['settleMethod']>[] = 
 const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, existing, accounts, allTransactions, onClose, onSave }) => {
   const [totalAmount, setTotalAmount] = useState<number>(existing?.totalAmount ?? transaction.amount);
   const [myShare, setMyShare] = useState<number>(existing?.myShare ?? transaction.amount);
+  // 2026-08-21：第一次設定(還沒有existing)時，如果交易本身的「特殊性質」已經填過
+  // 對象(例如借貸標記填了「廖妤甄」)，這裡直接帶出來當第一位分攤對象的名字，不用
+  // 使用者自己再打一次一樣的名字——金額/方向她還是要自己確認，這裡只省打名字。
   const [participants, setParticipants] = useState<ParticipantDraft[]>(
-    (existing?.participants ?? []).map(p => ({
-      ...p,
-      wasSettledBefore: p.settled,
-      settleAction: 'none',
-      settlementAccountId: accounts.find(a => !a.isArchived)?.id || '',
-    }))
+    existing
+      ? existing.participants.map(p => ({
+          ...p,
+          wasSettledBefore: p.settled,
+          settleAction: 'none',
+          settlementAccountId: accounts.find(a => !a.isArchived)?.id || '',
+        }))
+      : transaction.specialTag?.counterparty
+        ? [{
+            id: uuidv4(),
+            name: transaction.specialTag.counterparty,
+            owedAmount: 0,
+            direction: 'they_owe_me',
+            settled: false,
+            wasSettledBefore: false,
+            settleAction: 'none',
+            settlementAccountId: accounts.find(a => !a.isArchived)?.id || '',
+          }]
+        : []
   );
 
   const participantsTotal = participants.reduce((sum, p) => sum + (isNaN(p.owedAmount) ? 0 : p.owedAmount), 0);

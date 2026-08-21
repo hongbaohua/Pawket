@@ -5,6 +5,7 @@ import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, Chev
 import { calculateAccountBalances } from '../services/logicService';
 import { analyzeReceiptItems, ReceiptAnalysisResult } from '../services/geminiService';
 import { v4 as uuidv4 } from 'uuid';
+import SharedExpenseModal from './SharedExpenseModal';
 
 // 2026-07-22 Ivy反應金額欄位太死板：原價/折扣/代購費/匯率/進位規則每家代購都不一樣，
 // 原本用Excel試算表可以直接打公式，現在被拆成好幾個獨立欄位反而更亂。
@@ -82,7 +83,7 @@ interface EditTransactionModalProps {
   onTagAction?: (action: 'rename' | 'delete', l1: L1Category, oldName: string, newName?: string) => void;
   onManageSharedExpense?: (transaction: Transaction) => void;
   onClose: () => void;
-  onSave: (updatedTransaction: Transaction, options?: { openSplitAfter?: boolean; additionalTransfer?: Transaction }) => void;
+  onSave: (updatedTransaction: Transaction, options?: { openSplitAfter?: boolean; additionalTransfer?: Transaction; pendingSharedExpense?: SharedExpense; pendingAdditionalSettlements?: Transaction[] }) => void;
 }
 
 const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
@@ -338,6 +339,13 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   const [specialTagType, setSpecialTagType] = useState<'none' | SpecialTag['type']>(transaction.specialTag?.type || 'none');
   const [specialTagCounterparty, setSpecialTagCounterparty] = useState(transaction.specialTag?.counterparty || '');
   const [specialTagNote, setSpecialTagNote] = useState(transaction.specialTag?.note || '');
+
+  // 2026-08-21新增：新增交易中(isNew)也能直接設定「這碗跟誰分」，存的結果先放這裡，
+  // 等這筆交易本身存檔時才在options裡一起帶給App.tsx，兩筆一起寫進資料庫(順序：先存
+  // 交易本身，分帳明細的外鍵才連得上，見App.tsx handleEditSave)。
+  const [showLocalSharedExpenseModal, setShowLocalSharedExpenseModal] = useState(false);
+  const [pendingSharedExpense, setPendingSharedExpense] = useState<SharedExpense | undefined>(undefined);
+  const [pendingAdditionalSettlements, setPendingAdditionalSettlements] = useState<Transaction[]>([]);
 
   // Validation State
   const [errors, setErrors] = useState<Record<string, boolean>>({});
@@ -616,14 +624,15 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
         l2,
         l3: l3 || '' // Allow empty
       }
-    }, { openSplitAfter: isNew && wantsSplitAfterSave, additionalTransfer });
+    }, { openSplitAfter: isNew && wantsSplitAfterSave, additionalTransfer, pendingSharedExpense, pendingAdditionalSettlements: pendingAdditionalSettlements.length > 0 ? pendingAdditionalSettlements : undefined });
     onClose();
   };
 
   return (
+    <>
     <div className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
       <div className="bg-[#FFFBF5] rounded-[40px] shadow-2xl max-w-lg w-full flex flex-col border-4 border-white max-h-[90vh] overflow-hidden relative">
-        
+
         {/* Error Toast */}
         {showErrorToast && (
             <div className="absolute top-20 left-1/2 -translate-x-1/2 bg-rose-500 text-white px-6 py-3 rounded-full shadow-lg z-50 flex items-center gap-2 animate-in slide-in-from-top-4 fade-in duration-300 w-max max-w-[90%]">
@@ -910,24 +919,22 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                     placeholder="額外說明（選填，例如：已打統編、0313批次）"
                     className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-purple-300"
                   />
-                  {/* 分攤明細(規格書階段7)只有已存在的交易才能設定——SharedExpense要連結真實的
-                      transactionId，新增中、還沒存檔的交易還沒有這個id存在資料庫裡，要先存檔
-                      才能設定。 */}
-                  {!isNew && onManageSharedExpense && (
+                  {/* 分攤明細(規格書階段7)要連結真實的transactionId，新增中的交易在client端
+                      其實已經有uuidv4先產生好的id(見App.tsx的handleAddTransaction)，只是
+                      還沒真的存進資料庫。2026-08-21改成新增中也能直接設定：這裡開的是本地的
+                      SharedExpenseModal(見下方showLocalSharedExpenseModal那段)，存的結果先
+                      放在pendingSharedExpense，等這筆交易本身真的存檔時才一起送出，不會提早
+                      違反shared_expenses.transaction_id的外鍵限制。已存在的交易(!isNew)則
+                      維持原本作法，直接交給App.tsx的onManageSharedExpense即時寫入資料庫。 */}
+                  {(isNew || onManageSharedExpense) && (
                     <button
                       type="button"
-                      onClick={() => onManageSharedExpense(transaction)}
+                      onClick={() => isNew ? setShowLocalSharedExpenseModal(true) : onManageSharedExpense!(transaction)}
                       className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-500 rounded-xl text-xs font-bold transition"
                     >
                       <Users className="w-3.5 h-3.5" />
-                      {sharedExpenses.some(se => se.transactionId === transaction.id) ? '編輯這碗跟誰分' : '這碗跟誰分'}
+                      {(sharedExpenses.some(se => se.transactionId === transaction.id) || pendingSharedExpense) ? '編輯這碗跟誰分' : '這碗跟誰分'}
                     </button>
-                  )}
-                  {isNew && (
-                    <p className="text-[11px] text-purple-400 font-bold px-1">
-                      「這碗跟誰分」要先存檔這筆才能設定：把這筆存好後，回罐罐明細本點開這筆、
-                      再進來一次，就會看到這個按鈕了。
-                    </p>
                   )}
                 </div>
               )}
@@ -1295,6 +1302,28 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
         </div>
       </div>
     </div>
+    {showLocalSharedExpenseModal && (
+      <SharedExpenseModal
+        transaction={{
+          ...transaction,
+          merchant,
+          amount: parseFloat(amount.toString()) || transaction.amount,
+          specialTag: specialTagType !== 'none'
+            ? { type: specialTagType, counterparty: specialTagCounterparty.trim() || undefined, note: specialTagNote.trim() || undefined }
+            : undefined,
+        }}
+        existing={pendingSharedExpense}
+        accounts={accounts}
+        allTransactions={allTransactions}
+        onClose={() => setShowLocalSharedExpenseModal(false)}
+        onSave={(expense, additionalSettlements) => {
+          setPendingSharedExpense(expense);
+          setPendingAdditionalSettlements(additionalSettlements);
+          setShowLocalSharedExpenseModal(false);
+        }}
+      />
+    )}
+    </>
   );
 };
 
