@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 import json, os
 
-ROOT = r'C:\Users\Master\Projects\Pawket\Pawket'
+ROOT = r'C:\Users\user\Projects\Pawket\Pawket'
 HERE = os.path.join(ROOT, 'data-import')
 
 with open(os.path.join(HERE, 'ctbc_final_merged.json'), encoding='utf-8') as f:

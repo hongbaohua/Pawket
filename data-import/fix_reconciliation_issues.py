@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # 2026-07-21 逐一比對四批真實資料 vs 原始xlsx/csv/pdf 後，修正抓到的3個真的錯誤：
 # 1. cash_2023_2024_records.json row571(全家)：價錢欄是文字公式"59+35"，原本沒被計算，amount誤存成0，應為94
 # 2. cash_2023_2024_records.json row680(七盞茶)：原始表格該列從「地點」欄開始整體多一欄空白，
@@ -9,7 +9,7 @@
 #    確認過是「過年紅包」)，先用低信心度佔位，等Ivy確認
 import json, uuid
 
-ROOT = r'C:\Users\Master\Projects\Pawket\Pawket'
+ROOT = r'C:\Users\user\Projects\Pawket\Pawket'
 
 # --- 修正1+2: 現金支出2024 ---
 path = ROOT + r'\data-import\cash_2023_2024_records.json'

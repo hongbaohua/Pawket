@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # 2026-07-21 Ivy提供各帳戶目前的真實餘額，跟App算出來的餘額（沒有期初餘額欄位，
 # 純粹加總所有交易）有落差，用「手動新增一筆最早日期的調整交易」來補這個落差，
 # 不改資料結構（跟AccountBalances.tsx footer提示的邏輯一致）。
@@ -9,7 +9,7 @@
 # 2026-07-21稍晚補了現金目前實際持有金額，一併加進來。
 import json, uuid
 
-ROOT = r'C:\Users\Master\Projects\Pawket\Pawket'
+ROOT = r'C:\Users\user\Projects\Pawket\Pawket'
 
 # (帳戶名稱, 調整金額, 這筆資料計算後預期落在該帳戶的日期基準點——用比所有真實交易更早的日期)
 ADJUSTMENTS = [

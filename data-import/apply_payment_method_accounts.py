@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # 2026-07-21 Ivy確認的支付方式歸戶方案：
 # - 「儲值」類別、地點=MyCard/點點卡、且支付欄空白(現金付的) -> 這是「用現金買點數」，
 #   改成轉帳(現金->MyCard/點點卡)，不要再算一般支出(避免跟下面的花費列雙重計算)
@@ -14,8 +14,8 @@
 # 一段可被handleMatchAllAccounts解析的標籤，例如"(支付:MyCard)"、"(支付:不指定)"。
 import json, re, openpyxl
 
-ROOT = r'C:\Users\Master\Projects\Pawket\Pawket'
-XLSX = r'C:\Users\Master\Projects\Pawket\對帳資料\現金支出與悠遊卡\2023-2024現金支出.xlsx'
+ROOT = r'C:\Users\user\Projects\Pawket\Pawket'
+XLSX = r'C:\Users\user\Projects\Pawket\對帳資料\現金支出與悠遊卡\2023-2024現金支出.xlsx'
 
 PAY_TO_ACCOUNT = {
     '悠遊卡': '二技悠遊卡',

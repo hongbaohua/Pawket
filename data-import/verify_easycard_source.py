@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # 2026-07-23 全面資料查核 Phase 1：二技悠遊卡39筆，逐row比對原始xlsx(「二技悠遊卡餘額」分頁)
 # 的日期/金額，同時用「餘額」欄位做running balance交叉驗證(上一列餘額+這列金額=這列餘額)，
 # 抓比單純比對日期/金額更嚴格的錯誤(例如金額正負號錯誤但剛好...其實不太可能同時通過兩種
@@ -22,7 +22,7 @@ def parse_amount(v):
         return float(eval(cleaned, {'__builtins__': {}}, {}))
     return None
 
-ROOT = r'C:\Users\Master\Projects\Pawket'
+ROOT = r'C:\Users\user\Projects\Pawket'
 XLSX_PATH = ROOT + r'\對帳資料\現金支出與悠遊卡\2023-2024現金支出.xlsx'
 UNIFIED_PATH = ROOT + r'\Pawket\匯入_統整全部.json'
 

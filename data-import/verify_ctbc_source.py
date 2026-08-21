@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # 2026-07-23 全面資料查核 Phase 1：重新讀取最原始的中信xlsx，逐row跟目前的
 # 匯入_統整全部.json比對日期/金額，不依賴任何中間產物，確認fix_001~008這一整層
 # 修正沒有意外改壞任何一筆的原始金額/日期（見PROJECT_STATUS.md第5.14節）。
@@ -11,7 +11,7 @@ import openpyxl
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-ROOT = r'C:\Users\Master\Projects\Pawket'
+ROOT = r'C:\Users\user\Projects\Pawket'
 XLSX_PATH = ROOT + r'\對帳資料\中國信託\中信餘額_正確答案.xlsx'
 UNIFIED_PATH = ROOT + r'\Pawket\匯入_統整全部.json'
 

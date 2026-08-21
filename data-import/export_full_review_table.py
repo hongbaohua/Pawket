@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # 2026-07-23 全面資料查核 Phase 2：把全部交易依照系統的完整欄位匯出成Excel，給Ivy逐筆審核。
 # 2026-07-24 改版：
 # 1. 資料來源改成直接查詢Supabase live資料(用query_supabase.py，SUPABASE_SERVICE_ROLE_KEY
@@ -22,7 +22,7 @@ from query_supabase import fetch, fetch_all
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-ROOT = r'C:\Users\Master\Projects\Pawket'
+ROOT = r'C:\Users\user\Projects\Pawket'
 OUT_PATH = ROOT + r'\Pawket\data-import\全面資料查核表_2026-07-23.xlsx'
 # Ivy反應在Pawket\data-import\深層路徑裡找不到這份檔案——比照CLAUDE.md「不該讓Ivy自己
 # 巡查資料夾找東西」的原則，另外存一份在最外層根目錄，這才是Ivy真正應該打開的位置，

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # 2026-07-23 全面資料查核 Phase 2 準備工作：抓出不重複商家清單，分三類：
 # A) Ivy自己在4-9.json標過分類的(視為已確認，不用查證)
 # B) categorize_rules.py關鍵字規則猜的(有一定根據，但不是Ivy親自確認，值得查證)
@@ -10,7 +10,7 @@ from collections import Counter
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-ROOT = r'C:\Users\Master\Projects\Pawket'
+ROOT = r'C:\Users\user\Projects\Pawket'
 UNIFIED_PATH = ROOT + r'\Pawket\匯入_統整全部.json'
 OLD_JSON_PATH = ROOT + r'\對帳資料\Ivy手標歷史分類參考\4-9.json'
 

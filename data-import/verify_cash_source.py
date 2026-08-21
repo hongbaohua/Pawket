@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # 2026-07-23 全面資料查核 Phase 1：現金支出2023/2024共889筆(含1筆分裝多出來的子項目，
 # 原始row數888)，逐row重新讀取原始xlsx(「2023」「2024」兩個分頁)比對日期/金額，
 # 不依賴任何中間產物。originalText保留了原始sheet名稱+row編號
@@ -13,7 +13,7 @@ import openpyxl
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-ROOT = r'C:\Users\Master\Projects\Pawket'
+ROOT = r'C:\Users\user\Projects\Pawket'
 XLSX_PATH = ROOT + r'\對帳資料\現金支出與悠遊卡\2023-2024現金支出.xlsx'
 UNIFIED_PATH = ROOT + r'\Pawket\匯入_統整全部.json'
 

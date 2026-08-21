@@ -1,9 +1,9 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 # 把中信775筆(750收支+25轉帳)的所有修正(折扣/重新解析/商家去重)合併成最終版，
 # 供這次「清除重來、統一匯入」使用。
 import json, uuid, os
 
-ROOT = r'C:\Users\Master\Projects\Pawket\Pawket'
+ROOT = r'C:\Users\user\Projects\Pawket\Pawket'
 HERE = os.path.join(ROOT, 'data-import')
 
 with open(os.path.join(ROOT, '匯入_中信對帳_775筆.json'), encoding='utf-8') as f:
