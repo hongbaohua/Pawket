@@ -2,7 +2,7 @@
 import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig, MerchantAlias, MerchantAliasCandidate, LongTermReserve } from '../types';
 import { format, getDaysInMonth, getDate, startOfMonth, endOfMonth, addMonths, subMonths, differenceInDays, isAfter, isBefore, startOfDay, endOfDay, parseISO, startOfYear, getMonth, getYear, isSameMonth, differenceInMonths, subDays, addDays } from 'date-fns';
 import {
-  RUNWAY_ANALYSIS_WINDOW_DAYS,
+  RUNWAY_ANALYSIS_WINDOW_DAYS, RUNWAY_OUTLIER_IQR_MULTIPLIER, RUNWAY_OUTLIER_MIN_SAMPLE_SIZE,
   ANOMALY_MIN_HISTORY_COUNT, ANOMALY_AMOUNT_MULTIPLIER, ANOMALY_MIN_AMOUNT,
   FREQUENCY_HISTORY_MONTHS, FREQUENCY_MULTIPLIER, FREQUENCY_MIN_COUNT,
   PIE_L3_PROMOTE_THRESHOLD, PIE_MAX_SLICES,
@@ -817,6 +817,24 @@ export const applyHistoricalCategory = (newTx: Transaction, history: Transaction
     return newTx;
 };
 
+// 盒鬚圖法(IQR)排除離群值：超過 Q3 + RUNWAY_OUTLIER_IQR_MULTIPLIER×IQR 的金額視為極端值。
+// 樣本數太少時四分位數沒有統計意義，直接原樣返回、不做排除。
+const excludeOutliers = (amounts: number[]): number[] => {
+    if (amounts.length < RUNWAY_OUTLIER_MIN_SAMPLE_SIZE) return amounts;
+    const sorted = [...amounts].sort((a, b) => a - b);
+    const quartile = (p: number): number => {
+        const pos = (sorted.length - 1) * p;
+        const base = Math.floor(pos);
+        const rest = pos - base;
+        return sorted[base + 1] !== undefined
+            ? sorted[base] + rest * (sorted[base + 1] - sorted[base])
+            : sorted[base];
+    };
+    const iqr = quartile(0.75) - quartile(0.25);
+    const upperBound = quartile(0.75) + RUNWAY_OUTLIER_IQR_MULTIPLIER * iqr;
+    return amounts.filter(a => a <= upperBound);
+};
+
 // 現金緩衝耗盡預警(Runway)：估算「照最近的燒錢速度，手上真的能動用的錢還能撐幾天」。
 // 2026-07-23重新設計（Ivy確認）：
 // - 餘額改用「可動用餘額」(現金+金融卡帳戶的真實餘額，沿用calculateWishlistMetrics
@@ -824,6 +842,8 @@ export const applyHistoricalCategory = (newTx: Transaction, history: Transaction
 //   支付/儲值卡)的虛擬數字——後者算出來的不是真的能花的錢。
 // - 燒錢速度改成固定支出+變動支出一起算，不再只看變動支出——房租水電這些固定支出
 //   一樣會讓現金變少，只算變動支出會低估真實燒錢速度、高估還能撐幾天。
+// 2026-08-26新增：算日均燒錢速度前先用IQR排除單筆極端值(見上方excludeOutliers)，
+// 避免一次繳一整年保費、買筆電這種罕見大額支出把「還能撐幾天」嚴重低估。
 export const calculateRunway = (allTransactions: Transaction[], accounts: Account[]) => {
     const liquidAccounts = accounts.filter(a => !a.isArchived && (a.type === 'cash' || a.type === 'bank_debit'));
     const balances = calculateAccountBalances(liquidAccounts, allTransactions);
@@ -831,7 +851,7 @@ export const calculateRunway = (allTransactions: Transaction[], accounts: Accoun
 
     const now = new Date();
     const windowStart = subDays(now, RUNWAY_ANALYSIS_WINDOW_DAYS);
-    const recentExpenses = allTransactions
+    const recentExpenseAmounts = allTransactions
         .filter(t => {
             const d = parseISO(t.date);
             return t.type === 'expense'
@@ -839,7 +859,8 @@ export const calculateRunway = (allTransactions: Transaction[], accounts: Accoun
                 && isAfter(d, windowStart)
                 && isBefore(d, now);
         })
-        .reduce((sum, t) => sum + t.amount, 0);
+        .map(t => t.amount);
+    const recentExpenses = excludeOutliers(recentExpenseAmounts).reduce((sum, amount) => sum + amount, 0);
     const firstTxDate = allTransactions.length > 0
         ? allTransactions.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0].date
         : now.toISOString();
