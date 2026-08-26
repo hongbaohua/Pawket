@@ -338,9 +338,27 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           >
             <p className="text-xs text-slate-400 leading-relaxed">
               保險費、健保勞保、房租、水電、稅務規費這類金額大、但不是每月繳一次的支出，平常容易被忽略，等到真的到期時可能拿不出錢。
-              這裡列出來的項目，會平均攤進下面「安全水位」的日常開銷保留裡——不追蹤精確到期日，只是先把每月該多存的錢預留起來。
+              下面列出來的項目，會平均攤進「安全水位」的日常開銷保留裡——不追蹤精確到期日，只是先把每月該多存的錢預留起來。
               名稱、金額、繳費週期都可以自己填，繳費週期不限選項，例如健保雙月繳一次就填「2」即可。
             </p>
+
+            {/* 2026-08-26 Ivy要求：計算結果放最前面，不用先滑過整個編輯清單才看到結論 */}
+            <div className="pb-2 border-b border-slate-100 space-y-2">
+              <p className="text-xs font-bold text-slate-500 flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5 text-rose-400" /> 目前的安全水位（自動計算，不用手動填）</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl">
+                  <p className="text-[10px] font-bold text-slate-400 mb-1">日常開銷保留</p>
+                  <p className="font-mono font-bold text-sm text-slate-700">${suggested.dailyBuffer.toLocaleString()}</p>
+                </div>
+                <div className="p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl">
+                  <p className="text-[10px] font-bold text-slate-400 mb-1">緊急預備金</p>
+                  <p className="font-mono font-bold text-sm text-slate-700">${suggested.emergencyFund.toLocaleString()}</p>
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-300 leading-relaxed">
+                算法：最近12個月固定+變動支出的月中位數 ${Math.round(suggested.monthlyBaseline).toLocaleString()}，日常開銷保留＝(月中位數＋下面長期預留支出的月均攤)×1.5，緊急預備金＝月中位數×3。喵喵心願罐算「現在買不買得起」時會直接用這兩個數字，隨資料自動更新，不用手動套用。
+              </p>
+            </div>
 
             {reserves.length > 0 && (
               <div className="space-y-2">
@@ -409,24 +427,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               >
                 <Plus className="w-3 h-3" /> 自訂項目（不在上面清單裡的話，直接手動新增一筆）
               </button>
-            </div>
-
-            {/* 安全水位：唯讀、即時算出來，跟長期預留支出放在同一區塊方便對照 */}
-            <div className="pt-2 mt-2 border-t border-slate-100 space-y-2">
-              <p className="text-xs font-bold text-slate-500 flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5 text-rose-400" /> 目前的安全水位（自動計算，不用手動填）</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl">
-                  <p className="text-[10px] font-bold text-slate-400 mb-1">日常開銷保留</p>
-                  <p className="font-mono font-bold text-sm text-slate-700">${suggested.dailyBuffer.toLocaleString()}</p>
-                </div>
-                <div className="p-2.5 bg-[#FFFBF5] border border-slate-200 rounded-xl">
-                  <p className="text-[10px] font-bold text-slate-400 mb-1">緊急預備金</p>
-                  <p className="font-mono font-bold text-sm text-slate-700">${suggested.emergencyFund.toLocaleString()}</p>
-                </div>
-              </div>
-              <p className="text-[10px] text-slate-300 leading-relaxed">
-                算法：最近12個月固定+變動支出的月中位數 ${Math.round(suggested.monthlyBaseline).toLocaleString()}，日常開銷保留＝(月中位數＋上面長期預留支出的月均攤)×1.5，緊急預備金＝月中位數×3。喵喵心願罐算「現在買不買得起」時會直接用這兩個數字，隨資料自動更新，不用手動套用。
-              </p>
             </div>
           </AccordionSection>
 

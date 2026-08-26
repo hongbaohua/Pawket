@@ -215,15 +215,19 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
                                                  <span className="text-xl font-black text-indigo-600">${item.targetAmount.toLocaleString()}</span>
                                              </div>
                                              {m && (
-                                                 m.canAffordNow ? (
-                                                     <p className="text-sm font-bold text-emerald-500 flex items-center gap-1.5 mt-2">
-                                                         <CheckCircle2 className="w-4 h-4" /> 可動用餘額夠了，可以買了！
-                                                     </p>
-                                                 ) : (
-                                                     <p className="text-sm font-bold text-rose-500 mt-2">
-                                                         還差 ${m.shortfall.toLocaleString()}
-                                                     </p>
-                                                 )
+                                                 <>
+                                                     {m.canAffordNow ? (
+                                                         <p className="text-sm font-bold text-emerald-500 flex items-center gap-1.5 mt-2">
+                                                             <CheckCircle2 className="w-4 h-4" /> {m.isLargeItem ? '可動用餘額夠了，可以買了！' : '日常開銷負擔得起，可以買了！'}
+                                                         </p>
+                                                     ) : (
+                                                         <p className="text-sm font-bold text-rose-500 mt-2">
+                                                             還差 ${m.shortfall.toLocaleString()}
+                                                             {!m.isLargeItem && m.equivalentDailyAllowanceDays != null && <span className="text-slate-400 font-normal text-xs"> (約{m.equivalentDailyAllowanceDays}天的日常開銷)</span>}
+                                                         </p>
+                                                     )}
+                                                     <p className="text-[10px] text-slate-300 mt-1">{m.isLargeItem ? '大額心願：已完整保留日常開銷＋緊急預備金安全水位' : '小額心願：只保留緊急預備金，當作日常開銷的一部分判斷夠不夠'}</p>
+                                                 </>
                                              )}
                                          </div>
                                      )}

@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { AlertCircle, TrendingUp, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper, Users, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { AlertCircle, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper, Users, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
 import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, LongTermReserve, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange, SharedExpense } from '../types';
 import { addMonths, format, startOfMonth, endOfMonth, startOfDay, endOfDay, isValid, parseISO } from 'date-fns';
-import { analyzeFinancialHealth, getSeasonalTrends, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, getCategoryPieData, detectRecurringExpenses, calculateWishlistMetrics, WishlistItemMetrics, calculateProjectedPenalty, calculateRunway, getDateRange } from '../services/logicService';
+import { analyzeFinancialHealth, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, getCategoryPieData, detectRecurringExpenses, calculateWishlistMetrics, WishlistItemMetrics, calculateProjectedPenalty, calculateRunway, getDateRange } from '../services/logicService';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { DTI_CAUTION_THRESHOLD, DTI_CRITICAL_THRESHOLD, RUNWAY_WARNING_DAYS } from '../config/financialRules';
@@ -90,7 +90,10 @@ const WishlistCard = ({
                 {metrics.canAffordNow ? (
                     <p className="text-xs font-bold text-emerald-600 flex items-center gap-1 mt-1"><CheckCircle2 className="w-3.5 h-3.5" /> 餘額夠買了！</p>
                 ) : (
-                    <p className="text-xs font-bold text-rose-500 mt-1">還差 ${Math.round(metrics.shortfall).toLocaleString()}</p>
+                    <p className="text-xs font-bold text-rose-500 mt-1">
+                        還差 ${Math.round(metrics.shortfall).toLocaleString()}
+                        {!metrics.isLargeItem && metrics.equivalentDailyAllowanceDays != null && <span className="text-slate-400 font-normal"> (約{metrics.equivalentDailyAllowanceDays}天日常開銷)</span>}
+                    </p>
                 )}
                 {queueCount > 0 && <p className="text-[10px] text-slate-400 mt-1">後面還排了 {queueCount} 個願望</p>}
             </div>
@@ -116,7 +119,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const healthMetrics = useMemo(() => analyzeFinancialHealth(transactions), [transactions]);
   const pieData = useMemo(() => getCategoryPieData(transactions), [transactions]);
   const recurringExpenses = useMemo(() => detectRecurringExpenses(allTransactions), [allTransactions]);
-  const seasonalData = useMemo(() => getSeasonalTrends(allTransactions), [allTransactions]);
   const anomalies = useMemo(() => analyzeL3Anomalies(transactions, allTransactions), [transactions, allTransactions]);
   const freqAlerts = useMemo(() => analyzeL2Frequency(transactions, allTransactions, currentDate), [transactions, allTransactions, currentDate]);
   const incomeBreakdown = useMemo(() => getCategoryBreakdown(transactions, 'income'), [transactions]);
@@ -127,7 +129,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     [wishlistItems, accounts, allTransactions, longTermReserves]
   );
   const penaltyData = useMemo(() => timeScope === 'all' ? { isOverspent: false, overage: 0, penaltyAmount: 0 } : calculateProjectedPenalty(transactions, budgets, penaltyConfig), [transactions, budgets, penaltyConfig, timeScope]);
-  const runwayData = useMemo(() => calculateRunway(allTransactions, accounts), [allTransactions, accounts]);
+  const runwayData = useMemo(() => calculateRunway(allTransactions, accounts, longTermReserves), [allTransactions, accounts, longTermReserves]);
   // 共同支出／代墊分帳(階段7)：只算還沒結清的，加總「別人欠我」跟「我欠別人」各自的金額。
   const sharedExpenseTotals = useMemo(() => {
     let theyOweMe = 0, iOweThem = 0, unsettledCount = 0;
@@ -489,6 +491,34 @@ const Dashboard: React.FC<DashboardProps> = ({
          )}
       </div>
 
+      {/* SECTION 1.1: 現金緩衝耗盡預警（2026-08-26 Ivy要求往前放、旁邊加「建議每日日常支出」
+          方便對照自己現在是花得比建議快還是慢；日均燒錢速度已經用IQR排除單筆極端值，見
+          services/logicService.ts的calculateRunway/excludeOutliers說明） */}
+      <div data-pdf-section className={`p-6 rounded-[40px] border shadow-sm ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-50 border-rose-100' : 'bg-white border-emerald-50'}`}>
+          <div className="flex flex-col md:flex-row md:items-center gap-6">
+              <div className="flex items-center gap-4 md:w-1/3 shrink-0">
+                  <div className={`p-4 rounded-full shrink-0 ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-200 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}><Hourglass className="w-8 h-8" /></div>
+                  <div>
+                      <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">現金緩衝耗盡預警</h4>
+                      <span className={`text-2xl font-black ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'text-rose-600' : 'text-slate-700'}`}>{runwayData.daysRemaining > 3650 ? '> 10 年' : `${runwayData.daysRemaining} 天`}</span>
+                  </div>
+              </div>
+              <div className="flex-1 grid grid-cols-2 gap-4">
+                  <div className="p-3 bg-white/70 rounded-2xl border border-slate-100">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">目前日均花費</p>
+                      <p className="text-lg font-black text-slate-700">${Math.round(runwayData.dailyBurnRate).toLocaleString()}<span className="text-xs font-bold text-slate-400 ml-0.5">/天</span></p>
+                  </div>
+                  <div className="p-3 bg-white/70 rounded-2xl border border-slate-100">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">建議每日日常支出</p>
+                      <p className={`text-lg font-black ${runwayData.dailyBurnRate > runwayData.recommendedDailyAllowance ? 'text-rose-500' : 'text-emerald-600'}`}>${Math.round(runwayData.recommendedDailyAllowance).toLocaleString()}<span className="text-xs font-bold text-slate-400 ml-0.5">/天</span></p>
+                  </div>
+              </div>
+          </div>
+          <p className="text-[10px] text-slate-300 mt-4 leading-relaxed">
+              來源：手上真正能動用的錢（現金+金融卡帳戶餘額，不含信用卡/電子支付/儲值卡）÷最近90天的日均燒錢速度，估算照這個速度還能撐幾天——日均燒錢速度已經先排除單筆罕見的大額支出（例如買一台筆電），避免被單一一筆特殊花費嚴重低估、誤判成快沒錢。「建議每日日常支出」則是反過來算：先保住緊急預備金不動，剩下的錢照這個節奏花，至少能撐過90天警戒線；跟左邊「目前日均花費」對照，就知道自己現在的花費節奏是比建議快還是慢。
+          </p>
+      </div>
+
       {/* SECTION 1.5: 願望清單 + 分類比率圓餅圖（Ivy要求這兩個放最前面） */}
       <div data-pdf-section className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-4 rounded-[24px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增喵喵心願罐</div>}
@@ -648,21 +678,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           )}
       </div>
 
-      {/* SECTION 6: 季節性趨勢 + 現金緩衝耗盡預警 */}
-      <div data-pdf-section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="md:col-span-2 bg-white p-6 rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50">
-              <h4 className="font-bold text-slate-700 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-amber-400" />季節性支出趨勢 (12個月)</h4>
-              <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：只算變動支出，最近12個月每月加總，長條高度是相對這12個月裡最高的那個月的比例</p>
-              <div className="grid grid-cols-6 sm:grid-cols-12 gap-1.5">{seasonalData.map((data, idx) => (<div key={idx} className="flex flex-col items-center gap-2"><div className="w-full bg-slate-50 rounded-lg h-32 relative flex items-end overflow-hidden"><div className="w-full rounded-t-lg" style={{ height: `${Math.max(data.intensity * 100, 5)}%`, backgroundColor: `rgba(251, 191, 36, ${Math.max(data.intensity, 0.2)})` }}></div></div><span className="text-[10px] font-bold text-slate-400">{data.label}</span></div>))}</div>
-          </div>
-          <div className={`p-6 rounded-[40px] border shadow-sm flex flex-col justify-center gap-3 ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-50 border-rose-100' : 'bg-white border-emerald-50'}`}>
-              <div className="flex items-center gap-4">
-                <div className={`p-4 rounded-full shrink-0 ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-200 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}><Hourglass className="w-8 h-8" /></div>
-                <div><h4 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-1">現金緩衝耗盡預警</h4><span className={`text-2xl font-black ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'text-rose-600' : 'text-slate-700'}`}>{runwayData.daysRemaining > 3650 ? '> 10 年' : `${runwayData.daysRemaining} 天`}</span></div>
-              </div>
-              <p className="text-[10px] text-slate-300">來源：可動用餘額（現金+金融卡帳戶，不含信用卡/電子支付/儲值卡）÷最近90天固定+變動支出的日均燒錢速度，估算照這個速度還能撐幾天</p>
-          </div>
-      </div>
     </div>
   );
 };

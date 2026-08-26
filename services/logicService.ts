@@ -2,7 +2,8 @@
 import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig, MerchantAlias, MerchantAliasCandidate, LongTermReserve } from '../types';
 import { format, getDaysInMonth, getDate, startOfMonth, endOfMonth, addMonths, subMonths, differenceInDays, isAfter, isBefore, startOfDay, endOfDay, parseISO, startOfYear, getMonth, getYear, isSameMonth, differenceInMonths, subDays, addDays } from 'date-fns';
 import {
-  RUNWAY_ANALYSIS_WINDOW_DAYS, RUNWAY_OUTLIER_IQR_MULTIPLIER, RUNWAY_OUTLIER_MIN_SAMPLE_SIZE,
+  RUNWAY_ANALYSIS_WINDOW_DAYS, RUNWAY_OUTLIER_IQR_MULTIPLIER, RUNWAY_OUTLIER_MIN_SAMPLE_SIZE, RUNWAY_WARNING_DAYS,
+  WISHLIST_LARGE_ITEM_MONTHLY_RATIO,
   ANOMALY_MIN_HISTORY_COUNT, ANOMALY_AMOUNT_MULTIPLIER, ANOMALY_MIN_AMOUNT,
   FREQUENCY_HISTORY_MONTHS, FREQUENCY_MULTIPLIER, FREQUENCY_MIN_COUNT,
   PIE_L3_PROMOTE_THRESHOLD, PIE_MAX_SLICES,
@@ -286,49 +287,6 @@ export const analyzeFinancialHealth = (transactions: Transaction[]) => {
     dtiRatio: (expenses[L1Category.FIXED] / safeIncome) * 100,
     variableAmount: expenses[L1Category.VARIABLE]
   };
-};
-
-// 季節性支出趨勢：只算「變動支出」，回傳最近12個月，每個月的金額+相對強度(0~1)。
-// 2026-07-23 修好一個bug：intensity（長條高度）原本是拿最近24個月裡最高的那個月當基準，
-// 但畫面只顯示最近12個月——如果真正的最高月份剛好在13~24個月前（畫面外），
-// 顯示出來的12條長條全部會被壓得偏矮，看起來都不嚴重。改成直接只算最近12個月，
-// 基準值跟顯示範圍一致。
-export const getSeasonalTrends = (allTransactions: Transaction[]) => {
-  const monthlyData: Record<string, number> = {};
-
-  const variableTxs = allTransactions.filter(
-    t => isPersonalConsumption(t) && t.category.l1 === L1Category.VARIABLE
-  );
-
-  variableTxs.forEach(t => {
-    const date = parseISO(t.date);
-    const key = format(date, 'yyyy-MM');
-    monthlyData[key] = (monthlyData[key] || 0) + t.amount;
-  });
-
-  const result = [];
-  const now = new Date();
-  let maxAmount = 0;
-
-  for (let i = 11; i >= 0; i--) {
-    const d = subMonths(now, i);
-    const key = format(d, 'yyyy-MM');
-    const amount = monthlyData[key] || 0;
-    if (amount > maxAmount) maxAmount = amount;
-
-    result.push({
-      date: d,
-      label: format(d, 'M'),
-      fullLabel: format(d, 'yyyy年M月'),
-      amount,
-      intensity: 0
-    });
-  }
-
-  return result.map(item => ({
-    ...item,
-    intensity: maxAmount > 0 ? (item.amount / maxAmount) : 0
-  }));
 };
 
 export interface AnomalyTransaction extends Transaction {
@@ -692,6 +650,13 @@ export const findMerchantAliasCandidates = (
         .sort((a, b) => b.count - a.count);
 };
 
+// 建議每日日常支出：先保住緊急預備金不動，剩下的可動用餘額照這個節奏花，
+// 至少能撐過RUNWAY_WARNING_DAYS天（現金緩衝耗盡預警的同一個警戒天數）。
+// 心願罐判斷小額心願夠不夠買時，也用同一個數字換算「這筆大概是幾天的日常開銷」，
+// 避免財務健康相關的數字在App裡各算各的、彼此對不起來。
+export const calculateRecommendedDailyAllowance = (liquidBalance: number, emergencyFund: number): number =>
+    Math.max(0, (liquidBalance - emergencyFund) / RUNWAY_WARNING_DAYS);
+
 // 願望清單（2026-07-21重新設計，取代舊的「夢想目標/存錢進度」）：
 // 這個App本質是記帳，使用者沒有另外做「存錢」的動作，所有錢就是帳戶餘額本身，
 // 所以不追蹤「存了多少」，而是追蹤「想買的東西，現在的餘額夠不夠、還差多少」。
@@ -705,6 +670,8 @@ export interface WishlistItemMetrics {
     canAffordNow: boolean;
     daysRemaining?: number;          // 有設targetDate才有
     isOverdue?: boolean;
+    isLargeItem: boolean;            // 見WISHLIST_LARGE_ITEM_MONTHLY_RATIO：大額才要求完整保留安全水位
+    equivalentDailyAllowanceDays: number | null; // 這筆金額大約等於幾天的「建議每日日常支出」，null代表算不出來(日常支出建議是0)
 }
 
 export interface WishlistMetricsResult {
@@ -728,22 +695,33 @@ export const calculateWishlistMetrics = (
     // 2026-08-13改成即時計算：Ivy指出「日常開銷保留/緊急預備金」存成一個固定數字、要手動點
     // 「套用」才更新沒有意義——這個理想數字本來就會隨消費歷史/長期預留支出天天變化，存一個
     // 靜態快照只會愈放愈舊。改成每次都用calculateSuggestedReserves現算，不再有獨立的手動輸入值。
-    const { dailyBuffer, emergencyFund } = calculateSuggestedReserves(allTransactions, longTermReserves);
+    const { monthlyBaseline, dailyBuffer, emergencyFund } = calculateSuggestedReserves(allTransactions, longTermReserves);
+    const dailyAllowance = calculateRecommendedDailyAllowance(totalLiquidBalance, emergencyFund);
+    // 2026-08-26重新設計（Ivy確認）：原本不管心願金額大小、目標日期多久之後，一律要求
+    // 「可動用餘額－日常開銷保留－緊急預備金－前面排隊項目」還有剩，結果Ivy拿真實資料發現
+    // 光「日常開銷保留＋緊急預備金」加起來就已經比可動用餘額高，導致任何心願、金額多小都會
+    // 先被這個安全水位缺口墊高「還差多少」，一個3天後的$1000小額心願顯示還差1萬6千多，
+    // 完全不合理。改成：只有大額心願(WISHLIST_LARGE_ITEM_MONTHLY_RATIO)才要求完整保留安全
+    // 水位；小額心願只需要不動用緊急預備金，當作日常開銷的一部分來判斷夠不夠。
+    const largeItemThreshold = monthlyBaseline * WISHLIST_LARGE_ITEM_MONTHLY_RATIO;
 
     const now = new Date();
     const result: Record<string, WishlistItemMetrics> = {};
     let reservedByEarlierItems = 0;
 
     for (const item of items) {
+        const isLargeItem = item.targetAmount >= largeItemThreshold;
         if (item.isPurchased) {
             // 已買的項目不再佔用可動用餘額，但仍給一組metrics方便畫面顯示歷史紀錄
             result[item.id] = {
                 totalLiquidBalance, reservedByEarlierItems, availableForThisItem: 0,
-                shortfall: 0, canAffordNow: true,
+                shortfall: 0, canAffordNow: true, isLargeItem, equivalentDailyAllowanceDays: null,
             };
             continue;
         }
-        const availableForThisItem = totalLiquidBalance - dailyBuffer - emergencyFund - reservedByEarlierItems;
+        const availableForThisItem = isLargeItem
+            ? totalLiquidBalance - dailyBuffer - emergencyFund - reservedByEarlierItems
+            : Math.max(0, totalLiquidBalance - emergencyFund - reservedByEarlierItems);
         const shortfall = Math.max(0, item.targetAmount - availableForThisItem);
         const metrics: WishlistItemMetrics = {
             totalLiquidBalance,
@@ -751,6 +729,8 @@ export const calculateWishlistMetrics = (
             availableForThisItem,
             shortfall,
             canAffordNow: shortfall === 0,
+            isLargeItem,
+            equivalentDailyAllowanceDays: dailyAllowance > 0 ? Math.ceil(item.targetAmount / dailyAllowance) : null,
         };
         if (item.targetDate) {
             const targetDate = parseISO(item.targetDate);
@@ -843,11 +823,16 @@ const excludeOutliers = (amounts: number[]): number[] => {
 // - 燒錢速度改成固定支出+變動支出一起算，不再只看變動支出——房租水電這些固定支出
 //   一樣會讓現金變少，只算變動支出會低估真實燒錢速度、高估還能撐幾天。
 // 2026-08-26新增：算日均燒錢速度前先用IQR排除單筆極端值(見上方excludeOutliers)，
-// 避免一次繳一整年保費、買筆電這種罕見大額支出把「還能撐幾天」嚴重低估。
-export const calculateRunway = (allTransactions: Transaction[], accounts: Account[]) => {
+// 避免買筆電、一次繳一整年保費這種罕見大額支出把「還能撐幾天」嚴重低估；同時多回傳
+// 「建議每日日常支出」（見calculateRecommendedDailyAllowance），Ivy要求跟「目前日均
+// 燒錢速度」並列顯示，一個是規範性的建議上限、一個是描述性的實際花費節奏，兩個一起看
+// 才知道自己是花得比建議快還是慢。
+export const calculateRunway = (allTransactions: Transaction[], accounts: Account[], longTermReserves: LongTermReserve[] = []) => {
     const liquidAccounts = accounts.filter(a => !a.isArchived && (a.type === 'cash' || a.type === 'bank_debit'));
     const balances = calculateAccountBalances(liquidAccounts, allTransactions);
     const currentBalance = Math.max(liquidAccounts.reduce((sum, a) => sum + (balances[a.id] || 0), 0), 0);
+    const { emergencyFund } = calculateSuggestedReserves(allTransactions, longTermReserves);
+    const recommendedDailyAllowance = calculateRecommendedDailyAllowance(currentBalance, emergencyFund);
 
     const now = new Date();
     const windowStart = subDays(now, RUNWAY_ANALYSIS_WINDOW_DAYS);
@@ -875,7 +860,7 @@ export const calculateRunway = (allTransactions: Transaction[], accounts: Accoun
             depletionDate = addDays(now, daysRemaining);
         }
     }
-    return { currentBalance, dailyBurnRate, daysRemaining, depletionDate };
+    return { currentBalance, dailyBurnRate, daysRemaining, depletionDate, recommendedDailyAllowance };
 };
 
 // 即時計算每個帳戶目前的餘額：純粹從所有交易紀錄加總算出來，不用「期初餘額」這種
