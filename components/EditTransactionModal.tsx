@@ -335,6 +335,53 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     });
   }, [fxInputs, items]);
 
+  // 2026-08-28新增：多品項外幣發票「反推分配」小工具。
+  // 背景：上面的「外幣試算小工具」是每個品項各自獨立算（原幣×匯率×折扣，各自進位），
+  // 但信用卡實際的換匯匯率/手續費是銀行黑箱算的，不管公式怎麼設計都不保證跟銀行算法
+  // 一致，小數點永遠可能兜不起來。與其猜銀行怎麼算，不如反過來：Ivy已經從信用卡帳單
+  // 知道「這筆實際扣了多少台幣」，這裡直接拿這個已知的實付台幣金額當基準，
+  // 用每個品項的原幣金額比例分回台幣單價——這樣不管品項有幾個、手續費怎麼混在原幣
+  // 總額裡，加總起來一定剛好等於實付金額，不用猜銀行的換算順序。
+  const [fxAllocEnabled, setFxAllocEnabled] = useState(false);
+  const [fxAllocLabel, setFxAllocLabel] = useState('');
+  const [fxAllocActualTwd, setFxAllocActualTwd] = useState('');
+  const [fxAllocAmounts, setFxAllocAmounts] = useState<Record<number, string>>({});
+  const updateFxAllocAmount = (idx: number, value: string) => {
+    setFxAllocAmounts(prev => ({ ...prev, [idx]: value }));
+  };
+  const fxAllocSummary = useMemo(() => {
+    const actualTwd = parseFloat(fxAllocActualTwd);
+    if (isNaN(actualTwd)) return null;
+    let originalTotal = 0;
+    items.forEach((it, idx) => {
+      const amt = parseFloat(fxAllocAmounts[idx] ?? '');
+      if (!isNaN(amt)) originalTotal += amt * (it.quantity || 1);
+    });
+    if (originalTotal <= 0) return null;
+    return { originalTotal, impliedRate: actualTwd / originalTotal };
+  }, [fxAllocActualTwd, fxAllocAmounts, items]);
+  useEffect(() => {
+    if (!fxAllocEnabled || !fxAllocSummary) return;
+    const { originalTotal, impliedRate } = fxAllocSummary;
+    const actualTwd = parseFloat(fxAllocActualTwd);
+    setItems(prev => {
+      let changed = false;
+      const next = prev.map((it, idx) => {
+        const amtStr = fxAllocAmounts[idx];
+        if (amtStr === undefined || amtStr.trim() === '') return it;
+        const amt = parseFloat(amtStr);
+        if (isNaN(amt)) return it;
+        const quantity = it.quantity || 1;
+        const unitPrice = amt * impliedRate; // 單價=原幣單價×隱含匯率，乘數量後剛好等於這個品項分到的台幣份額
+        const noteText = `原幣${fxAllocLabel}$${amt} × ${quantity}個 × 隱含匯率${impliedRate.toFixed(4)}（反推自實付$${actualTwd} ÷ 原幣總額$${originalTotal}）`;
+        if (it.unitPrice === unitPrice && it.note === noteText) return it;
+        changed = true;
+        return { ...it, unitPrice, note: noteText };
+      });
+      return changed ? next : prev;
+    });
+  }, [fxAllocEnabled, fxAllocSummary, fxAllocAmounts, fxAllocLabel, fxAllocActualTwd]);
+
   // 特殊標記：代購／工作代墊。輕量標記＋顯示用，不做完整分帳計算。
   const [specialTagType, setSpecialTagType] = useState<'none' | SpecialTag['type']>(transaction.specialTag?.type || 'none');
   const [specialTagCounterparty, setSpecialTagCounterparty] = useState(transaction.specialTag?.counterparty || '');
@@ -947,6 +994,37 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                 <ShoppingBag className="w-3 h-3" /> 喵喵購物清單（選填，這筆買了什麼）
               </label>
               <p className="text-[10px] text-slate-300 ml-1 -mt-1">這裡只記錄買了什麼，不會拆分類；要把錢拆到不同預算類別請用「貓咪零食分裝盤」（明細列的分裝按鈕）</p>
+              <button
+                type="button"
+                onClick={() => setFxAllocEnabled(v => !v)}
+                className={`text-[10px] font-bold px-2 py-1 rounded-lg ml-1 ${fxAllocEnabled ? 'bg-emerald-100 text-emerald-600' : 'text-slate-400 hover:bg-slate-100'}`}
+              >
+                {fxAllocEnabled ? '收合「多品項外幣單反推分配」' : '多品項外幣發票？點我用實際扣款台幣金額自動分配到各品項'}
+              </button>
+              {fxAllocEnabled && (
+                <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-xl space-y-2 animate-in slide-in-from-top-1">
+                  <p className="text-[10px] text-emerald-600">
+                    信用卡實際換匯的匯率/手續費是銀行黑箱算的，不用猜銀行公式——直接填「這筆信用卡實際扣了多少台幣」
+                    （帳單上的數字），再到下面每個品項展開「填單價」填「原幣金額」（發票上的手續費也可以當一個品項填），
+                    工具會自動反推出實際匯率，按每個品項的原幣比例分配台幣單價，加總起來一定剛好等於實際扣款金額，
+                    不用猜銀行的換算順序。
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="min-w-0">
+                      <label className="text-[9px] font-bold text-emerald-600 uppercase block mb-1">幣別/說明（選填）</label>
+                      <input type="text" value={fxAllocLabel} onChange={e => setFxAllocLabel(e.target.value)} placeholder="例如：泰銖" className="w-full p-2 bg-white border border-emerald-200 rounded-lg text-sm font-bold outline-none focus:border-emerald-300" />
+                    </div>
+                    <div className="min-w-0">
+                      <label className="text-[9px] font-bold text-emerald-600 uppercase block mb-1">實際扣款台幣金額</label>
+                      <input type="number" value={fxAllocActualTwd} onChange={e => setFxAllocActualTwd(e.target.value)} onFocus={e => e.target.select()} placeholder="例如：1026" className="w-full p-2 bg-white border border-emerald-200 rounded-lg text-sm font-bold outline-none focus:border-emerald-300" />
+                    </div>
+                  </div>
+                  {fxAllocSummary && (
+                    <p className="text-[10px] text-emerald-500">原幣總額 {fxAllocSummary.originalTotal} → 隱含匯率 {fxAllocSummary.impliedRate.toFixed(4)}</p>
+                  )}
+                  <p className="text-[10px] text-emerald-400">↓ 到下面每個品項點「填單價」展開，會多一個「原幣金額」欄位可以填</p>
+                </div>
+              )}
               <div className="space-y-2">
                 {items.map((it, idx) => {
                   const isExpanded = expandedItemIdx.has(idx);
@@ -973,8 +1051,13 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                         <div className="pt-2 border-t border-slate-100 animate-in slide-in-from-top-1 space-y-2">
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                             <div className="min-w-0">
-                              <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">單價(台幣，可打算式)</label>
-                              <CalcInput value={it.unitPrice} onCommit={n => updateItemField(idx, 'unitPrice', String(n))} className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
+                              <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">單價(台幣，可打算式){fxAllocEnabled && (fxAllocAmounts[idx] ?? '').trim() !== '' ? '・已自動反推分配' : ''}</label>
+                              <CalcInput
+                                value={it.unitPrice}
+                                onCommit={n => updateItemField(idx, 'unitPrice', String(n))}
+                                readOnly={fxAllocEnabled && (fxAllocAmounts[idx] ?? '').trim() !== ''}
+                                className={`w-full p-2 border rounded-lg text-sm font-bold outline-none ${fxAllocEnabled && (fxAllocAmounts[idx] ?? '').trim() !== '' ? 'bg-slate-50 text-slate-400 border-slate-200' : 'bg-[#FFFBF5] border-slate-200 focus:border-amber-300'}`}
+                              />
                             </div>
                             <div className="min-w-0">
                               <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">數量</label>
@@ -984,6 +1067,12 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                               <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">備註</label>
                               <input type="text" value={it.note ?? ''} onChange={(e) => updateItemField(idx, 'note', e.target.value)} placeholder="例如：日幣購入" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
                             </div>
+                            {fxAllocEnabled && (
+                              <div className="min-w-0 col-span-2 sm:col-span-3">
+                                <label className="text-[9px] font-bold text-emerald-600 uppercase block mb-1">這項的原幣金額（單價，未乘數量）</label>
+                                <input type="number" value={fxAllocAmounts[idx] ?? ''} onChange={(e) => updateFxAllocAmount(idx, e.target.value)} onFocus={e => e.target.select()} placeholder="例如：990" className="w-full p-2 bg-white border border-emerald-200 rounded-lg text-sm font-bold outline-none focus:border-emerald-300" />
+                              </div>
+                            )}
                           </div>
                           <button type="button" onClick={() => toggleFxExpanded(idx)} className={`text-[10px] font-bold px-2 py-1 rounded-lg ${fxExpandedIdx.has(idx) ? 'bg-sky-100 text-sky-600' : 'text-slate-400 hover:bg-slate-100'}`}>
                             {fxExpandedIdx.has(idx) ? '收合外幣/代購折扣試算' : '這項是外幣或有代購折扣？點我試算單價'}
