@@ -360,20 +360,52 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     if (originalTotal <= 0) return null;
     return { originalTotal, impliedRate: actualTwd / originalTotal };
   }, [fxAllocActualTwd, fxAllocAmounts, items]);
+  // 2026-08-28 Ivy實測抓到問題：直接用浮點數乘出來的單價會有一長串小數（例如
+  // $958.0464431910358），畫面上又醜又沒意義（台幣沒有這麼細的分）。改成把每個
+  // 品項分到的「總價」四捨五入到分（小數點後兩位），但不是各自獨立四捨五入——那樣
+  // 加總會跟實付金額差個幾分錢，又回到原本「兜不起來」的問題。改用「最大餘數法」
+  // （常見的整數分配演算法，選舉席次分配也用這個）：先各自無條件捨去到分，再把「實付
+  // 金額（分）－全部捨去後的分總和」這個差額（通常是幾分錢），依小數餘數由大到小，
+  // 一分錢一分錢分給餘數最大的品項，確保分配完的總和精確等於實付金額，同時每個品項
+  // 都只到小數點後兩位，不會有一長串小數。
+  const allocateCentsByLargestRemainder = (entries: { idx: number; cents: number }[], targetCents: number): Record<number, number> => {
+    const floored = entries.map(e => ({ idx: e.idx, floor: Math.floor(e.cents), remainder: e.cents - Math.floor(e.cents) }));
+    const result: Record<number, number> = {};
+    floored.forEach(f => { result[f.idx] = f.floor; });
+    let diff = Math.round(targetCents - floored.reduce((sum, f) => sum + f.floor, 0));
+    if (diff > 0) {
+      const byRemainderDesc = [...floored].sort((a, b) => b.remainder - a.remainder);
+      for (let i = 0; i < diff; i++) result[byRemainderDesc[i % byRemainderDesc.length].idx] += 1;
+    } else if (diff < 0) {
+      const byRemainderAsc = [...floored].sort((a, b) => a.remainder - b.remainder);
+      for (let i = 0; i < -diff; i++) result[byRemainderAsc[i % byRemainderAsc.length].idx] -= 1;
+    }
+    return result;
+  };
   useEffect(() => {
     if (!fxAllocEnabled || !fxAllocSummary) return;
-    const { originalTotal, impliedRate } = fxAllocSummary;
+    const { impliedRate } = fxAllocSummary;
     const actualTwd = parseFloat(fxAllocActualTwd);
+    const targetCents = Math.round(actualTwd * 100);
+    const currencyPrefix = fxAllocLabel.trim() || '$';
     setItems(prev => {
+      const raws: { idx: number; amt: number; qty: number; cents: number }[] = [];
+      prev.forEach((it, idx) => {
+        const amtStr = fxAllocAmounts[idx];
+        if (amtStr === undefined || amtStr.trim() === '') return;
+        const amt = parseFloat(amtStr);
+        if (isNaN(amt)) return;
+        const qty = it.quantity || 1;
+        raws.push({ idx, amt, qty, cents: amt * qty * impliedRate * 100 });
+      });
+      if (raws.length === 0) return prev;
+      const allocatedCents = allocateCentsByLargestRemainder(raws.map(r => ({ idx: r.idx, cents: r.cents })), targetCents);
       let changed = false;
       const next = prev.map((it, idx) => {
-        const amtStr = fxAllocAmounts[idx];
-        if (amtStr === undefined || amtStr.trim() === '') return it;
-        const amt = parseFloat(amtStr);
-        if (isNaN(amt)) return it;
-        const quantity = it.quantity || 1;
-        const unitPrice = amt * impliedRate; // 單價=原幣單價×隱含匯率，乘數量後剛好等於這個品項分到的台幣份額
-        const noteText = `原幣${fxAllocLabel}$${amt} × ${quantity}個 × 隱含匯率${impliedRate.toFixed(4)}（反推自實付$${actualTwd} ÷ 原幣總額$${originalTotal}）`;
+        const raw = raws.find(r => r.idx === idx);
+        if (!raw) return it;
+        const unitPrice = allocatedCents[idx] / 100 / raw.qty; // 分回單價不再額外進位，讓「單價×數量」剛好等於分配到的整分總價
+        const noteText = `原幣${currencyPrefix}${raw.amt} × ${raw.qty}個 × 隱含匯率${impliedRate.toFixed(4)}`;
         if (it.unitPrice === unitPrice && it.note === noteText) return it;
         changed = true;
         return { ...it, unitPrice, note: noteText };
