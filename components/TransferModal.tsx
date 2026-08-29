@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, ArrowRight, Repeat, AlertCircle } from 'lucide-react';
 import { Account, Transaction, L1Category } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+import { CalcInput } from './CalcInput';
 
 interface TransferModalProps {
   accounts: Account[];
@@ -15,7 +16,7 @@ interface TransferModalProps {
 const TransferModal: React.FC<TransferModalProps> = ({ accounts, transaction, onClose, onSave }) => {
   const activeAccounts = accounts.filter(a => !a.isArchived);
   const [date, setDate] = useState(transaction?.date || new Date().toISOString().split('T')[0]);
-  const [amount, setAmount] = useState(transaction?.amount || 0);
+  const [amount, setAmount] = useState<number | undefined>(transaction?.amount);
   const [fromAccountId, setFromAccountId] = useState(transaction?.fromAccountId || activeAccounts[0]?.id || '');
   const [toAccountId, setToAccountId] = useState(transaction?.toAccountId || activeAccounts[1]?.id || activeAccounts[0]?.id || '');
   const [note, setNote] = useState(transaction?.merchant || '');
@@ -67,7 +68,7 @@ const TransferModal: React.FC<TransferModalProps> = ({ accounts, transaction, on
 
           <div>
             <label className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 block">金額</label>
-            <input type="number" value={amount || ''} onChange={e => setAmount(parseFloat(e.target.value))} onFocus={e => e.target.select()} className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:border-amber-300" placeholder="0" />
+            <CalcInput value={amount} onCommit={n => setAmount(n)} className="w-full p-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:border-amber-300" placeholder="0" />
           </div>
 
           <div className="flex items-center gap-2">
