@@ -14,10 +14,10 @@ import AccountsModal from './components/AccountsModal';
 import TransferModal from './components/TransferModal';
 import SharedExpenseModal from './components/SharedExpenseModal';
 import SharedExpenseListModal from './components/SharedExpenseListModal';
-import ActivityLogModal from './components/ActivityLogModal';
+import ActivityLogPage from './components/ActivityLogPage';
 import SettingsModal from './components/SettingsModal';
 import TransactionFilterPanel, { matchesCategoryFilter } from './components/TransactionFilterPanel';
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, LongTermReserve } from './types';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, ActivityActionType, LongTermReserve } from './types';
 import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -104,9 +104,9 @@ const App: React.FC = () => {
 
   // 記住目前在哪一頁，重新整理不要跳回首頁（Ivy 2026-08-03反應：在明細本/對帳
   // 頁面重新整理，畫面卻整個跳回貓咪指揮中心，很容易搞丟正在看的內容）。
-  const [view, setView] = useState<'dashboard' | 'transactions' | 'reconcile'>(() => {
+  const [view, setView] = useState<'dashboard' | 'transactions' | 'reconcile' | 'activityLog'>(() => {
     const saved = localStorage.getItem('pawket_view');
-    return saved === 'transactions' || saved === 'reconcile' ? saved : 'dashboard';
+    return saved === 'transactions' || saved === 'reconcile' || saved === 'activityLog' ? saved : 'dashboard';
   });
   useEffect(() => { localStorage.setItem('pawket_view', view); }, [view]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -406,9 +406,19 @@ const App: React.FC = () => {
     return () => document.removeEventListener('mousedown', click);
   }, []);
 
+  // 編輯歷程紀錄小工具：所有會動到transactions表資料的操作都呼叫這個寫一筆紀錄，
+  // 集中在一個函式方便之後要調整格式/欄位時不用逐一改每個呼叫點（2026-08-31起，
+  // 「重新裝碗紀錄」從只記批次修正擴大成記錄所有異動，變成獨立頁面）。
+  const logActivity = (actionType: ActivityActionType, description: string, affectedTransactionIds: string[], beforeSnapshot: Transaction[]) => {
+    if (!userId) return;
+    insertActivityLog(userId, { actionType, description, affectedTransactionIds, beforeSnapshot })
+      .catch(err => console.error('寫入編輯歷程失敗', err));
+  };
+
   const handleSplitSave = (splitTxs: Transaction[]) => {
     if (!splittingTransaction) return;
     const parentId = splittingTransaction.parentId || splittingTransaction.id;
+    const before = transactions.filter(t => t.id === splittingTransaction.id || t.parentId === parentId);
     setTransactions(prev => [
         // Remove all previous children of this split if re-editing
         ...prev.filter(t => t.id !== splittingTransaction.id && t.parentId !== parentId),
@@ -423,6 +433,7 @@ const App: React.FC = () => {
           await upsertTransactions(userId, splitTxs);
         } catch (err) { console.error('儲存拆帳失敗', err); }
       })();
+      logActivity('split', `把「${splittingTransaction.merchant || '這筆'}」拆成 ${splitTxs.length} 份分裝盤`, splitTxs.map(t => t.id), before);
     }
   };
 
@@ -465,6 +476,7 @@ const App: React.FC = () => {
           await upsertTransaction(userId, restoredTx);
         } catch (err) { console.error('取消拆帳失敗', err); }
       })();
+      logActivity('cancel_split', `取消「${restoredTx.merchant || '這筆'}」的分裝拆帳（合併回 1 筆）`, [restoredTx.id], splitTxs);
     }
   };
 
@@ -491,11 +503,25 @@ const App: React.FC = () => {
   };
 
   const handleEditSave = (updatedTx: Transaction, options?: { openSplitAfter?: boolean; additionalTransfer?: Transaction; pendingSharedExpense?: SharedExpense; pendingAdditionalSettlements?: Transaction[] }) => {
+    const existingTx = transactions.find(t => t.id === updatedTx.id);
     setTransactions(prev => {
       const next = prev.some(t => t.id === updatedTx.id) ? prev.map(t => t.id === updatedTx.id ? updatedTx : t) : [updatedTx, ...prev];
       const withTransfer = options?.additionalTransfer ? [options.additionalTransfer, ...next] : next;
       return options?.pendingAdditionalSettlements?.length ? [...options.pendingAdditionalSettlements, ...withTransfer] : withTransfer;
     });
+    if (userId) {
+      if (existingTx) {
+        logActivity('edit', `編輯「${updatedTx.merchant || '這筆'}」`, [updatedTx.id], [existingTx]);
+      } else {
+        logActivity('add', `新增一筆「${updatedTx.merchant || '(未命名)'}」`, [updatedTx.id], []);
+      }
+      if (options?.additionalTransfer) {
+        logActivity('transfer', `新增一筆「${options.additionalTransfer.merchant || '電子錢包儲值'}」帳戶互轉`, [options.additionalTransfer.id], []);
+      }
+      if (options?.pendingAdditionalSettlements?.length) {
+        logActivity('add', `共同支出順便記的結算交易（${options.pendingAdditionalSettlements.length} 筆）`, options.pendingAdditionalSettlements.map(t => t.id), []);
+      }
+    }
     // 新增交易時順手在同一個表單設定了「這碗跟誰分」(2026-08-21新增，見
     // EditTransactionModal的pendingSharedExpense)：這筆分帳資料本地state先更新。
     if (options?.pendingSharedExpense) {
@@ -578,6 +604,9 @@ const App: React.FC = () => {
       additionalSettlements.forEach(tx => {
         upsertTransaction(userId, tx).catch(err => console.error('儲存結算交易失敗', err));
       });
+      if (additionalSettlements.length > 0) {
+        logActivity('add', `分攤明細順便記的結算交易（${additionalSettlements.length} 筆）`, additionalSettlements.map(t => t.id), []);
+      }
     }
   };
 
@@ -598,6 +627,7 @@ const App: React.FC = () => {
       upsertSharedExpense(userId, updatedExpense).catch(err => console.error('更新分攤結清狀態失敗', err));
       if (additionalSettlement) {
         upsertTransaction(userId, additionalSettlement).catch(err => console.error('儲存結算交易失敗', err));
+        logActivity('add', `標記結清順便記的結算交易「${additionalSettlement.merchant || ''}」`, [additionalSettlement.id], []);
       }
     }
   };
@@ -615,24 +645,32 @@ const App: React.FC = () => {
   };
 
   const handleTransferSave = (tx: Transaction) => {
+    const existingTx = transactions.find(t => t.id === tx.id);
     setTransactions(prev => prev.some(t => t.id === tx.id) ? prev.map(t => t.id === tx.id ? tx : t) : [tx, ...prev]);
     setTransferModalState({ open: false });
-    if (userId) upsertTransaction(userId, tx).catch(err => console.error('儲存轉帳失敗', err));
+    if (userId) {
+      upsertTransaction(userId, tx).catch(err => console.error('儲存轉帳失敗', err));
+      logActivity('transfer', `${existingTx ? '編輯' : '新增'}一筆帳戶互轉「${tx.merchant || ''}」`, [tx.id], existingTx ? [existingTx] : []);
+    }
   };
 
   // 清除所有紀錄：全面重整用，只刪 transactions、不動 accounts。要求輸入確認文字才會真的執行。
+  // 2026-08-31起：執行前把目前全部交易存進「重新裝碗紀錄」，之後真的清錯還能整批復原，
+  // 但輸入確認文字這道關卡還是保留，避免手滑清空（復原終究要多跑一趟頁面才找得到）。
   const handleClearAllRecords = async () => {
     if (!userId) return;
     const input = window.prompt(
-      '這個動作會刪除所有交易紀錄（帳戶本身不會被刪），且無法復原！\n' +
-      '建議先點右邊的「備份」按鈕匯出目前資料存檔。\n\n' +
+      '這個動作會清空所有交易紀錄（帳戶本身不會被刪）！\n' +
+      '這次操作會記錄在「重新裝碗紀錄」頁面，之後真的需要可以整批復原，但保險起見還是建議先點右邊的「備份」按鈕匯出存檔。\n\n' +
       '確定要繼續的話，請在下面輸入「清除所有紀錄」四個字：'
     );
     if (input === null) return;
     if (input !== '清除所有紀錄') { alert('輸入文字不符，已取消，沒有刪除任何資料。'); return; }
+    const before = transactions;
     try {
       await deleteAllTransactions(userId);
       setTransactions([]);
+      logActivity('clear_all', `清除所有交易紀錄（共 ${before.length} 筆）`, before.map(t => t.id), before);
       alert('已清除所有交易紀錄。');
     } catch (err) {
       console.error('清除所有紀錄失敗', err);
@@ -641,7 +679,8 @@ const App: React.FC = () => {
   };
 
   const handleTagAction = (action: 'rename' | 'delete', l1: L1Category, oldName: string, newName?: string) => {
-      const affectedIds = transactions.filter(t => t.category.l1 === l1 && t.category.l2 === oldName).map(t => t.id);
+      const before = transactions.filter(t => t.category.l1 === l1 && t.category.l2 === oldName);
+      const affectedIds = before.map(t => t.id);
       let updated: Transaction[] = [];
       setTransactions(prev => {
           updated = prev.map(t => {
@@ -656,6 +695,10 @@ const App: React.FC = () => {
       if (userId) {
           const changed = updated.filter(t => affectedIds.includes(t.id));
           upsertTransactions(userId, changed).catch(err => console.error('更新分類失敗', err));
+          const description = action === 'rename'
+            ? `分類標籤「${oldName}」改名成「${newName}」（影響 ${affectedIds.length} 筆）`
+            : `刪除分類標籤「${oldName}」（影響 ${affectedIds.length} 筆改回預設分類）`;
+          logActivity(action === 'rename' ? 'category_rename' : 'category_delete', description, affectedIds, before);
       }
   };
 
@@ -715,6 +758,7 @@ const App: React.FC = () => {
             setTransactions(prev => prev.filter(t => t.parentId !== txToDelete.parentId));
             setLastDeletedTransaction(null);
             deleteTransactionsByParentId(txToDelete.parentId).catch(err => console.error('刪除群組失敗', err));
+            logActivity('delete', `刪除分裝群組「${txToDelete.merchant || '這筆'}」（共 ${group.length} 筆）`, group.map(t => t.id), group);
             return;
         }
     }
@@ -727,6 +771,7 @@ const App: React.FC = () => {
     if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current);
     undoTimeoutRef.current = window.setTimeout(() => setLastDeletedTransaction(null), 3000);
     dbDeleteTransaction(id).catch(err => console.error('刪除交易失敗', err));
+    logActivity('delete', `刪除「${txToDelete.merchant || '這筆'}」`, [id], [txToDelete]);
   };
 
   const handleUndoDelete = () => {
@@ -776,29 +821,55 @@ const App: React.FC = () => {
     }
   };
 
-  // 編輯歷程：目前只記錄批次修正這種大動作編輯，讀取邏輯比照垃圾桶（開啟時才抓，
-  // 不用一直放在記憶體裡）。
-  const [isActivityLogOpen, setIsActivityLogOpen] = useState(false);
+  // 重新裝碗紀錄：2026-08-31起從彈窗改成獨立頁面(見ActivityLogPage.tsx)，切到這頁時才抓
+  // 資料，不用一直放在記憶體裡（比照垃圾桶的讀取時機）。
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
   const [activityLogLoading, setActivityLogLoading] = useState(false);
-  const handleOpenActivityLog = async () => {
-    setIsActivityLogOpen(true);
+  useEffect(() => {
+    if (view !== 'activityLog') return;
+    let cancelled = false;
     setActivityLogLoading(true);
-    try {
-        setActivityLog(await fetchActivityLog());
-    } catch (err) {
-        console.error('讀取編輯歷程失敗', err);
-        alert(`讀取重新裝碗紀錄失敗。\n\n${formatSupabaseError(err)}`);
-    } finally {
-        setActivityLogLoading(false);
-    }
-  };
+    fetchActivityLog()
+      .then(data => { if (!cancelled) setActivityLog(data); })
+      .catch(err => {
+          console.error('讀取重新裝碗紀錄失敗', err);
+          if (!cancelled) alert(`讀取重新裝碗紀錄失敗。\n\n${formatSupabaseError(err)}`);
+      })
+      .finally(() => { if (!cancelled) setActivityLogLoading(false); });
+    return () => { cancelled = true; };
+  }, [view]);
+
+  // 復原邏輯依actionType分三種：
+  // 1. 純新增類(add/import)：復原＝把這些新增的收回垃圾桶(軟刪除，垃圾桶還救得回)。
+  // 2. 會讓id「消失」的動作(delete/split/cancel_split/clear_all)：受影響id裡有些在
+  //    beforeSnapshot找不到對應(代表是這個動作才產生的新id，要刪掉)，beforeSnapshot本身
+  //    的id則要先解除軟刪除(restoreTransaction)再覆蓋回正確內容，delete/clear_all沒有
+  //    產生新id、也不用先解除軟刪除以外的特殊處理。
+  // 3. 純編輯類(其餘)：套用前的id完全沒變，直接upsert beforeSnapshot覆蓋回去即可
+  //    (沿用原本batch_correction的邏輯)。
   const handleRestoreActivityLog = async (entry: ActivityLogEntry) => {
-    if (!window.confirm(`確定要復原「${entry.description}」嗎？會把這 ${entry.affectedTransactionIds.length} 筆交易改回套用前的版本。`)) return;
+    if (!userId) return;
+    if (!window.confirm(`確定要復原「${entry.description}」嗎？`)) return;
     try {
         const beforeIds = new Set(entry.beforeSnapshot.map(t => t.id));
-        setTransactions(prev => prev.map(t => beforeIds.has(t.id) ? entry.beforeSnapshot.find(b => b.id === t.id)! : t));
-        await upsertTransactions(userId!, entry.beforeSnapshot);
+        if (entry.actionType === 'add' || entry.actionType === 'import') {
+            setTransactions(prev => prev.filter(t => !entry.affectedTransactionIds.includes(t.id)));
+            await Promise.all(entry.affectedTransactionIds.map(id => dbDeleteTransaction(id)));
+        } else if (entry.actionType === 'delete' || entry.actionType === 'split' || entry.actionType === 'cancel_split' || entry.actionType === 'clear_all') {
+            const createdIds = entry.affectedTransactionIds.filter(id => !beforeIds.has(id));
+            setTransactions(prev => [
+                ...prev.filter(t => !createdIds.includes(t.id) && !beforeIds.has(t.id)),
+                ...entry.beforeSnapshot,
+            ]);
+            if (createdIds.length) await Promise.all(createdIds.map(id => dbDeleteTransaction(id)));
+            if (entry.beforeSnapshot.length) {
+                await Promise.all(entry.beforeSnapshot.map(t => restoreTransaction(t.id)));
+                await upsertTransactions(userId, entry.beforeSnapshot);
+            }
+        } else {
+            setTransactions(prev => prev.map(t => beforeIds.has(t.id) ? entry.beforeSnapshot.find(b => b.id === t.id)! : t));
+            await upsertTransactions(userId, entry.beforeSnapshot);
+        }
         await markActivityLogRestored(entry.id);
         setActivityLog(prev => prev.map(e => e.id === entry.id ? { ...e, restoredAt: new Date().toISOString() } : e));
     } catch (err) {
@@ -856,6 +927,7 @@ const App: React.FC = () => {
     if (!userId) { alert(`已加到畫面上共 ${newUnique.length} 筆，但目前沒有登入，不會存進資料庫。`); return; }
     try {
       await upsertTransactions(userId, newUnique);
+      logActivity('import', `從備份檔匯入 ${newUnique.length} 筆交易`, newUnique.map(t => t.id), []);
       alert(`已確認存進資料庫：${newUnique.length} 筆！`);
     } catch (err) {
       console.error('匯入儲存失敗', err);
@@ -1018,6 +1090,9 @@ const App: React.FC = () => {
             onOpenAccountsModal={() => setIsAccountsModalOpen(true)}
           />
         )}
+        {view === 'activityLog' && (
+          <ActivityLogPage items={activityLog} loading={activityLogLoading} onRestore={handleRestoreActivityLog} />
+        )}
         {view === 'transactions' && (
           <div className="bg-white rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 overflow-hidden">
             <div className="p-8 border-b border-orange-50 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white gap-4">
@@ -1034,7 +1109,7 @@ const App: React.FC = () => {
                  </div>
                  <button onClick={handleClearAllRecords} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-2xl transition active:scale-95 shadow-md shadow-rose-100" title="危險：清除所有交易紀錄(不影響帳戶本身)，無法復原"><Trash2 className="w-4 h-4" />清除所有紀錄</button>
                  <button onClick={handleOpenTrash} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="垃圾桶：救回不小心刪除的紀錄"><Trash2 className="w-4 h-4" />垃圾桶{deletedTransactions.length > 0 ? `(${deletedTransactions.length})` : ''}</button>
-                 <button onClick={handleOpenActivityLog} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="重新裝碗紀錄：查詢/復原批次修正這種大動作編輯"><History className="w-4 h-4" />重新裝碗紀錄</button>
+                 <button onClick={() => setView('activityLog')} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="重新裝碗紀錄：查詢/復原所有會動到交易資料的操作"><History className="w-4 h-4" />重新裝碗紀錄</button>
                  <div className="h-full w-px bg-slate-200 mx-2 hidden sm:block"></div>
                  <button onClick={() => importInputRef.current?.click()} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95"><Upload className="w-4 h-4" />匯入</button>
                  <input type="file" ref={importInputRef} onChange={handleImport} className="hidden" accept="application/json" />
@@ -1316,7 +1391,6 @@ const App: React.FC = () => {
       {batchSource && <BatchCorrectionModal matches={batchCandidates} source={batchSource} allTransactions={transactions} onConfirm={handleBatchConfirm} onClose={() => { setBatchSource(null); setBatchCandidates([]); }} />}
       {isWishlistModalOpen && <WishlistModal items={wishlistItems} accounts={accounts} allTransactions={transactions} longTermReserves={longTermReserves} onClose={() => setIsWishlistModalOpen(false)} onUpdateItems={handleUpdateWishlistItems} />}
       {isTrashModalOpen && <TrashModal items={deletedTransactions} loading={trashLoading} onClose={() => setIsTrashModalOpen(false)} onRestore={handleRestoreFromTrash} onPermanentlyDelete={handlePermanentlyDelete} />}
-      {isActivityLogOpen && <ActivityLogModal items={activityLog} loading={activityLogLoading} onClose={() => setIsActivityLogOpen(false)} onRestore={handleRestoreActivityLog} />}
       {isSettingsModalOpen && <SettingsModal
         similarTransactionAlertsEnabled={similarTransactionAlertsEnabled} onUpdateSimilarTransactionAlerts={handleUpdateSimilarTransactionAlerts}
         allTransactions={transactions} categoryBudgets={categoryBudgets} onUpdateCategoryBudgets={handleUpdateCategoryBudgets}

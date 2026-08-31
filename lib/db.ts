@@ -3,7 +3,7 @@
 // 轉成資料表用的欄位格式（snake_case、攤平），反之亦然。
 
 import { supabase } from './supabaseClient';
-import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag, WishlistItem, ReconcileStatus, MerchantAlias, MerchantAliasCandidate, SharedExpense, SharedExpenseParticipant, ActivityLogEntry } from '../types';
+import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag, WishlistItem, ReconcileStatus, MerchantAlias, MerchantAliasCandidate, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, ActivityActionType } from '../types';
 
 // ── 帳戶 ──
 
@@ -477,13 +477,14 @@ export const markParticipantSettled = async (
   if (error) throw error;
 };
 
-// ── 編輯歷程紀錄（目前只記錄批次修正，見migration_007說明）──
+// ── 編輯歷程紀錄（2026-08-31起記錄所有會動到transactions表的操作，見migration_007說明＋
+// types.ts的ActivityActionType）──
 // beforeSnapshot直接存Transaction(camelCase)格式的JSON，不特別轉成TransactionRow——
 // 反正是不透明的jsonb欄位，復原時要直接餵給upsertTransactions，存camelCase省一次轉換。
 
 interface ActivityLogRow {
   id: string;
-  action_type: 'batch_correction';
+  action_type: ActivityActionType;
   description: string;
   affected_transaction_ids: string[];
   before_snapshot: Transaction[];
@@ -501,16 +502,16 @@ const rowToActivityLogEntry = (row: ActivityLogRow): ActivityLogEntry => ({
   createdAt: row.created_at,
 });
 
-// 最近100筆就好，這種紀錄不需要無限往回查，避免表越養越肥還要分頁。
+// 最近300筆：範圍擴大成記錄所有異動之後成長速度比以前快很多，稍微留寬一點的視窗。
 export const fetchActivityLog = async (): Promise<ActivityLogEntry[]> => {
-  const { data, error } = await supabase.from('activity_log').select('*').order('created_at', { ascending: false }).limit(100);
+  const { data, error } = await supabase.from('activity_log').select('*').order('created_at', { ascending: false }).limit(300);
   if (error) throw error;
   return (data as ActivityLogRow[]).map(rowToActivityLogEntry);
 };
 
 export const insertActivityLog = async (
   userId: string,
-  entry: { actionType: 'batch_correction'; description: string; affectedTransactionIds: string[]; beforeSnapshot: Transaction[] }
+  entry: { actionType: ActivityActionType; description: string; affectedTransactionIds: string[]; beforeSnapshot: Transaction[] }
 ): Promise<void> => {
   const { error } = await supabase.from('activity_log').insert({
     user_id: userId,

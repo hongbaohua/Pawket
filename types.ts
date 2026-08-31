@@ -199,12 +199,27 @@ export interface AnalysisResult {
   rawText: string;
 }
 
-// 編輯歷程紀錄：目前只記錄「批次修正」這種一次改很多筆的大動作編輯（2026-08-02，
-// Ivy誤觸批次套用後完全查不出改了什麼才新增）。beforeSnapshot存的是受影響交易
-// 「套用前」的完整版本，復原時直接整批覆蓋回去。
+// 編輯歷程紀錄：本來只記錄「批次修正」這種一次改很多筆的大動作編輯（2026-08-02，
+// Ivy誤觸批次套用後完全查不出改了什麼才新增），2026-08-31起擴大成記錄「所有」會動到
+// transactions表資料的操作，變成獨立頁面的完整異動紀錄。beforeSnapshot存的是受影響
+// 交易「動作之前」的完整版本；純新增類動作（add/import）沒有「之前」可言，beforeSnapshot
+// 是空陣列，復原＝把這些新增的收回垃圾桶。
+export type ActivityActionType =
+  | 'add'               // 新增一筆（含手動新增、從對帳單補一筆、共同支出順便記的結算交易）
+  | 'edit'               // 編輯既有一筆
+  | 'delete'             // 刪除一筆（含分裝群組一次刪全部）
+  | 'split'              // 拆成分裝盤
+  | 'cancel_split'       // 取消拆帳
+  | 'transfer'           // 帳戶互轉
+  | 'category_rename'    // 分類標籤改名
+  | 'category_delete'    // 分類標籤刪除
+  | 'batch_correction'   // 批次修正（沿用舊有邏輯）
+  | 'import'             // 從備份檔匯入
+  | 'clear_all';         // 清除所有紀錄
+
 export interface ActivityLogEntry {
   id: string;
-  actionType: 'batch_correction';
+  actionType: ActivityActionType;
   description: string;
   affectedTransactionIds: string[];
   beforeSnapshot: Transaction[];
