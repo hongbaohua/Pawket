@@ -7,7 +7,7 @@
 // 一次只開一項），避免設定項目一多，畫面要一直往下滑才看得完——唯獨「相似交易提醒」
 // 只是一個開關，不需要展開才能改，直接做成常駐的切換按鈕。
 import React, { useEffect, useRef, useState } from 'react';
-import { X, Settings, Sparkles, Wallet, ShieldAlert, ShieldCheck, Plus, Trash2, ChevronDown, UserCircle, Lock, Loader2, CheckCircle2 } from 'lucide-react';
+import { X, Settings, Sparkles, Wallet, ShieldAlert, ShieldCheck, Plus, Trash2, ChevronDown, UserCircle, Lock, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Account, LongTermReserve, Transaction } from '../types';
 import { calculateSuggestedReserves, suggestCategoryBudgets } from '../services/logicService';
 import { v4 as uuidv4 } from 'uuid';
@@ -29,6 +29,7 @@ interface SettingsModalProps {
   onSaveAccount: (account: Omit<Account, 'id'> & { id?: string }) => Promise<void>;
   onArchiveAccount: (accountId: string) => Promise<void>;
   onDeleteAccount: (accountId: string) => Promise<void>;
+  onClearAllRecords: () => void;
   onClose: () => void;
 }
 
@@ -96,6 +97,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   longTermReserves, onUpdateLongTermReserves,
   nickname, onUpdateNickname, userEmail, onChangePassword,
   accounts, onSaveAccount, onArchiveAccount, onDeleteAccount,
+  onClearAllRecords,
   onClose,
 }) => {
   const [expandedSection, setExpandedSection] = useState<SectionId | null>(null);
@@ -440,6 +442,27 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           >
             <AccountsPanel accounts={accounts} onSave={onSaveAccount} onArchive={onArchiveAccount} onDelete={onDeleteAccount} />
           </AccordionSection>
+
+          {/* 危險操作：2026-08-31從罐罐明細本工具列搬進來（Ivy要求），避免跟每天都會用到的
+              新增/匯入按鈕擠在一起容易手滑點錯。放在系統設定最後面、獨立紅框標示，
+              不做成手風琴（不是「設定」，是一次性的破壞性動作，點開就該讓警告一直顯示）。 */}
+          <div className="bg-rose-50/60 border-2 border-rose-100 rounded-2xl p-4 space-y-2">
+            <div className="flex items-center gap-2 font-bold text-rose-500 text-sm">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>危險操作</span>
+            </div>
+            <p className="text-[11px] text-rose-400 leading-relaxed">
+              清除所有交易紀錄（帳戶本身不會被刪）。這個操作會記錄在「重新裝碗紀錄」頁面，
+              之後真的需要可以整批復原，但保險起見還是建議先備份。
+            </p>
+            <button
+              type="button"
+              onClick={onClearAllRecords}
+              className="flex items-center gap-2 px-4 py-2.5 text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-xl transition active:scale-95"
+            >
+              <Trash2 className="w-4 h-4" />清除所有紀錄
+            </button>
+          </div>
         </div>
 
         <div className="p-6 border-t border-slate-100 bg-white/50 flex justify-end shrink-0">

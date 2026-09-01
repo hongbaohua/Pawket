@@ -18,7 +18,7 @@ import ActivityLogPage from './components/ActivityLogPage';
 import SettingsModal from './components/SettingsModal';
 import TransactionFilterPanel, { matchesCategoryFilter } from './components/TransactionFilterPanel';
 import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, ActivityActionType, LongTermReserve } from './types';
-import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics } from './services/logicService';
+import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics, formatMoney, getItemAmount } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 import {
@@ -1050,7 +1050,11 @@ const App: React.FC = () => {
           {isUserMenuOpen && (
             <div className="absolute top-full right-0 lg:right-auto lg:left-4 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-orange-50 p-2 z-30 animate-in fade-in zoom-in-95 duration-150">
               {/* 2026-08-13：編輯暱稱／喵喵心願罐／碗盤總覽都移進系統設定裡了（喵喵心願罐已經
-                  變成純預覽+唯讀安全水位，首頁的常駐卡片就能開，不用在這裡重複一個入口）。 */}
+                  變成純預覽+唯讀安全水位，首頁的常駐卡片就能開，不用在這裡重複一個入口）。
+                  2026-08-31：「重新裝碗紀錄」改成獨立頁面後也搬來這裡——它本質上是查詢/
+                  管理性質的入口，跟原本擠在明細本工具列裡的「新增/匯入」這種操作按鈕
+                  性質不一樣，收在這裡跟系統設定放一起才合理（Ivy提出）。 */}
+              <button onClick={() => { setView('activityLog'); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 hover:text-slate-700 rounded-xl transition"><History className="w-4 h-4" />重新裝碗紀錄</button>
               <button onClick={() => { setIsSettingsModalOpen(true); setIsUserMenuOpen(false); }} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 hover:text-slate-700 rounded-xl transition"><Settings className="w-4 h-4" />系統設定</button>
               <div className="h-px bg-slate-100 my-1"></div>
               <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-2 px-3 py-2.5 text-sm font-bold text-slate-400 hover:bg-rose-50 hover:text-rose-400 rounded-xl transition"><LogOut className="w-4 h-4" />登出</button>
@@ -1107,9 +1111,11 @@ const App: React.FC = () => {
                      </div>
                    )}
                  </div>
-                 <button onClick={handleClearAllRecords} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-rose-500 hover:bg-rose-600 rounded-2xl transition active:scale-95 shadow-md shadow-rose-100" title="危險：清除所有交易紀錄(不影響帳戶本身)，無法復原"><Trash2 className="w-4 h-4" />清除所有紀錄</button>
+                 {/* 2026-08-31：「清除所有紀錄」搬進系統設定裡了（Ivy要求避免誤按）——這裡
+                     每天都會用到的明細本工具列，跟「一次刪光所有資料」這種極端危險、
+                     一年可能用不到一次的操作放在一起本來就不合適，容易手滑點錯。
+                     「重新裝碗紀錄」也搬到左側「總設定」下拉選單了，見上面user menu的按鈕。 */}
                  <button onClick={handleOpenTrash} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="垃圾桶：救回不小心刪除的紀錄"><Trash2 className="w-4 h-4" />垃圾桶{deletedTransactions.length > 0 ? `(${deletedTransactions.length})` : ''}</button>
-                 <button onClick={() => setView('activityLog')} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95" title="重新裝碗紀錄：查詢/復原所有會動到交易資料的操作"><History className="w-4 h-4" />重新裝碗紀錄</button>
                  <div className="h-full w-px bg-slate-200 mx-2 hidden sm:block"></div>
                  <button onClick={() => importInputRef.current?.click()} className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-2xl transition active:scale-95"><Upload className="w-4 h-4" />匯入</button>
                  <input type="file" ref={importInputRef} onChange={handleImport} className="hidden" accept="application/json" />
@@ -1216,18 +1222,45 @@ const App: React.FC = () => {
                               const isRowExpanded = expandedRowIds.has(t.id);
                               const visibleItems = isRowExpanded ? t.items : t.items.slice(0, 3);
                               const hiddenCount = t.items.length - visibleItems.length;
+                              // 2026-08-31改版：①單價一律用formatMoney四捨五入到分再顯示，不再洩漏
+                              // 反推分配/浮點數運算留下的一長串小數；②備註改放title滑鼠提示，不要
+                              // 整段文字硬塞進小圓標籤裡撐爆版面（Ivy反應「太醜了」）；③有subItems
+                              // 的套餐/組合類品項，改成一張小卡片：品項名稱+合計金額在上面，
+                              // 底下用巢狀小標籤列出子品項（有標價的才顯示價格）。
                               return (
-                                <span className="flex flex-wrap items-center gap-1 mt-1">
-                                  {visibleItems.map((item, idx) => (
-                                    <span key={idx} className="text-[11px] font-normal text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
-                                      {item.name}
-                                      {item.unitPrice != null && (
-                                        <span className="text-slate-400"> ${item.unitPrice}{(item.quantity && item.quantity !== 1) ? `×${item.quantity}` : ''}</span>
-                                      )}
-                                      {/* 涉及外幣/折扣的品項，備註(原幣金額/匯率/折扣)直接顯示在這裡，不用點開編輯才看得到 */}
-                                      {item.note && <span className="text-sky-500"> ({item.note})</span>}
-                                    </span>
-                                  ))}
+                                <span className="flex flex-wrap items-center gap-1.5 mt-1">
+                                  {visibleItems.map((item, idx) => {
+                                    const hasSubItems = !!item.subItems?.length;
+                                    if (hasSubItems) {
+                                      const comboAmount = getItemAmount(item);
+                                      return (
+                                        <span key={idx} className="inline-flex flex-col gap-1 text-[11px] font-normal bg-slate-100 px-2.5 py-1.5 rounded-2xl">
+                                          <span className="flex items-center gap-1 font-bold text-slate-600">
+                                            {item.name}
+                                            {comboAmount > 0 && <span className="text-slate-400 font-normal">${formatMoney(comboAmount)}</span>}
+                                          </span>
+                                          <span className="flex flex-wrap gap-1 pl-2 border-l-2 border-slate-200">
+                                            {item.subItems!.map((sub, sIdx) => (
+                                              <span key={sIdx} className="bg-white px-1.5 py-0.5 rounded-full text-slate-500" title={sub.note || undefined}>
+                                                {sub.name}
+                                                {sub.unitPrice != null && (
+                                                  <span className="text-slate-400"> ${formatMoney(sub.unitPrice)}{(sub.quantity && sub.quantity !== 1) ? `×${sub.quantity}` : ''}</span>
+                                                )}
+                                              </span>
+                                            ))}
+                                          </span>
+                                        </span>
+                                      );
+                                    }
+                                    return (
+                                      <span key={idx} className="text-[11px] font-normal text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full" title={item.note || undefined}>
+                                        {item.name}
+                                        {item.unitPrice != null && (
+                                          <span className="text-slate-400"> ${formatMoney(item.unitPrice)}{(item.quantity && item.quantity !== 1) ? `×${item.quantity}` : ''}</span>
+                                        )}
+                                      </span>
+                                    );
+                                  })}
                                   {hiddenCount > 0 && (
                                     <button type="button" onClick={() => toggleRowExpanded(t.id)} className="text-[11px] font-bold text-amber-500 hover:text-amber-600">+{hiddenCount} 更多</button>
                                   )}
@@ -1398,6 +1431,7 @@ const App: React.FC = () => {
         nickname={session?.user.user_metadata?.nickname || ''} onUpdateNickname={handleUpdateNickname}
         userEmail={session?.user.email} onChangePassword={handleChangePassword}
         accounts={accounts} onSaveAccount={handleSaveAccount} onArchiveAccount={handleArchiveAccount} onDeleteAccount={handleDeleteAccount}
+        onClearAllRecords={handleClearAllRecords}
         onClose={() => setIsSettingsModalOpen(false)}
       />}
       {isMappingModalOpen && <CategoryMappingModal conflicts={conflictCategories} existingCustomOptions={customCategoryHistory} onConfirm={handleMappingConfirm} onCancel={() => { setIsMappingModalOpen(false); setPendingImportTxs([]); setConflictCategories([]); }} />}

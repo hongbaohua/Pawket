@@ -73,6 +73,14 @@ Task: Read a photo of a single receipt/itemized bill (convenience store receipt,
 6. **merchant**: if the store/merchant name is printed on the receipt (usually near the top), extract it
    as a short Traditional Chinese name (e.g. "7-ELEVEN", "全家便利商店", "五桐號"). If it's not legible or
    not printed, omit this field entirely — do not guess.
+
+7. **Combo / set-meal items (subItems)**: if a line on the receipt represents a bundled set (printed as
+   "套餐"/"combo"/"組合", or a priced line immediately followed by indented/listed component lines with
+   no separate prices of their own), extract it as ONE item whose \`subItems\` array lists the included
+   components. Only give a sub-item its own \`unitPrice\` if the receipt prints a distinct price for that
+   specific component; otherwise omit \`unitPrice\` for that sub-item (its cost is already included in the
+   parent combo item's own unitPrice/subtotal). Do NOT invent a breakdown for a plain single product —
+   only use \`subItems\` when the receipt itself visibly shows a bundle/breakdown relationship.
 `;
 
 const RECEIPT_RESPONSE_SCHEMA = {
@@ -86,7 +94,21 @@ const RECEIPT_RESPONSE_SCHEMA = {
         properties: {
           name: { type: Type.STRING },
           unitPrice: { type: Type.NUMBER },
-          quantity: { type: Type.NUMBER }
+          quantity: { type: Type.NUMBER },
+          // 套餐/組合品項用：內含的子項目，只在收據本身就印出「一項底下列了好幾個內含品項」
+          // 這種結構時才填，不要對單純的單一商品硬湊一個breakdown（見上面規則7）。
+          subItems: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                unitPrice: { type: Type.NUMBER },
+                quantity: { type: Type.NUMBER }
+              },
+              required: ["name"]
+            }
+          }
         },
         required: ["name", "unitPrice", "quantity"]
       }
@@ -108,7 +130,7 @@ const RECEIPT_RESPONSE_SCHEMA = {
 };
 
 export interface ReceiptAnalysisResult {
-  items: { name: string; unitPrice: number; quantity: number }[];
+  items: { name: string; unitPrice: number; quantity: number; subItems?: { name: string; unitPrice?: number; quantity?: number }[] }[];
   discounts: { label: string; amount: number }[];
   mergedName: string;
   merchant?: string;
@@ -120,7 +142,14 @@ const mapResponseToReceiptResult = (responseText: string): ReceiptAnalysisResult
     items: (parsed.items || []).map((it: any) => ({
       name: it.name || '',
       unitPrice: typeof it.unitPrice === 'number' ? it.unitPrice : 0,
-      quantity: typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 1
+      quantity: typeof it.quantity === 'number' && it.quantity > 0 ? it.quantity : 1,
+      subItems: Array.isArray(it.subItems) && it.subItems.length > 0
+        ? it.subItems.map((sub: any) => ({
+            name: sub.name || '',
+            unitPrice: typeof sub.unitPrice === 'number' ? sub.unitPrice : undefined,
+            quantity: typeof sub.quantity === 'number' && sub.quantity > 0 ? sub.quantity : undefined
+          }))
+        : undefined
     })),
     discounts: (parsed.discounts || []).map((d: any) => ({
       label: d.label || '',

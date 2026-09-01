@@ -52,12 +52,19 @@ export interface SpecialTag {
   note?: string; // 額外說明，例如「已打統編」「0313批次」
 }
 
-// 一筆品項，例如 { name: '吉拿棒' } 或 { name: '小卡鐳塔', unitPrice: 18.69, quantity: 9, note: '日幣4.2×匯率4.45' }
+// 一筆品項，例如 { name: '吉拿棒' } 或 { name: '小卡鐳塔', unitPrice: 18.69, quantity: 9, note: '日幣4.2×匯率4.45' }。
+// 2026-08-31新增subItems：套餐/組合類品項用，例如一張票券發票裡「票價/手續費/信用卡手續費」
+// 其實是同一次購買的三個組成部分，或餐廳「兩人套餐」底下的主餐/白飯/飲料——不該顯示成
+// 好幾個平行的獨立品項，而是「一個品項底下有幾個子項目」。子品項本身也是TransactionItem
+// （只用到name/unitPrice/quantity/note這幾個欄位，不會再往下多一層），unitPrice留空代表
+// 「這個子項目不單獨標價」，只是列出來說明套餐內含什麼；父層品項的unitPrice留空時，畫面上
+// 會自動加總有標價的子項目當作合計金額。
 export interface TransactionItem {
   name: string;
   unitPrice?: number; // 單價（選填，已換算成台幣）
   quantity?: number; // 數量（選填，沒填視為1）
   note?: string; // 額外說明（選填，例如匯率換算依據、代購批次）
+  subItems?: TransactionItem[]; // 套餐/組合的子項目（選填）
 }
 
 export interface Transaction {

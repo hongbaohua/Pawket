@@ -1,5 +1,5 @@
 
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig, MerchantAlias, MerchantAliasCandidate, LongTermReserve } from '../types';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig, MerchantAlias, MerchantAliasCandidate, LongTermReserve, TransactionItem } from '../types';
 import { format, getDaysInMonth, getDate, startOfMonth, endOfMonth, addMonths, subMonths, differenceInDays, isAfter, isBefore, startOfDay, endOfDay, parseISO, startOfYear, getMonth, getYear, isSameMonth, differenceInMonths, subDays, addDays } from 'date-fns';
 import {
   RUNWAY_ANALYSIS_WINDOW_DAYS, RUNWAY_OUTLIER_IQR_MULTIPLIER, RUNWAY_OUTLIER_MIN_SAMPLE_SIZE, RUNWAY_WARNING_DAYS,
@@ -22,6 +22,21 @@ const fromCents = (val: number) => val / 100;
 // 統計失真（2026-08-11 Ivy反應）。跟「餘額/現金緩衝耗盡預警」這種看「錢真的流出去多少」
 // 的函式是不同的關注點，那些刻意不套用這個排除。
 const isPersonalConsumption = (t: Transaction): boolean => t.type === 'expense' && !t.specialTag;
+
+// 品項金額顯示用：畫面上會直接印出unitPrice（有時候是反推分配/浮點數運算的結果，
+// 例如958.0464431910909），四捨五入到分再用toLocaleString印出來，不要讓一長串沒意義
+// 的小數直接洩漏到畫面上（2026-08-31 Ivy反應「太醜了」才補的格式化）。
+export const formatMoney = (n: number): string =>
+  (Math.round(n * 100) / 100).toLocaleString('zh-TW', { maximumFractionDigits: 2 });
+
+// 一個品項（含套餐/組合類）的合計金額：本身有標單價就用本身的（單價×數量），
+// 沒有標單價但有子品項，就加總子品項裡「有標單價」的那些——子品項沒標單價的
+// （純粹列出內含什麼、不單獨計價）不列入加總，避免重複灌水或算出不該有的金額。
+export const getItemAmount = (item: TransactionItem): number => {
+  if (item.unitPrice != null) return item.unitPrice * (item.quantity || 1);
+  if (item.subItems?.length) return item.subItems.reduce((sum, sub) => sum + getItemAmount(sub), 0);
+  return 0;
+};
 
 /**
  * Helper: Calculate Date Range based on Scope and Cycle Day

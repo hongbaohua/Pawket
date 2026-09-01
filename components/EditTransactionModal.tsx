@@ -1,8 +1,8 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account, Discount, SpecialTag, TransactionItem, SharedExpense } from '../types';
-import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, ChevronLeft, ChevronRight, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard, Calculator, Divide, Zap, Loader2, Users } from 'lucide-react';
-import { calculateAccountBalances } from '../services/logicService';
+import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, ChevronLeft, ChevronRight, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard, Calculator, Divide, Zap, Loader2, Users, Layers, Ungroup } from 'lucide-react';
+import { calculateAccountBalances, getItemAmount, formatMoney } from '../services/logicService';
 import { analyzeReceiptItems, ReceiptAnalysisResult } from '../services/geminiService';
 import { v4 as uuidv4 } from 'uuid';
 import SharedExpenseModal from './SharedExpenseModal';
@@ -91,11 +91,72 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   };
   const removeItemRow = (idx: number) => setItems(prev => prev.filter((_, i) => i !== idx));
   // 2026-07-24 Ivy反應：品項單價都填好了，填折扣時卻要她自己手算原始金額——
-  // 品項合計本來就算得出來，不該要她重算一次。
-  const itemsSubtotal = useMemo(
-    () => items.reduce((sum, it) => sum + (it.unitPrice != null ? it.unitPrice * (it.quantity || 1) : 0), 0),
-    [items]
+  // 品項合計本來就算得出來，不該要她重算一次。2026-08-31起改用getItemAmount，
+  // 套餐/組合類品項（見subItems）也會正確算進去，不會漏算。
+  const itemsSubtotal = useMemo(() => items.reduce((sum, it) => sum + getItemAmount(it), 0), [items]);
+
+  // 套餐/組合子品項（2026-08-31新增）：像票券發票的「票價/手續費/信用卡手續費」其實是
+  // 同一次購買的組成部分，或餐廳套餐底下的主餐/白飯/飲料，不該顯示成好幾個平行的獨立
+  // 品項。子品項管理函式跟上面item的邏輯平行，多一層parentIdx。
+  const [expandedSubItemsIdx, setExpandedSubItemsIdx] = useState<Set<number>>(
+    new Set((transaction.items || []).map((it, i) => (it.subItems?.length ? i : -1)).filter(i => i >= 0))
   );
+  const toggleSubItemsExpanded = (idx: number) => setExpandedSubItemsIdx(prev => {
+    const next = new Set(prev);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    return next;
+  });
+  const addSubItemRow = (parentIdx: number) => {
+    setItems(prev => prev.map((it, i) => i === parentIdx ? { ...it, subItems: [...(it.subItems || []), { name: '' }] } : it));
+    setExpandedSubItemsIdx(prev => new Set(prev).add(parentIdx));
+  };
+  const updateSubItemField = (parentIdx: number, subIdx: number, field: keyof TransactionItem, value: string) => {
+    setItems(prev => prev.map((it, i) => {
+      if (i !== parentIdx || !it.subItems) return it;
+      return {
+        ...it,
+        subItems: it.subItems.map((sub, si) => {
+          if (si !== subIdx) return sub;
+          if (field === 'unitPrice' || field === 'quantity') return { ...sub, [field]: value === '' ? undefined : parseFloat(value) || 0 };
+          return { ...sub, [field]: value };
+        }),
+      };
+    }));
+  };
+  const removeSubItemRow = (parentIdx: number, subIdx: number) => {
+    setItems(prev => prev.map((it, i) => i === parentIdx && it.subItems ? { ...it, subItems: it.subItems.filter((_, si) => si !== subIdx) } : it));
+  };
+  // 解散套餐：把子品項攤平回獨立的頂層品項，父層容器本身移除——給打包後反悔的退路。
+  const ungroupItem = (idx: number) => {
+    setItems(prev => {
+      const target = prev[idx];
+      if (!target.subItems?.length) return prev;
+      return [...prev.slice(0, idx), ...prev.slice(idx + 1), ...target.subItems];
+    });
+  };
+
+  // 打包成套餐：勾選2個以上品項後可以合併成一個套餐品項（原本各自的品項變成子品項）。
+  // 這是既有真實資料（例如「反推分配」小工具算出來的票價/手續費/信用卡手續費三筆）
+  // 要改用套餐子品項顯示時的操作入口——不用重新輸入資料，開這筆交易勾選、打包、存檔即可。
+  const [selectedForBundle, setSelectedForBundle] = useState<Set<number>>(new Set());
+  const [bundleName, setBundleName] = useState('');
+  const toggleBundleSelect = (idx: number) => setSelectedForBundle(prev => {
+    const next = new Set(prev);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    return next;
+  });
+  const confirmBundle = () => {
+    const indices = [...selectedForBundle].sort((a, b) => a - b);
+    if (indices.length < 2) return;
+    setItems(prev => {
+      const bundled = indices.map(i => prev[i]);
+      const rest = prev.filter((_, i) => !selectedForBundle.has(i));
+      return [...rest, { name: bundleName.trim() || '套餐組合', subItems: bundled }];
+    });
+    setSelectedForBundle(new Set());
+    setBundleName('');
+  };
+  const cancelBundle = () => { setSelectedForBundle(new Set()); setBundleName(''); };
   // 2026-08-13：原本是「帶入品項合計」按鈕要手動點一下才套用(刻意設計成不自動覆蓋，
   // 避免手動調整金額時被意外蓋掉)。Ivy反應這樣還是要多點一次，改成品項合計一有變動
   // 就自動代入——依賴陣列只放itemsSubtotal，不放amount/grossAmount，所以只有「品項
@@ -163,7 +224,12 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   const commitReceiptItems = (version: 'detailed' | 'merged', mode: 'replace' | 'append') => {
     if (!receiptResult) return;
     const newItems: TransactionItem[] = version === 'detailed'
-      ? receiptResult.items.map(it => ({ name: it.name, unitPrice: it.unitPrice, quantity: it.quantity }))
+      ? receiptResult.items.map(it => ({
+          name: it.name,
+          unitPrice: it.unitPrice,
+          quantity: it.quantity,
+          subItems: it.subItems?.map(sub => ({ name: sub.name, unitPrice: sub.unitPrice, quantity: sub.quantity })),
+        }))
       : [{ name: receiptResult.mergedName, unitPrice: receiptResult.items.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0), quantity: 1 }];
     const resultingItems = mode === 'replace' ? newItems : [...items, ...newItems];
     setItems(resultingItems);
@@ -986,7 +1052,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                     </div>
                   </div>
                   {fxAllocSummary && (
-                    <p className="text-[10px] text-emerald-500">原幣總額 {fxAllocSummary.originalTotal} → 隱含匯率 {fxAllocSummary.impliedRate.toFixed(4)}</p>
+                    <p className="text-[10px] text-emerald-500">原幣總額 {formatMoney(fxAllocSummary.originalTotal)} → 隱含匯率 {fxAllocSummary.impliedRate.toFixed(4)}</p>
                   )}
                   <p className="text-[10px] text-emerald-400">↓ 到下面每個品項點「填單價」展開，會多一個「原幣金額」欄位可以填</p>
                 </div>
@@ -994,25 +1060,75 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
               <div className="space-y-2">
                 {items.map((it, idx) => {
                   const isExpanded = expandedItemIdx.has(idx);
-                  const subtotal = it.unitPrice != null ? it.unitPrice * (it.quantity || 1) : null;
+                  const isCombo = !!it.subItems?.length;
+                  const isSubItemsExpanded = expandedSubItemsIdx.has(idx);
+                  const subtotal = getItemAmount(it);
                   return (
-                    <div key={idx} className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                    <div key={idx} className={`p-3 bg-white border rounded-xl space-y-2 ${isCombo ? 'border-indigo-200' : 'border-slate-200'}`}>
                       <div className="flex flex-wrap gap-2 items-center">
+                        {/* 打包成套餐用的複選框：只有2個以上品項時才顯示，避免只有1個品項時憑空多一個沒用的勾選框 */}
+                        {items.length >= 2 && (
+                          <input
+                            type="checkbox"
+                            checked={selectedForBundle.has(idx)}
+                            onChange={() => toggleBundleSelect(idx)}
+                            title="勾選跟其他品項打包成套餐"
+                            className="w-4 h-4 shrink-0 accent-indigo-500"
+                          />
+                        )}
+                        {isCombo && <Layers className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
                         <input
                           type="text"
                           value={it.name}
                           onChange={(e) => updateItemField(idx, 'name', e.target.value)}
-                          placeholder="例如：吉拿棒"
+                          placeholder={isCombo ? '套餐名稱，例如：演唱會門票' : '例如：吉拿棒'}
                           className="flex-1 min-w-[100px] p-2 bg-transparent text-sm font-bold text-slate-700 outline-none"
                         />
                         <div className="flex items-center gap-2 shrink-0">
-                          {subtotal != null && <span className="text-xs font-bold text-amber-500 whitespace-nowrap">${subtotal.toFixed(2)}</span>}
+                          {subtotal > 0 && <span className="text-xs font-bold text-amber-500 whitespace-nowrap">${formatMoney(subtotal)}</span>}
                           <button type="button" onClick={() => toggleItemExpanded(idx)} className={`text-[10px] font-bold px-2 py-1 rounded-lg whitespace-nowrap ${isExpanded ? 'bg-amber-100 text-amber-600' : 'text-slate-400 hover:bg-slate-100'}`}>
                             {isExpanded ? '收合單價' : '填單價'}
+                          </button>
+                          <button type="button" onClick={() => toggleSubItemsExpanded(idx)} className={`text-[10px] font-bold px-2 py-1 rounded-lg whitespace-nowrap ${isSubItemsExpanded ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:bg-slate-100'}`}>
+                            {isCombo ? `子品項(${it.subItems!.length})` : '＋子品項'}
                           </button>
                           <button type="button" onClick={() => removeItemRow(idx)} className="p-1 text-slate-300 hover:text-rose-400 transition shrink-0"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       </div>
+                      {isSubItemsExpanded && (
+                        <div className="pt-2 border-t border-indigo-100 animate-in slide-in-from-top-1 space-y-2 bg-indigo-50/30 -mx-3 -mb-2 px-3 pb-3 rounded-b-xl">
+                          <p className="text-[10px] text-indigo-400">套餐/組合底下的內含項目，單價留空代表「不單獨標價，只是列出來說明內含什麼」。</p>
+                          {(it.subItems || []).map((sub, sIdx) => (
+                            <div key={sIdx} className="flex flex-wrap items-center gap-2 p-2 bg-white border border-indigo-100 rounded-lg">
+                              <input
+                                type="text"
+                                value={sub.name}
+                                onChange={(e) => updateSubItemField(idx, sIdx, 'name', e.target.value)}
+                                placeholder="例如：主餐"
+                                className="flex-1 min-w-[80px] p-1.5 bg-transparent text-sm font-bold text-slate-700 outline-none"
+                              />
+                              <div className="w-24 shrink-0">
+                                <CalcInput
+                                  value={sub.unitPrice}
+                                  onCommit={n => updateSubItemField(idx, sIdx, 'unitPrice', String(n))}
+                                  placeholder="不標價"
+                                  className="w-full p-1.5 bg-[#FFFBF5] border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-indigo-300"
+                                />
+                              </div>
+                              <div className="w-14 shrink-0">
+                                <CalcInput value={sub.quantity} onCommit={n => updateSubItemField(idx, sIdx, 'quantity', String(n))} placeholder="1" className="w-full p-1.5 bg-[#FFFBF5] border border-slate-200 rounded-lg text-xs font-bold outline-none focus:border-indigo-300" />
+                              </div>
+                              <button type="button" onClick={() => removeSubItemRow(idx, sIdx)} className="p-1 text-slate-300 hover:text-rose-400 transition shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+                            </div>
+                          ))}
+                          <div className="flex items-center gap-3">
+                            <button type="button" onClick={() => addSubItemRow(idx)} className="text-xs font-bold text-indigo-400 hover:text-indigo-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> 新增子品項</button>
+                            {isCombo && (
+                              <button type="button" onClick={() => ungroupItem(idx)} className="text-xs font-bold text-slate-400 hover:text-rose-400 flex items-center gap-1"><Ungroup className="w-3.5 h-3.5" /> 解散套餐（攤平回獨立品項）</button>
+                            )}
+                          </div>
+                        </div>
+                      )}
                       {isExpanded && (
                         <div className="pt-2 border-t border-slate-100 animate-in slide-in-from-top-1 space-y-2">
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -1080,6 +1196,21 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                     </div>
                   );
                 })}
+                {selectedForBundle.size >= 2 && (
+                  <div className="flex flex-wrap items-center gap-2 p-3 bg-indigo-50 border border-indigo-200 rounded-xl animate-in slide-in-from-top-1">
+                    <Layers className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <span className="text-xs font-bold text-indigo-600 whitespace-nowrap">已選 {selectedForBundle.size} 項</span>
+                    <input
+                      type="text"
+                      value={bundleName}
+                      onChange={e => setBundleName(e.target.value)}
+                      placeholder="套餐名稱，例如：演唱會門票"
+                      className="flex-1 min-w-[120px] p-2 bg-white border border-indigo-200 rounded-lg text-sm font-bold outline-none focus:border-indigo-300"
+                    />
+                    <button type="button" onClick={confirmBundle} className="px-3 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-lg text-xs font-bold transition shrink-0">打包成套餐</button>
+                    <button type="button" onClick={cancelBundle} className="px-3 py-2 text-slate-400 hover:text-slate-500 text-xs font-bold transition shrink-0">取消</button>
+                  </div>
+                )}
                 <button type="button" onClick={addItemRow} className="text-xs font-bold text-slate-400 hover:text-amber-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> 新增品項</button>
               </div>
             </div>
