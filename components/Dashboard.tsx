@@ -271,7 +271,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         heightLeft -= pageContentHeight;
       }
 
-      pdf.save(`Pawket_戰情報告_${format(parseISO(report.createdAt), 'yyyyMMdd_HHmm')}.pdf`);
+      // 檔名放分析區間（不是只有生成時間戳記）——Ivy反應原本每份檔名只看得到生成當下的
+      // 分鐘數，好幾份分不同期間跑的報告堆在下載資料夾裡完全看不出哪份是哪期間，
+      // 要一個個打開才知道。生成時間縮到只留「月日_時分」當後綴，同一期間重複生成
+      // 才不會蓋掉舊檔，但主要辨識靠前面的區間。
+      const periodTag = `${format(parseISO(report.periodStart), 'yyyyMMdd')}-${format(parseISO(report.periodEnd), 'yyyyMMdd')}`;
+      pdf.save(`Pawket_戰情報告_${periodTag}_生成於${format(parseISO(report.createdAt), 'MMdd_HHmm')}.pdf`);
     } catch (err) {
       console.error('下載PDF失敗', err);
       alert('下載PDF失敗，請稍後再試一次。');
