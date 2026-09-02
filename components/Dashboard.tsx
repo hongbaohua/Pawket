@@ -636,7 +636,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                       </div>
                       {isDtiHigh && <div className="p-2 bg-rose-200 text-rose-600 rounded-full animate-bounce shrink-0"><AlertTriangle className="w-5 h-5" /></div>}
                   </div>
-                  <div className="flex items-baseline gap-2 mb-4"><span className={`text-4xl font-extrabold ${isDtiHigh ? 'text-rose-600' : healthMetrics.dtiRatio > DTI_CAUTION_THRESHOLD ? 'text-amber-500' : 'text-emerald-500'}`}>{healthMetrics.dtiRatio.toFixed(1)}%</span><span className={`text-xs font-bold ${isDtiHigh ? 'text-rose-500' : 'text-slate-400'}`}>{isDtiHigh ? '固定支出佔比過高' : '固定支出負擔健康'}</span></div>
+                  <div className="flex items-baseline gap-2 mb-4"><span className={`text-4xl font-extrabold ${isDtiHigh ? 'text-rose-600' : healthMetrics.dtiRatio > DTI_CAUTION_THRESHOLD ? 'text-amber-500' : 'text-emerald-500'}`}>{healthMetrics.hasIncome ? `${healthMetrics.dtiRatio.toFixed(1)}%` : '－'}</span><span className={`text-xs font-bold ${isDtiHigh ? 'text-rose-500' : 'text-slate-400'}`}>{!healthMetrics.hasIncome ? '本期尚無收入紀錄，無法計算佔比' : isDtiHigh ? '固定支出佔比過高' : '固定支出負擔健康'}</span></div>
                   <div className="space-y-4">
                       {['Fixed', 'Variable', 'Investment'].map(k => {
                         const val = healthMetrics.ratios[k.toLowerCase() as keyof typeof healthMetrics.ratios];

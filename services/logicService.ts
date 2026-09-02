@@ -290,16 +290,21 @@ export const analyzeFinancialHealth = (transactions: Transaction[]) => {
     }
   });
 
-  const safeIncome = income || 1; 
+  // income若是0（例如新週期剛開始、薪水還沒入帳），用1當分母會讓固定支出/1*100
+  // 算出離譜的巨大百分比（例如666元固定支出會顯示66600%），誤觸「固定債務過高」
+  // 的紅色警示——這種情況下佔比本來就無法計算，不是真的負擔過重，直接歸零避免誤報。
+  const hasIncome = income > 0;
+  const safeIncome = income || 1;
 
   return {
     totalIncome: income,
+    hasIncome,
     ratios: {
-      fixed: (expenses[L1Category.FIXED] / safeIncome) * 100,
-      variable: (expenses[L1Category.VARIABLE] / safeIncome) * 100,
-      investment: (expenses[L1Category.INVESTMENT] / safeIncome) * 100,
+      fixed: hasIncome ? (expenses[L1Category.FIXED] / safeIncome) * 100 : 0,
+      variable: hasIncome ? (expenses[L1Category.VARIABLE] / safeIncome) * 100 : 0,
+      investment: hasIncome ? (expenses[L1Category.INVESTMENT] / safeIncome) * 100 : 0,
     },
-    dtiRatio: (expenses[L1Category.FIXED] / safeIncome) * 100,
+    dtiRatio: hasIncome ? (expenses[L1Category.FIXED] / safeIncome) * 100 : 0,
     variableAmount: expenses[L1Category.VARIABLE]
   };
 };
