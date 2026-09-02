@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { AlertCircle, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper, Users, ArrowDownCircle, ArrowUpCircle, Sparkles, History } from 'lucide-react';
 import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, LongTermReserve, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange, SharedExpense, AiReport, AiReportContent } from '../types';
-import { addMonths, addDays, format, startOfMonth, endOfMonth, startOfDay, endOfDay, parseISO } from 'date-fns';
+import { addMonths, addDays, differenceInDays, format, startOfMonth, endOfMonth, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { analyzeFinancialHealth, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, getCategoryPieData, detectRecurringExpenses, calculateWishlistMetrics, WishlistItemMetrics, calculateProjectedPenalty, calculateRunway, getDateRange } from '../services/logicService';
 import { generateFinancialInterpretation, FinancialInterpretationInput } from '../services/geminiService';
 import html2canvas from 'html2canvas';
@@ -208,6 +208,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       const input: FinancialInterpretationInput = {
         periodLabel,
+        periodDays: Math.max(differenceInDays(range.endDate, range.startDate) + 1, 1),
         scopeLabel: SCOPE_LABELS[scope],
         totalIncome: scopeIncomeTotal,
         totalExpense: scopeExpenseTotal,
@@ -217,7 +218,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         pacingAlerts: scopePacingAlerts.map(a => ({ message: a.message, metric: a.metric, value: a.value, threshold: a.threshold })),
         anomalies: scopeAnomalies.map(a => ({ date: a.date, merchant: a.merchant, l2: a.category.l2, l3: a.category.l3, amount: a.amount, avgAmount: a.avgAmount })),
         frequencyAlerts: scopeFreqAlerts.map(f => ({ l2: f.l2, currentCount: f.currentCount, avgCount: f.avgCount })),
-        recurringExpenses: recurringExpenses.map(r => ({ merchant: r.merchant, medianAmount: r.medianAmount })),
+        recurringExpenses: recurringExpenses.map(r => ({ merchant: r.merchant, medianMonthlyAmount: r.medianAmount })),
         sampleTransactions: scopeTxs.length <= MAX_RAW_TX_FOR_AI
           ? scopeTxs.filter(t => t.type === 'expense' && !t.specialTag).map(t => ({ date: t.date, merchant: t.merchant, amount: t.amount, l1: t.category.l1, l2: t.category.l2, l3: t.category.l3 }))
           : undefined

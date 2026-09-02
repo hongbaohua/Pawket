@@ -261,6 +261,7 @@ export const analyzeBankStatementRowsFromFile = async (dataUrl: string): Promise
 // 「戰情報告」按鈕才會呼叫，不是自動觸發，每次生成都會存進資料庫，不會重複耗用額度。
 export interface FinancialInterpretationInput {
   periodLabel: string;   // 人類可讀的分析期間，例如「2026/08/01 ~ 2026/08/31」
+  periodDays: number;    // 這期共幾天，講「頻率/平均每天」之類的話時直接拿次數除這個數字算，不要自己猜期間長度
   scopeLabel: string;    // 分析視角中文說法，例如「自然月度」「至今累積」
   totalIncome: number;
   totalExpense: number;
@@ -270,7 +271,12 @@ export interface FinancialInterpretationInput {
   pacingAlerts: { message: string; metric: string; value: number; threshold: number }[]; // 已經觸發的月度配速超支警示
   anomalies: { date: string; merchant: string; l2: string; l3: string; amount: number; avgAmount: number }[]; // 規則已經抓到的單筆異常(跟歷史平均差很多)
   frequencyAlerts: { l2: string; currentCount: number; avgCount: number }[]; // 規則已經抓到的消費頻率異常
-  recurringExpenses: { merchant: string; medianAmount: number }[]; // 目前偵測到的固定週期性支出
+  // 目前偵測到的固定週期性支出——medianMonthlyAmount是這個商家「每個月」花費總額的
+  // 中位數(可能是好幾筆消費加總，例如常去的早餐店一個月去10次的總和)，不是單筆消費
+  // 金額，欄位名稱故意標明monthly避免AI跟「這家店一次消費多少錢」搞混（2026-09-02
+  // Ivy實測「至今累積」報告時抓到：AI把拉亞漢堡的medianAmount 1981元誤講成「單次早餐
+  // 支出」/「已成為固定支出」，實際上1981元是月度加總，單次消費約150~265元）。
+  recurringExpenses: { merchant: string; medianMonthlyAmount: number }[];
   // 本期原始交易，只有筆數不多時才會給(見Dashboard.tsx呼叫端的門檻)，資料量太大時
   // 省略此欄位，改讓AI只根據上面幾組已經算好的聚合數據判斷，避免payload/額度爆掉。
   sampleTransactions?: { date: string; merchant: string; amount: number; l1: string; l2: string; l3: string }[];
@@ -299,8 +305,18 @@ Task: 讀取一份結構化JSON（這期的收支摘要、既有規則已經算�
    密集消費、日期或金額看起來像是打錯的。**真的沒發現任何異常，就回傳空陣列，
    不要為了有內容硬湊一個不痛不癢的發現。**
 5. **suggestions**：2~4則具體建議，要根據這期資料實際情況給，不要給「少吃外食」
-   這種跟資料無關的罐頭建議，除非資料真的支持這個方向。
-6. 全部文字輸出必須是繁體中文。
+   這種跟資料無關的罐頭建議，除非資料真的支持這個方向。優先挑對這期財務狀況影響
+   最大的項目（金額最高/超支最多的），不要挑一個佔比很小、但看起來像「不必要開銷」
+   的項目來湊數（例如整期支出裡佔不到2%的訂閱服務，不該是建議的重點）。
+6. **recurringExpenses裡的medianMonthlyAmount是該商家「每個月」花費總額的中位數
+   （可能是好幾筆消費加總），不是單筆消費金額**——不要把它講成「單次消費多少錢」
+   或某個品項的價格，也不要因為金額看起來大就直接定調成跟訂閱服務一樣的「固定
+   支出」，正確的講法是「這個商家平均每月花費約X元」。
+7. **提到頻率/次數時（例如「每天X次」「幾乎天天」），要拿次數除以periodDays
+   算出真實比率，不要用誇飾語氣**——次數多不代表頻率高，例如6年多(periodDays約
+   2400天)的資料裡出現1000多次，換算下來可能不到每2天一次，不能講成「幾乎每天
+   都有多次」。算出來的比率跟你想講的形容詞對不上，就不要講那個形容詞。
+8. 全部文字輸出必須是繁體中文。
 `;
 
 const REPORT_RESPONSE_SCHEMA = {
