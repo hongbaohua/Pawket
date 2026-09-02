@@ -3,9 +3,10 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { AlertCircle, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper, Users, ArrowDownCircle, ArrowUpCircle, Sparkles, History } from 'lucide-react';
 import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, LongTermReserve, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange, SharedExpense, AiReport, AiReportContent } from '../types';
-import { addMonths, format, startOfMonth, endOfMonth, startOfDay, endOfDay, parseISO } from 'date-fns';
+import { addMonths, addDays, format, startOfMonth, endOfMonth, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { analyzeFinancialHealth, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, getCategoryPieData, detectRecurringExpenses, calculateWishlistMetrics, WishlistItemMetrics, calculateProjectedPenalty, calculateRunway, getDateRange } from '../services/logicService';
 import { generateFinancialInterpretation, FinancialInterpretationInput } from '../services/geminiService';
+import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { DTI_CAUTION_THRESHOLD, DTI_CRITICAL_THRESHOLD, RUNWAY_WARNING_DAYS } from '../config/financialRules';
 import AccountBalances, { AccountBalancesCollapsedPill } from './AccountBalances';
@@ -238,42 +239,44 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  const downloadReportAsPdf = (report: AiReport) => {
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pageWidth = 210, pageHeight = 297, marginX = 18, marginY = 20, contentWidth = pageWidth - marginX * 2;
-    let y = marginY;
-    const ensureSpace = (needed: number) => { if (y + needed > pageHeight - marginY) { pdf.addPage(); y = marginY; } };
-    const writeParagraph = (text: string, fontSize: number, bold: boolean, gapAfter: number) => {
-      pdf.setFontSize(fontSize);
-      pdf.setFont('helvetica', bold ? 'bold' : 'normal');
-      const lines: string[] = pdf.splitTextToSize(text, contentWidth);
-      lines.forEach(line => { ensureSpace(fontSize * 0.5); pdf.text(line, marginX, y); y += fontSize * 0.5; });
-      y += gapAfter;
-    };
-    const writeBulletList = (items: string[]) => {
-      pdf.setFontSize(10.5);
-      pdf.setFont('helvetica', 'normal');
-      items.forEach(item => {
-        const lines: string[] = pdf.splitTextToSize(`•  ${item}`, contentWidth - 4);
-        lines.forEach((line, i) => { ensureSpace(6); pdf.text(line, marginX + (i === 0 ? 0 : 4), y); y += 5.5; });
-      });
-      y += 4;
-    };
+  const reportPdfRef = useRef<HTMLDivElement>(null);
+  const [pdfDownloading, setPdfDownloading] = useState(false);
 
-    writeParagraph('貓咪指揮官戰情報告', 20, true, 2);
-    pdf.setFontSize(10.5); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(120, 120, 120);
-    pdf.text(`分析期間：${report.periodLabel}`, marginX, y); y += 6;
-    pdf.text(`分析視角：${SCOPE_LABELS[report.scope]}`, marginX, y); y += 6;
-    pdf.text(`產生時間：${format(parseISO(report.createdAt), 'yyyy/MM/dd HH:mm')}`, marginX, y); y += 10;
-    pdf.setTextColor(0, 0, 0);
+  // jsPDF內建的14種標準字型(helvetica/times/courier)完全沒有中文字glyph，直接pdf.text()
+  // 寫中文只會印出亂碼——Ivy實測「戰情報告」下載出來的PDF整份都是亂碼，就是這個原因。
+  // 改成跟舊版截圖PDF一樣的做法：把報告內容渲染在畫面外的reportPdfRef節點（見上方JSX），
+  // 用html2canvas截圖成圖片（借瀏覽器原生字型渲染中文），再把這張圖切成一頁一頁貼進PDF，
+  // 不用自己嵌字型檔案。
+  const downloadReportAsPdf = async (report: AiReport) => {
+    if (!reportPdfRef.current) return;
+    setPdfDownloading(true);
+    try {
+      const canvas = await html2canvas(reportPdfRef.current, { scale: 2, useCORS: true, backgroundColor: '#FFFFFF', logging: false });
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = 210, pageHeight = 297, marginX = 15, marginY = 15;
+      const contentWidth = pageWidth - marginX * 2;
+      const imgHeight = (canvas.height * contentWidth) / canvas.width;
+      const imgData = canvas.toDataURL('image/png');
+      const pageContentHeight = pageHeight - marginY * 2;
 
-    writeParagraph('整體評語', 13, true, 3);
-    writeParagraph(report.content.overallAssessment || '（沒有內容）', 11, false, 6);
-    if (report.content.keyPoints.length) { writeParagraph('重點摘要', 13, true, 3); writeBulletList(report.content.keyPoints); }
-    if (report.content.anomalyFindings.length) { writeParagraph('異常發現', 13, true, 3); writeBulletList(report.content.anomalyFindings); }
-    if (report.content.suggestions.length) { writeParagraph('建議', 13, true, 3); writeBulletList(report.content.suggestions); }
+      let heightLeft = imgHeight;
+      let position = marginY;
+      pdf.addImage(imgData, 'PNG', marginX, position, contentWidth, imgHeight);
+      heightLeft -= pageContentHeight;
+      while (heightLeft > 0) {
+        position = marginY - (imgHeight - heightLeft);
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', marginX, position, contentWidth, imgHeight);
+        heightLeft -= pageContentHeight;
+      }
 
-    pdf.save(`Pawket_戰情報告_${format(parseISO(report.createdAt), 'yyyyMMdd_HHmm')}.pdf`);
+      pdf.save(`Pawket_戰情報告_${format(parseISO(report.createdAt), 'yyyyMMdd_HHmm')}.pdf`);
+    } catch (err) {
+      console.error('下載PDF失敗', err);
+      alert('下載PDF失敗，請稍後再試一次。');
+    } finally {
+      setPdfDownloading(false);
+    }
   };
 
   const isCritical = alerts.some(a => a.level === 'critical'), isDtiHigh = healthMetrics.dtiRatio > DTI_CRITICAL_THRESHOLD, isPenaltyActive = penaltyData.isOverspent, isCaution = (!isCritical && alerts.length > 0) || (healthMetrics.dtiRatio > DTI_CAUTION_THRESHOLD && healthMetrics.dtiRatio <= DTI_CRITICAL_THRESHOLD) || isPenaltyActive;
@@ -450,6 +453,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                             <div className="p-5 border-2 border-slate-50 bg-slate-50 rounded-3xl flex flex-col items-start gap-1 relative group hover:border-amber-200 transition-all">
                                 <span className="font-extrabold text-slate-700 text-lg">自訂任意區間</span>
                                 <div className="flex flex-col gap-2 w-full mt-1">
+                                    {/* 快捷鍵：以「結束日期」欄位目前的值為基準往前推算開始日期，不是以今天為基準——
+                                        例如結束日期先手動改成08/31，再點「前一個月」，會抓08/01~08/31，
+                                        不會被今天的日期(09/02)影響變成08/02~09/02。 */}
+                                    <div className="flex flex-wrap gap-1.5">
+                                        {[{ label: '前一個月', months: 1 }, { label: '前三個月', months: 3 }, { label: '前六個月', months: 6 }, { label: '前一整年', months: 12 }].map(opt => (
+                                          <button
+                                            key={opt.label}
+                                            onClick={() => setCustomRange({ ...customRange, start: addDays(addMonths(customRange.end, -opt.months), 1) })}
+                                            className="px-2.5 py-1 text-[11px] font-bold text-amber-600 bg-amber-100/70 hover:bg-amber-200 rounded-full transition active:scale-95"
+                                          >{opt.label}</button>
+                                        ))}
+                                    </div>
                                     <div className="grid grid-cols-2 gap-3">
                                         <div className="space-y-1">
                                             <p className="text-[10px] font-bold text-slate-400 uppercase ml-1">開始日期</p>
@@ -557,8 +572,9 @@ const Dashboard: React.FC<DashboardProps> = ({
                               </div>
                             )}
 
-                            <button onClick={() => downloadReportAsPdf(activeReport)} className="bg-amber-400 text-white text-sm font-bold py-3.5 rounded-2xl hover:bg-amber-500 transition active:scale-95 shadow-lg shadow-amber-100 flex items-center justify-center gap-2">
-                                <Download className="w-4 h-4" />下載PDF
+                            <button onClick={() => downloadReportAsPdf(activeReport)} disabled={pdfDownloading} className={`bg-amber-400 text-white text-sm font-bold py-3.5 rounded-2xl hover:bg-amber-500 transition active:scale-95 shadow-lg shadow-amber-100 flex items-center justify-center gap-2 ${pdfDownloading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                {pdfDownloading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                                {pdfDownloading ? '產生PDF中...' : '下載PDF'}
                             </button>
                           </>
                         ) : null}
@@ -624,6 +640,48 @@ const Dashboard: React.FC<DashboardProps> = ({
 
         {isBalancesExpanded && (
           <AccountBalances accounts={accounts} allTransactions={allTransactions} onCollapse={() => setIsBalancesExpanded(false)} />
+        )}
+      </div>
+
+      {/* 戰情報告PDF用的離屏範本：jsPDF內建字型(helvetica等14種標準字型)完全不支援中文，
+          直接用pdf.text()寫中文會變亂碼。改成跟舊版截圖PDF一樣的做法——把報告內容渲染在
+          畫面外(-9999px)，下載時用html2canvas把這個節點截圖成圖片再貼進PDF，借瀏覽器
+          原生字型渲染中文，不用自己嵌字型檔。 */}
+      <div ref={reportPdfRef} className="fixed -left-[9999px] top-0 p-10 bg-white w-[190mm]" style={{ zIndex: -100 }}>
+        {activeReport && (
+          <>
+            <h2 className="text-3xl font-black text-slate-800 mb-1">貓咪指揮官戰情報告</h2>
+            <p className="text-sm text-slate-400 mb-1">分析視角：{SCOPE_LABELS[activeReport.scope]}｜分析期間：{activeReport.periodLabel}</p>
+            <p className="text-xs text-slate-300 mb-8">產生時間：{format(parseISO(activeReport.createdAt), 'yyyy/MM/dd HH:mm')}</p>
+
+            <h3 className="text-lg font-bold text-slate-600 mb-2">整體評語</h3>
+            <p className="text-sm text-slate-700 leading-relaxed mb-8">{activeReport.content.overallAssessment}</p>
+
+            {activeReport.content.keyPoints.length > 0 && (
+              <>
+                <h3 className="text-lg font-bold text-slate-600 mb-2">重點摘要</h3>
+                <ul className="mb-8">
+                  {activeReport.content.keyPoints.map((p, i) => <li key={i} className="text-sm text-slate-700 mb-1.5">・{p}</li>)}
+                </ul>
+              </>
+            )}
+            {activeReport.content.anomalyFindings.length > 0 && (
+              <>
+                <h3 className="text-lg font-bold text-rose-500 mb-2">異常發現</h3>
+                <ul className="mb-8">
+                  {activeReport.content.anomalyFindings.map((p, i) => <li key={i} className="text-sm text-rose-600 mb-1.5">・{p}</li>)}
+                </ul>
+              </>
+            )}
+            {activeReport.content.suggestions.length > 0 && (
+              <>
+                <h3 className="text-lg font-bold text-slate-600 mb-2">建議</h3>
+                <ul>
+                  {activeReport.content.suggestions.map((p, i) => <li key={i} className="text-sm text-slate-700 mb-1.5">・{p}</li>)}
+                </ul>
+              </>
+            )}
+          </>
         )}
       </div>
 
