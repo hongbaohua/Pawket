@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { BankStatementRow } from "../types";
+import { BankStatementRow, AiReportContent } from "../types";
 import { v4 as uuidv4 } from 'uuid';
 import { GEMINI_MODEL, OCR_MAX_RETRIES } from '../config/aiSettings';
 
@@ -252,4 +252,84 @@ export const analyzeBankStatementRowsFromFile = async (dataUrl: string): Promise
     { inlineData: { mimeType, data: cleanBase64 } },
     { text: "Extract every row from this bank/postal statement (photo or scanned document) for reconciliation purposes — do not guess a category." }
   ], BANK_ROW_RESPONSE_SCHEMA, BANK_ROW_SYSTEM_INSTRUCTION, mapResponseToBankStatementRows);
+};
+
+// 戰情報告（2026-09-02）：跟上面幾個「只做辨識抽取、不做判斷」的功能不一樣，這是第一個
+// 真的要AI「解讀」的功能——首頁既有的規則式統計（超支警示/異常偵測/固定週期性支出）
+// 已經把數字算好了，這裡是把這些數字＋（資料量不大時）本期原始交易一起丟給AI，
+// 請它寫一份給人看的白話報告，並且主動检查有沒有規則沒抓到的異常。使用者手動按
+// 「戰情報告」按鈕才會呼叫，不是自動觸發，每次生成都會存進資料庫，不會重複耗用額度。
+export interface FinancialInterpretationInput {
+  periodLabel: string;   // 人類可讀的分析期間，例如「2026/08/01 ~ 2026/08/31」
+  scopeLabel: string;    // 分析視角中文說法，例如「自然月度」「至今累積」
+  totalIncome: number;
+  totalExpense: number;
+  netCashFlow: number;
+  dtiRatio: number;      // 固定支出佔收入%，0代表本期沒有收入資料、無法計算
+  categoryTotals: { l1: string; l2: string; amount: number }[];
+  pacingAlerts: { message: string; metric: string; value: number; threshold: number }[]; // 已經觸發的月度配速超支警示
+  anomalies: { date: string; merchant: string; l2: string; l3: string; amount: number; avgAmount: number }[]; // 規則已經抓到的單筆異常(跟歷史平均差很多)
+  frequencyAlerts: { l2: string; currentCount: number; avgCount: number }[]; // 規則已經抓到的消費頻率異常
+  recurringExpenses: { merchant: string; medianAmount: number }[]; // 目前偵測到的固定週期性支出
+  // 本期原始交易，只有筆數不多時才會給(見Dashboard.tsx呼叫端的門檻)，資料量太大時
+  // 省略此欄位，改讓AI只根據上面幾組已經算好的聚合數據判斷，避免payload/額度爆掉。
+  sampleTransactions?: { date: string; merchant: string; amount: number; l1: string; l2: string; l3: string }[];
+}
+
+// 保險上限：不管呼叫端怎麼決定，這裡都不會真的送出超過這個筆數的原始交易。
+const MAX_REPORT_SAMPLE_TRANSACTIONS = 300;
+
+const REPORT_SYSTEM_INSTRUCTION = `
+Role: Pawket的資深理財教練貓咪，個性溫暖但講話直接，幫使用者看懂自己的記帳資料。
+Task: 讀取一份結構化JSON（這期的收支摘要、既有規則已經算出的警示/異常/固定支出，
+有時候還會附上這期的原始交易明細），寫一份繁體中文的財務解讀報告。
+
+**CRITICAL RULES:**
+
+1. **只根據給你的資料下結論，不要編造沒出現過的數字或商家。** JSON裡沒有的東西就是
+   沒有，不要假裝看到。
+2. **overallAssessment**：2~4句話的整體評語，要針對這期實際數字講話（引用具體分類/
+   金額/比例），不要寫「財務狀況良好，請繼續保持」這種放諸四海皆準的空話。
+3. **keyPoints**：3~6則，每則一句話，具體點名分類/商家/金額，讓人一眼看出這期錢
+   花去哪裡、跟平常比起來怎樣。
+4. **anomalyFindings**：這是這份報告最重要的部分——除了把pacingAlerts/anomalies/
+   frequencyAlerts裡已經有的警示用白話講清楚之外，**如果有給sampleTransactions，
+   要自己動腦檢查一遍**，找找看規則式演算法可能沒抓到的異常，例如：同一天同商家
+   出現好幾筆看起來像重複扣款、單筆金額明顯大於這期其他交易、短時間內同一類別
+   密集消費、日期或金額看起來像是打錯的。**真的沒發現任何異常，就回傳空陣列，
+   不要為了有內容硬湊一個不痛不癢的發現。**
+5. **suggestions**：2~4則具體建議，要根據這期資料實際情況給，不要給「少吃外食」
+   這種跟資料無關的罐頭建議，除非資料真的支持這個方向。
+6. 全部文字輸出必須是繁體中文。
+`;
+
+const REPORT_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    overallAssessment: { type: Type.STRING },
+    keyPoints: { type: Type.ARRAY, items: { type: Type.STRING } },
+    anomalyFindings: { type: Type.ARRAY, items: { type: Type.STRING } },
+    suggestions: { type: Type.ARRAY, items: { type: Type.STRING } }
+  },
+  required: ["overallAssessment", "keyPoints", "anomalyFindings", "suggestions"]
+};
+
+const mapResponseToReportContent = (responseText: string): AiReportContent => {
+  const parsed = JSON.parse(responseText);
+  return {
+    overallAssessment: parsed.overallAssessment || '',
+    keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints.filter((s: any) => typeof s === 'string') : [],
+    anomalyFindings: Array.isArray(parsed.anomalyFindings) ? parsed.anomalyFindings.filter((s: any) => typeof s === 'string') : [],
+    suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions.filter((s: any) => typeof s === 'string') : []
+  };
+};
+
+export const generateFinancialInterpretation = async (input: FinancialInterpretationInput): Promise<AiReportContent> => {
+  const boundedInput: FinancialInterpretationInput = input.sampleTransactions
+    ? { ...input, sampleTransactions: input.sampleTransactions.slice(0, MAX_REPORT_SAMPLE_TRANSACTIONS) }
+    : input;
+
+  return runExtraction([
+    { text: `以下是這期財務資料的結構化摘要(JSON)，請根據這份資料撰寫戰情報告：\n\n${JSON.stringify(boundedInput)}` }
+  ], REPORT_RESPONSE_SCHEMA, REPORT_SYSTEM_INSTRUCTION, mapResponseToReportContent);
 };

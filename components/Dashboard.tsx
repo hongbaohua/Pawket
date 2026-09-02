@@ -1,11 +1,11 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { AlertCircle, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper, Users, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
-import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, LongTermReserve, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange, SharedExpense } from '../types';
-import { addMonths, format, startOfMonth, endOfMonth, startOfDay, endOfDay, isValid, parseISO } from 'date-fns';
+import { AlertCircle, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper, Users, ArrowDownCircle, ArrowUpCircle, Sparkles, History } from 'lucide-react';
+import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, LongTermReserve, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange, SharedExpense, AiReport, AiReportContent } from '../types';
+import { addMonths, format, startOfMonth, endOfMonth, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { analyzeFinancialHealth, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, getCategoryPieData, detectRecurringExpenses, calculateWishlistMetrics, WishlistItemMetrics, calculateProjectedPenalty, calculateRunway, getDateRange } from '../services/logicService';
-import html2canvas from 'html2canvas';
+import { generateFinancialInterpretation, FinancialInterpretationInput } from '../services/geminiService';
 import { jsPDF } from 'jspdf';
 import { DTI_CAUTION_THRESHOLD, DTI_CRITICAL_THRESHOLD, RUNWAY_WARNING_DAYS } from '../config/financialRules';
 import AccountBalances, { AccountBalancesCollapsedPill } from './AccountBalances';
@@ -33,6 +33,9 @@ interface DashboardProps {
   setPenaltyConfig: (config: PenaltyConfig) => void;
   customRange: {start: Date, end: Date};
   setCustomRange: (range: {start: Date, end: Date}) => void;
+  aiReports: AiReport[];
+  aiReportsLoading: boolean;
+  onSaveAiReport: (report: { scope: TimeScope; periodLabel: string; periodStart: string; periodEnd: string; content: AiReportContent }) => Promise<AiReport>;
 }
 
 // 分類比率圓餅圖用的配色——9種（配合financialRules.ts的PIE_MAX_SLICES=9），
@@ -103,7 +106,7 @@ const WishlistCard = ({
 };
 
 const Dashboard: React.FC<DashboardProps> = ({
-    alerts, budgets, transactions, allTransactions, accounts, wishlistItems, longTermReserves, sharedExpenses, onOpenWishlist, onOpenSharedExpenses, onPrint, timeScope, setTimeScope, cycleStartDay, setCycleStartDay, dateRangeLabel, currentDate, setCurrentDate, penaltyConfig, setPenaltyConfig, customRange, setCustomRange
+    alerts, budgets, transactions, allTransactions, accounts, wishlistItems, longTermReserves, sharedExpenses, onOpenWishlist, onOpenSharedExpenses, onPrint, timeScope, setTimeScope, cycleStartDay, setCycleStartDay, dateRangeLabel, currentDate, setCurrentDate, penaltyConfig, setPenaltyConfig, customRange, setCustomRange, aiReports, aiReportsLoading, onSaveAiReport
 }) => {
   // 代購/工作代墊/借貸(specialTag)不是Ivy自己的真實收入/支出，本期消費分類比率(圓餅圖)
   // 之前已經用isPersonalConsumption()排除了支出側，但這裡的淨現金流/支出結構/收入來源分析
@@ -142,55 +145,135 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [sharedExpenses]);
 
   const [expandedL2, setExpandedL2] = useState<string | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
-  const [showExportModal, setShowExportModal] = useState(false);
 
-  // --- Robust Date Range Fetching for Header and Modal ---
-  const currentRangeObj = useMemo(() => {
-    return getDateRange(timeScope, cycleStartDay, allTransactions, currentDate, customRange.start, customRange.end);
-  }, [timeScope, cycleStartDay, allTransactions, currentDate, customRange]);
+  // 戰情報告（2026-09-02）：原本這裡是「選期間→把畫面圖表截圖拼成PDF」，Ivy要求整個
+  // 改成「選期間→AI真的讀資料寫一份解讀+建議→存起來→可以下載PDF、之後也能回頭看」，
+  // 「AI解讀」跟「匯出PDF」合併成同一個按鈕/流程，不再各自獨立。
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportStep, setReportStep] = useState<'picker' | 'viewer'>('picker');
+  const [activeReport, setActiveReport] = useState<AiReport | null>(null);
+  const [reportGenerating, setReportGenerating] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   const allRange = useMemo(() => getDateRange('all', cycleStartDay, allTransactions, new Date()), [allTransactions, cycleStartDay]);
   const monthRange = useMemo(() => getDateRange('natural_month', cycleStartDay, allTransactions, currentDate), [allTransactions, cycleStartDay, currentDate]);
   const cycleRange = useMemo(() => getDateRange('custom_cycle', cycleStartDay, allTransactions, currentDate), [allTransactions, cycleStartDay, currentDate]);
 
-  const triggerExport = async () => {
-    setShowExportModal(false);
-    setIsExporting(true);
-    await new Promise(resolve => setTimeout(resolve, 800));
+  const SCOPE_LABELS: Record<TimeScope, string> = { all: '至今累積', natural_month: '自然月度', custom_cycle: '週期結算', custom_range: '自訂區間' };
+  // 原始交易筆數超過這個門檻就不把逐筆明細送給AI，只送已經算好的聚合數據——
+  // 「至今累積」這種期間可能有上千筆，直接全送會讓payload/AI額度爆掉。
+  const MAX_RAW_TX_FOR_AI = 200;
+
+  // 用allTransactions＋目標scope自己重新算一次區間跟篩選，不依賴Dashboard目前正在顯示
+  // 的timeScope/transactions——因為使用者在「戰情報告」選單裡可能選一個跟目前畫面
+  // 不同的期間，這裡故意不呼叫setTimeScope去「切換畫面」再讀取，避免依賴React重新
+  // render的時機（那是舊版截圖PDF的做法，容易有拿到舊資料的competition問題）。
+  const getTransactionsForScope = (scope: TimeScope): { txs: Transaction[]; range: DateRange } => {
+    const range = getDateRange(scope, cycleStartDay, allTransactions, currentDate, customRange.start, customRange.end);
+    const txs = allTransactions.filter(t => {
+      const d = new Date(t.date);
+      return d >= range.startDate && d <= range.endDate;
+    });
+    return { txs, range };
+  };
+
+  const handleGenerateReport = async (scope: TimeScope) => {
+    setReportStep('viewer');
+    setActiveReport(null);
+    setReportError(null);
+    setReportGenerating(true);
     try {
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        const pageWidth = 210, pageHeight = 297, marginX = 15, marginY = 20, contentWidth = pageWidth - (marginX * 2), spacingY = 8;
-        let currentY = marginY, pageNum = 1;
-        const addPageMetadata = (pNum: number) => {
-            pdf.setFontSize(10); pdf.setTextColor(150, 150, 150);
-            pdf.text('Pawket 喵喵財庫 - 財務分析報告', marginX, 12);
-            pdf.text(format(new Date(), 'yyyy/MM/dd HH:mm'), pageWidth - marginX - 35, 12);
-            pdf.text(`${pNum}`, pageWidth / 2, pageHeight - 10);
-        };
-        addPageMetadata(pageNum);
-        const sections = document.querySelectorAll('[data-pdf-section]');
-        for (let i = 0; i < sections.length; i++) {
-            const section = sections[i] as HTMLElement;
-            // Capture even off-screen elements
-            const canvas = await html2canvas(section, { 
-                scale: 2, 
-                useCORS: true, 
-                backgroundColor: '#FFFFFF', 
-                logging: false,
-                onclone: (clonedDoc) => {
-                    const el = clonedDoc.querySelector('[data-pdf-header-container]');
-                    if (el) (el as HTMLElement).style.position = 'static';
-                }
-            });
-            const imgData = canvas.toDataURL('image/png'), imgProps = pdf.getImageProperties(imgData);
-            const imgHeight = (imgProps.height * contentWidth) / imgProps.width;
-            if (currentY + imgHeight > pageHeight - marginY) { pdf.addPage(); pageNum++; currentY = marginY; addPageMetadata(pageNum); }
-            pdf.addImage(imgData, 'PNG', marginX, currentY, contentWidth, imgHeight);
-            currentY += imgHeight + spacingY;
-        }
-        pdf.save(`Pawket_Report_${format(new Date(), 'yyyyMMdd_HHmm')}.pdf`);
-    } catch (err) { console.error(err); alert("匯出失敗。"); } finally { setIsExporting(false); }
+      const { txs: scopeTxs, range } = getTransactionsForScope(scope);
+      const periodLabel = `${format(range.startDate, 'yyyy/MM/dd')} ~ ${format(range.endDate, 'yyyy/MM/dd')}`;
+
+      const scopeHealth = analyzeFinancialHealth(scopeTxs);
+      const scopeAnomalies = analyzeL3Anomalies(scopeTxs, allTransactions);
+      const scopeFreqAlerts = analyzeL2Frequency(scopeTxs, allTransactions, currentDate);
+      // 月度配速警示(alerts)是App.tsx用categoryBudgets另外算的，Dashboard沒有那份資料，
+      // 沒辦法幫「目前沒在看」的期間重算，只有目標scope剛好等於目前畫面顯示的scope時才能用。
+      const scopePacingAlerts = scope === timeScope ? alerts : [];
+
+      const categoryTotalsMap: Record<string, number> = {};
+      scopeTxs.filter(t => t.type === 'expense' && !t.specialTag).forEach(t => {
+        const key = `${t.category.l1}|${t.category.l2}`;
+        categoryTotalsMap[key] = (categoryTotalsMap[key] || 0) + t.amount;
+      });
+      const categoryTotals = Object.entries(categoryTotalsMap)
+        .map(([key, amount]) => { const [l1, l2] = key.split('|'); return { l1: CATEGORY_LABELS[l1 as L1Category] || l1, l2, amount }; })
+        .sort((a, b) => b.amount - a.amount);
+
+      const scopeExpenseTotal = scopeTxs.filter(t => t.type === 'expense' && !t.specialTag).reduce((a, b) => a + b.amount, 0);
+      const scopeIncomeTotal = scopeTxs.filter(t => t.type === 'income' && !t.specialTag).reduce((a, b) => a + b.amount, 0);
+
+      const input: FinancialInterpretationInput = {
+        periodLabel,
+        scopeLabel: SCOPE_LABELS[scope],
+        totalIncome: scopeIncomeTotal,
+        totalExpense: scopeExpenseTotal,
+        netCashFlow: scopeIncomeTotal - scopeExpenseTotal,
+        dtiRatio: scopeHealth.dtiRatio,
+        categoryTotals,
+        pacingAlerts: scopePacingAlerts.map(a => ({ message: a.message, metric: a.metric, value: a.value, threshold: a.threshold })),
+        anomalies: scopeAnomalies.map(a => ({ date: a.date, merchant: a.merchant, l2: a.category.l2, l3: a.category.l3, amount: a.amount, avgAmount: a.avgAmount })),
+        frequencyAlerts: scopeFreqAlerts.map(f => ({ l2: f.l2, currentCount: f.currentCount, avgCount: f.avgCount })),
+        recurringExpenses: recurringExpenses.map(r => ({ merchant: r.merchant, medianAmount: r.medianAmount })),
+        sampleTransactions: scopeTxs.length <= MAX_RAW_TX_FOR_AI
+          ? scopeTxs.filter(t => t.type === 'expense' && !t.specialTag).map(t => ({ date: t.date, merchant: t.merchant, amount: t.amount, l1: t.category.l1, l2: t.category.l2, l3: t.category.l3 }))
+          : undefined
+      };
+
+      const content = await generateFinancialInterpretation(input);
+      const saved = await onSaveAiReport({
+        scope, periodLabel,
+        periodStart: format(range.startDate, 'yyyy-MM-dd'),
+        periodEnd: format(range.endDate, 'yyyy-MM-dd'),
+        content
+      });
+      setActiveReport(saved);
+    } catch (err) {
+      console.error('生成戰情報告失敗', err);
+      setReportError('生成失敗，可能是網路問題或AI額度暫時用完了，稍後再試一次。');
+    } finally {
+      setReportGenerating(false);
+    }
+  };
+
+  const downloadReportAsPdf = (report: AiReport) => {
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = 210, pageHeight = 297, marginX = 18, marginY = 20, contentWidth = pageWidth - marginX * 2;
+    let y = marginY;
+    const ensureSpace = (needed: number) => { if (y + needed > pageHeight - marginY) { pdf.addPage(); y = marginY; } };
+    const writeParagraph = (text: string, fontSize: number, bold: boolean, gapAfter: number) => {
+      pdf.setFontSize(fontSize);
+      pdf.setFont('helvetica', bold ? 'bold' : 'normal');
+      const lines: string[] = pdf.splitTextToSize(text, contentWidth);
+      lines.forEach(line => { ensureSpace(fontSize * 0.5); pdf.text(line, marginX, y); y += fontSize * 0.5; });
+      y += gapAfter;
+    };
+    const writeBulletList = (items: string[]) => {
+      pdf.setFontSize(10.5);
+      pdf.setFont('helvetica', 'normal');
+      items.forEach(item => {
+        const lines: string[] = pdf.splitTextToSize(`•  ${item}`, contentWidth - 4);
+        lines.forEach((line, i) => { ensureSpace(6); pdf.text(line, marginX + (i === 0 ? 0 : 4), y); y += 5.5; });
+      });
+      y += 4;
+    };
+
+    writeParagraph('貓咪指揮官戰情報告', 20, true, 2);
+    pdf.setFontSize(10.5); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(120, 120, 120);
+    pdf.text(`分析期間：${report.periodLabel}`, marginX, y); y += 6;
+    pdf.text(`分析視角：${SCOPE_LABELS[report.scope]}`, marginX, y); y += 6;
+    pdf.text(`產生時間：${format(parseISO(report.createdAt), 'yyyy/MM/dd HH:mm')}`, marginX, y); y += 10;
+    pdf.setTextColor(0, 0, 0);
+
+    writeParagraph('整體評語', 13, true, 3);
+    writeParagraph(report.content.overallAssessment || '（沒有內容）', 11, false, 6);
+    if (report.content.keyPoints.length) { writeParagraph('重點摘要', 13, true, 3); writeBulletList(report.content.keyPoints); }
+    if (report.content.anomalyFindings.length) { writeParagraph('異常發現', 13, true, 3); writeBulletList(report.content.anomalyFindings); }
+    if (report.content.suggestions.length) { writeParagraph('建議', 13, true, 3); writeBulletList(report.content.suggestions); }
+
+    pdf.save(`Pawket_戰情報告_${format(parseISO(report.createdAt), 'yyyyMMdd_HHmm')}.pdf`);
   };
 
   const isCritical = alerts.some(a => a.level === 'critical'), isDtiHigh = healthMetrics.dtiRatio > DTI_CRITICAL_THRESHOLD, isPenaltyActive = penaltyData.isOverspent, isCaution = (!isCritical && alerts.length > 0) || (healthMetrics.dtiRatio > DTI_CAUTION_THRESHOLD && healthMetrics.dtiRatio <= DTI_CRITICAL_THRESHOLD) || isPenaltyActive;
@@ -246,7 +329,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     <div id="dashboard-content" className="space-y-8 relative">
       {/* RESTORED: SETTINGS MODAL */}
       {showSettings && (
-          <div className="absolute top-16 right-0 md:right-auto z-50 mt-2 w-80 bg-white rounded-3xl shadow-2xl border-4 border-amber-100 p-6 animate-in fade-in zoom-in-95 duration-200" data-html2canvas-ignore>
+          <div className="absolute top-16 right-0 md:right-auto z-50 mt-2 w-80 bg-white rounded-3xl shadow-2xl border-4 border-amber-100 p-6 animate-in fade-in zoom-in-95 duration-200">
               <div className="flex justify-between items-center mb-4">
                   <h4 className="font-bold text-slate-700 flex items-center gap-2">
                       <Settings className="w-5 h-5 text-amber-500" /> 設定與偏好
@@ -306,100 +389,194 @@ const Dashboard: React.FC<DashboardProps> = ({
       )}
 
       {/* EXPORT PERIOD MODAL */}
-      {showExportModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200" data-html2canvas-ignore>
-              <div className="bg-white w-full max-w-xl rounded-[40px] shadow-2xl border-4 border-white p-8 relative overflow-hidden flex flex-col gap-6">
-                  <div className="flex justify-between items-center">
-                      <h3 className="text-2xl font-extrabold text-slate-700 flex items-center gap-3">
-                          <div className="p-2.5 bg-amber-100 text-amber-500 rounded-2xl"><Download className="w-6 h-6" /></div>
-                          匯出貓咪指揮官戰情報告
-                      </h3>
-                      <button onClick={() => setShowExportModal(false)} className="p-2 hover:bg-slate-50 rounded-full transition"><X className="w-6 h-6 text-slate-300" /></button>
-                  </div>
-                  
-                  <p className="text-slate-400 font-medium">請使用日期選單選擇欲匯出的期間，Meowney 會自動將資料排版成報告。</p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {/* Option 1: All Time */}
-                      <button onClick={() => { setTimeScope('all'); triggerExport(); }} className="p-5 border-2 border-slate-50 bg-slate-50 rounded-3xl hover:border-amber-400 hover:bg-white transition-all flex flex-col items-start gap-1 group">
-                          <div className="flex items-center gap-2">
-                              <span className="font-extrabold text-slate-700 text-lg">至今累積模式</span>
-                              <Cat className="w-4 h-4 text-slate-300" />
-                          </div>
-                          <span className="text-[11px] text-slate-400 font-mono font-bold">{format(allRange.startDate, 'yyyy/MM/dd')} ~ {format(allRange.endDate, 'yyyy/MM/dd')}</span>
-                      </button>
-
-                      {/* Option 2: Monthly */}
-                      <div className="p-5 border-2 border-slate-50 bg-slate-50 rounded-3xl flex flex-col items-start gap-1 relative group hover:border-amber-200 transition-all">
-                          <span className="font-extrabold text-slate-700 text-lg">自然月模式</span>
-                          <span className="text-[11px] text-slate-400 font-mono font-bold mb-2">{format(monthRange.startDate, 'yyyy/MM/dd')} ~ {format(monthRange.endDate, 'yyyy/MM/dd')}</span>
-                          <div className="flex items-center gap-2 w-full">
-                              <input 
-                                type="month" 
-                                value={format(currentDate, 'yyyy-MM')} 
-                                onChange={e => handleExportMonthChange(e.target.value)} 
-                                className="flex-1 text-[11px] p-2 rounded-lg bg-white border border-slate-200 font-bold outline-none cursor-pointer hover:border-amber-400 transition" 
-                              />
-                              <button onClick={() => { setTimeScope('natural_month'); triggerExport(); }} className="bg-amber-400 text-white p-2 rounded-lg hover:bg-amber-500 transition shadow-sm active:scale-95"><Download className="w-4 h-4"/></button>
-                          </div>
+      {showReportModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="bg-white w-full max-w-xl max-h-[90vh] rounded-[40px] shadow-2xl border-4 border-white p-8 relative overflow-hidden flex flex-col gap-6">
+                  {reportStep === 'picker' ? (
+                    <>
+                      <div className="flex justify-between items-center">
+                          <h3 className="text-2xl font-extrabold text-slate-700 flex items-center gap-3">
+                              <div className="p-2.5 bg-amber-100 text-amber-500 rounded-2xl"><Sparkles className="w-6 h-6" /></div>
+                              戰情報告
+                          </h3>
+                          <button onClick={() => setShowReportModal(false)} className="p-2 hover:bg-slate-50 rounded-full transition"><X className="w-6 h-6 text-slate-300" /></button>
                       </div>
 
-                      {/* Option 3: Cycle */}
-                      <div className="p-5 border-2 border-slate-50 bg-slate-50 rounded-3xl flex flex-col items-start gap-1 relative group hover:border-amber-200 transition-all">
-                          <span className="font-extrabold text-slate-700 text-lg">週期結算模式</span>
-                          <span className="text-[11px] text-slate-400 font-mono font-bold mb-2">{format(cycleRange.startDate, 'yyyy/MM/dd')} ~ {format(cycleRange.endDate, 'yyyy/MM/dd')}</span>
-                          <div className="flex items-center gap-2 w-full">
-                              <input 
-                                type="month" 
-                                value={format(currentDate, 'yyyy-MM')} 
-                                onChange={e => handleExportMonthChange(e.target.value)} 
-                                className="flex-1 text-[11px] p-2 rounded-lg bg-white border border-slate-200 font-bold outline-none cursor-pointer hover:border-amber-400 transition" 
-                              />
-                              <button onClick={() => { setTimeScope('custom_cycle'); triggerExport(); }} className="bg-amber-400 text-white p-2 rounded-lg hover:bg-amber-500 transition shadow-sm active:scale-95"><Download className="w-4 h-4"/></button>
-                          </div>
-                          <span className="text-[10px] text-amber-500 font-bold mt-1">(目前結算日：每月 {cycleStartDay} 號)</span>
-                      </div>
+                      <div className="overflow-y-auto pr-1 flex flex-col gap-6">
+                        <p className="text-slate-400 font-medium">選一個想分析的期間，Meowney 會讀這期的真實資料，寫一份解讀+建議，即時幫妳看有沒有異常。</p>
 
-                      {/* Option 4: Custom Range */}
-                      <div className="p-5 border-2 border-slate-50 bg-slate-50 rounded-3xl flex flex-col items-start gap-1 relative group hover:border-amber-200 transition-all">
-                          <span className="font-extrabold text-slate-700 text-lg">自訂任意區間</span>
-                          <div className="flex flex-col gap-2 w-full mt-1">
-                              <div className="grid grid-cols-2 gap-3">
-                                  <div className="space-y-1">
-                                      <p className="text-[10px] font-bold text-slate-400 uppercase ml-1">開始日期</p>
-                                      <input 
-                                        type="date" 
-                                        value={format(customRange.start, 'yyyy-MM-dd')} 
-                                        onChange={e => setCustomRange({...customRange, start: new Date(e.target.value)})} 
-                                        className="w-full text-sm p-2.5 rounded-xl bg-white border border-slate-200 font-mono outline-none cursor-pointer hover:border-amber-400 transition shadow-sm" 
-                                      />
-                                  </div>
-                                  <div className="space-y-1">
-                                      <p className="text-[10px] font-bold text-slate-400 uppercase ml-1">結束日期</p>
-                                      <input 
-                                        type="date" 
-                                        value={format(customRange.end, 'yyyy-MM-dd')} 
-                                        onChange={e => setCustomRange({...customRange, end: new Date(e.target.value)})} 
-                                        className="w-full text-sm p-2.5 rounded-xl bg-white border border-slate-200 font-mono outline-none cursor-pointer hover:border-amber-400 transition shadow-sm" 
-                                      />
-                                  </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {/* Option 1: All Time */}
+                            <button onClick={() => handleGenerateReport('all')} className="p-5 border-2 border-slate-50 bg-slate-50 rounded-3xl hover:border-amber-400 hover:bg-white transition-all flex flex-col items-start gap-1 group">
+                                <div className="flex items-center gap-2">
+                                    <span className="font-extrabold text-slate-700 text-lg">至今累積模式</span>
+                                    <Cat className="w-4 h-4 text-slate-300" />
+                                </div>
+                                <span className="text-[11px] text-slate-400 font-mono font-bold">{format(allRange.startDate, 'yyyy/MM/dd')} ~ {format(allRange.endDate, 'yyyy/MM/dd')}</span>
+                            </button>
+
+                            {/* Option 2: Monthly */}
+                            <div className="p-5 border-2 border-slate-50 bg-slate-50 rounded-3xl flex flex-col items-start gap-1 relative group hover:border-amber-200 transition-all">
+                                <span className="font-extrabold text-slate-700 text-lg">自然月模式</span>
+                                <span className="text-[11px] text-slate-400 font-mono font-bold mb-2">{format(monthRange.startDate, 'yyyy/MM/dd')} ~ {format(monthRange.endDate, 'yyyy/MM/dd')}</span>
+                                <div className="flex items-center gap-2 w-full">
+                                    <input
+                                      type="month"
+                                      value={format(currentDate, 'yyyy-MM')}
+                                      onChange={e => handleExportMonthChange(e.target.value)}
+                                      className="flex-1 text-[11px] p-2 rounded-lg bg-white border border-slate-200 font-bold outline-none cursor-pointer hover:border-amber-400 transition"
+                                    />
+                                    <button onClick={() => handleGenerateReport('natural_month')} className="bg-amber-400 text-white p-2 rounded-lg hover:bg-amber-500 transition shadow-sm active:scale-95"><Sparkles className="w-4 h-4"/></button>
+                                </div>
+                            </div>
+
+                            {/* Option 3: Cycle */}
+                            <div className="p-5 border-2 border-slate-50 bg-slate-50 rounded-3xl flex flex-col items-start gap-1 relative group hover:border-amber-200 transition-all">
+                                <span className="font-extrabold text-slate-700 text-lg">週期結算模式</span>
+                                <span className="text-[11px] text-slate-400 font-mono font-bold mb-2">{format(cycleRange.startDate, 'yyyy/MM/dd')} ~ {format(cycleRange.endDate, 'yyyy/MM/dd')}</span>
+                                <div className="flex items-center gap-2 w-full">
+                                    <input
+                                      type="month"
+                                      value={format(currentDate, 'yyyy-MM')}
+                                      onChange={e => handleExportMonthChange(e.target.value)}
+                                      className="flex-1 text-[11px] p-2 rounded-lg bg-white border border-slate-200 font-bold outline-none cursor-pointer hover:border-amber-400 transition"
+                                    />
+                                    <button onClick={() => handleGenerateReport('custom_cycle')} className="bg-amber-400 text-white p-2 rounded-lg hover:bg-amber-500 transition shadow-sm active:scale-95"><Sparkles className="w-4 h-4"/></button>
+                                </div>
+                                <span className="text-[10px] text-amber-500 font-bold mt-1">(目前結算日：每月 {cycleStartDay} 號)</span>
+                            </div>
+
+                            {/* Option 4: Custom Range */}
+                            <div className="p-5 border-2 border-slate-50 bg-slate-50 rounded-3xl flex flex-col items-start gap-1 relative group hover:border-amber-200 transition-all">
+                                <span className="font-extrabold text-slate-700 text-lg">自訂任意區間</span>
+                                <div className="flex flex-col gap-2 w-full mt-1">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="space-y-1">
+                                            <p className="text-[10px] font-bold text-slate-400 uppercase ml-1">開始日期</p>
+                                            <input
+                                              type="date"
+                                              value={format(customRange.start, 'yyyy-MM-dd')}
+                                              onChange={e => setCustomRange({...customRange, start: new Date(e.target.value)})}
+                                              className="w-full text-sm p-2.5 rounded-xl bg-white border border-slate-200 font-mono outline-none cursor-pointer hover:border-amber-400 transition shadow-sm"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <p className="text-[10px] font-bold text-slate-400 uppercase ml-1">結束日期</p>
+                                            <input
+                                              type="date"
+                                              value={format(customRange.end, 'yyyy-MM-dd')}
+                                              onChange={e => setCustomRange({...customRange, end: new Date(e.target.value)})}
+                                              className="w-full text-sm p-2.5 rounded-xl bg-white border border-slate-200 font-mono outline-none cursor-pointer hover:border-amber-400 transition shadow-sm"
+                                            />
+                                        </div>
+                                    </div>
+                                    <button onClick={() => handleGenerateReport('custom_range')} className="bg-amber-400 text-white text-xs font-bold py-3.5 rounded-2xl hover:bg-amber-500 transition active:scale-95 shadow-lg shadow-amber-100 flex items-center justify-center gap-2 mt-2">分析這個區間</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="border-t border-slate-100 pt-4">
+                            <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2 mb-3"><History className="w-4 h-4" />之前產生過的報告</h4>
+                            {aiReportsLoading ? (
+                              <p className="text-xs text-slate-300 font-medium py-2">讀取中...</p>
+                            ) : aiReports.length === 0 ? (
+                              <p className="text-xs text-slate-300 font-medium py-2">目前還沒有產生過報告喵～選上面的期間開始第一份吧！</p>
+                            ) : (
+                              <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
+                                {aiReports.map(r => (
+                                  <button key={r.id} onClick={() => { setActiveReport(r); setReportError(null); setReportStep('viewer'); }} className="flex items-center justify-between gap-3 p-3 bg-slate-50 hover:bg-amber-50 rounded-2xl transition text-left group">
+                                      <div className="min-w-0">
+                                          <p className="text-sm font-bold text-slate-600 truncate">{SCOPE_LABELS[r.scope]}・{r.periodLabel}</p>
+                                          <p className="text-[10px] text-slate-400 font-mono">{format(parseISO(r.createdAt), 'yyyy/MM/dd HH:mm')} 產生</p>
+                                      </div>
+                                      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-amber-500 shrink-0" />
+                                  </button>
+                                ))}
                               </div>
-                              <button onClick={() => { setTimeScope('custom_range'); triggerExport(); }} className="bg-amber-400 text-white text-xs font-bold py-3.5 rounded-2xl hover:bg-amber-500 transition active:scale-95 shadow-lg shadow-amber-100 flex items-center justify-center gap-2 mt-2">匯出自訂區間</button>
-                          </div>
+                            )}
+                        </div>
                       </div>
-                  </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex justify-between items-center">
+                          <button onClick={() => setReportStep('picker')} className="p-2 hover:bg-slate-50 rounded-full transition"><ChevronLeft className="w-6 h-6 text-slate-400" /></button>
+                          <h3 className="text-lg font-extrabold text-slate-700 flex items-center gap-2 text-center"><Sparkles className="w-5 h-5 text-amber-500" />戰情報告</h3>
+                          <button onClick={() => setShowReportModal(false)} className="p-2 hover:bg-slate-50 rounded-full transition"><X className="w-6 h-6 text-slate-300" /></button>
+                      </div>
+
+                      <div className="overflow-y-auto pr-1 flex flex-col gap-5">
+                        {reportGenerating ? (
+                          <div className="flex flex-col items-center justify-center gap-3 py-16">
+                              <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
+                              <p className="text-sm font-bold text-slate-400">Meowney 正在讀資料、寫報告中...</p>
+                          </div>
+                        ) : reportError ? (
+                          <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+                              <AlertOctagon className="w-8 h-8 text-rose-400" />
+                              <p className="text-sm font-bold text-rose-500">{reportError}</p>
+                              <button onClick={() => setReportStep('picker')} className="text-xs font-bold text-slate-400 hover:text-amber-500 underline">返回重新選擇期間</button>
+                          </div>
+                        ) : activeReport ? (
+                          <>
+                            <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4">
+                                <p className="text-xs font-bold text-amber-500 uppercase tracking-widest mb-1">{SCOPE_LABELS[activeReport.scope]}</p>
+                                <p className="text-sm font-black text-slate-700 font-mono">{activeReport.periodLabel}</p>
+                                <p className="text-[10px] text-slate-400 mt-1">{format(parseISO(activeReport.createdAt), 'yyyy/MM/dd HH:mm')} 產生</p>
+                            </div>
+
+                            <div>
+                                <h4 className="text-sm font-bold text-slate-500 mb-2">整體評語</h4>
+                                <p className="text-sm text-slate-600 leading-relaxed">{activeReport.content.overallAssessment}</p>
+                            </div>
+
+                            {activeReport.content.keyPoints.length > 0 && (
+                              <div>
+                                  <h4 className="text-sm font-bold text-slate-500 mb-2">重點摘要</h4>
+                                  <ul className="space-y-1.5">
+                                      {activeReport.content.keyPoints.map((p, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-amber-400 font-bold">•</span>{p}</li>)}
+                                  </ul>
+                              </div>
+                            )}
+
+                            {activeReport.content.anomalyFindings.length > 0 && (
+                              <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4">
+                                  <h4 className="text-sm font-bold text-rose-500 mb-2 flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" />異常發現</h4>
+                                  <ul className="space-y-1.5">
+                                      {activeReport.content.anomalyFindings.map((p, i) => <li key={i} className="text-sm text-rose-600 flex gap-2"><span className="font-bold">•</span>{p}</li>)}
+                                  </ul>
+                              </div>
+                            )}
+
+                            {activeReport.content.suggestions.length > 0 && (
+                              <div>
+                                  <h4 className="text-sm font-bold text-slate-500 mb-2">建議</h4>
+                                  <ul className="space-y-1.5">
+                                      {activeReport.content.suggestions.map((p, i) => <li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-emerald-400 font-bold">•</span>{p}</li>)}
+                                  </ul>
+                              </div>
+                            )}
+
+                            <button onClick={() => downloadReportAsPdf(activeReport)} className="bg-amber-400 text-white text-sm font-bold py-3.5 rounded-2xl hover:bg-amber-500 transition active:scale-95 shadow-lg shadow-amber-100 flex items-center justify-center gap-2">
+                                <Download className="w-4 h-4" />下載PDF
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    </>
+                  )}
               </div>
           </div>
       )}
 
       {/* HEADER SECTION (App View) */}
-      <div className="flex flex-col gap-6" data-html2canvas-ignore>
+      <div className="flex flex-col gap-6">
         <div className="relative flex flex-col md:flex-row md:justify-between md:items-center gap-4">
             {/* 手機版原本這個按鈕跟桌機版一樣大小、置中排在標題正下方，視覺上太搶眼、
                 位置也很突兀。改成手機版縮小成右上角的小圓形icon按鈕，桌機版維持原樣。 */}
-            <button onClick={() => setShowExportModal(true)} disabled={isExporting} className={`absolute top-0 right-0 md:static p-2.5 md:px-6 md:py-3 flex items-center gap-2 bg-white border border-slate-100 text-slate-600 font-bold rounded-full md:rounded-2xl hover:bg-amber-50 hover:text-amber-600 hover:border-amber-100 transition shadow-sm active:scale-95 ${isExporting ? 'opacity-50 cursor-not-allowed' : ''}`} title="匯出貓咪指揮官戰情報告">
-                {isExporting ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <Download className="w-4 h-4 md:w-5 md:h-5" />}
-                <span className="hidden md:inline">{isExporting ? '生成中...' : '匯出戰情報告'}</span>
+            <button onClick={() => { setShowReportModal(true); setReportStep('picker'); }} className="absolute top-0 right-0 md:static p-2.5 md:px-6 md:py-3 flex items-center gap-2 bg-white border border-slate-100 text-slate-600 font-bold rounded-full md:rounded-2xl hover:bg-amber-50 hover:text-amber-600 hover:border-amber-100 transition shadow-sm active:scale-95" title="戰情報告：AI解讀這期資料">
+                <Sparkles className="w-4 h-4 md:w-5 md:h-5" />
+                <span className="hidden md:inline">戰情報告</span>
             </button>
             <div className="flex flex-col items-center text-center md:items-start md:text-left pt-1 md:pt-0 pr-12 md:pr-0">
                 <h1 className="text-3xl font-extrabold text-slate-700 tracking-tight flex items-center justify-center md:justify-start gap-3">貓咪指揮中心<span className="text-sm bg-amber-100 text-amber-600 px-3 py-1 rounded-full font-bold">Pawket AI</span></h1>
@@ -450,31 +627,8 @@ const Dashboard: React.FC<DashboardProps> = ({
         )}
       </div>
 
-      {/* --- RECTIFIED PDF REPORT HEADER (OFF-SCREEN BUT VISIBLE TO CAPTURE) --- */}
-      <div data-pdf-section data-pdf-header-container className="fixed -left-[9999px] top-0 p-12 bg-white w-[190mm] border-b-8 border-amber-400" style={{ zIndex: -100 }}>
-          <div className="flex justify-between items-end">
-              <div>
-                  <h2 className="text-5xl font-black text-slate-800 tracking-tighter mb-4">貓咪指揮官戰情報告</h2>
-                  <div className="flex items-center gap-4">
-                      <div className="bg-amber-50 px-6 py-4 rounded-[24px] border border-amber-100">
-                          <p className="text-xs font-bold text-amber-500 uppercase tracking-widest mb-1">報告分析期間</p>
-                          <p className="text-2xl font-black text-slate-700 font-mono">
-                              {isValid(currentRangeObj.startDate) ? format(currentRangeObj.startDate, 'yyyy年MM月dd日') : 'N/A'} ~ 
-                              {isValid(currentRangeObj.endDate) ? format(currentRangeObj.endDate, 'yyyy年MM月dd日') : 'N/A'}
-                          </p>
-                      </div>
-                  </div>
-              </div>
-              <div className="text-right">
-                  <p className="text-lg font-bold text-slate-400 uppercase tracking-widest">分析視角：{timeScope === 'all' ? '至今累積' : timeScope === 'natural_month' ? '自然月度' : timeScope === 'custom_cycle' ? '週期結算' : '自訂區間'}</p>
-                  <p className="text-sm text-slate-300 mt-1">匯出日期：{format(new Date(), 'yyyy/MM/dd')}</p>
-                  <p className="text-sm text-slate-300">資料來源：Pawket AI 指揮中心</p>
-              </div>
-          </div>
-      </div>
-
       {/* SECTION 1: Mascot（+預算罰則生效時才並排顯示一張卡，DTI已經改名跟支出結構合併搬到下面） */}
-      <div data-pdf-section className={`grid grid-cols-1 gap-6 bg-transparent ${isPenaltyActive ? 'md:grid-cols-3' : ''}`}>
+      <div className={`grid grid-cols-1 gap-6 bg-transparent ${isPenaltyActive ? 'md:grid-cols-3' : ''}`}>
          <MeowneyMascot status={meowneyStatus} />
          {isPenaltyActive && (
             <div className="rounded-[40px] p-6 border bg-rose-50 border-rose-100 flex flex-col justify-between relative overflow-hidden group">
@@ -494,7 +648,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       {/* SECTION 1.1: 現金緩衝耗盡預警（2026-08-26 Ivy要求往前放、旁邊加「建議每日日常支出」
           方便對照自己現在是花得比建議快還是慢；日均燒錢速度已經用IQR排除單筆極端值，見
           services/logicService.ts的calculateRunway/excludeOutliers說明） */}
-      <div data-pdf-section className={`p-6 rounded-[40px] border shadow-sm ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-50 border-rose-100' : 'bg-white border-emerald-50'}`}>
+      <div className={`p-6 rounded-[40px] border shadow-sm ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-50 border-rose-100' : 'bg-white border-emerald-50'}`}>
           <div className="flex flex-col md:flex-row md:items-center gap-6">
               <div className="flex items-center gap-4 md:w-1/3 shrink-0">
                   <div className={`p-4 rounded-full shrink-0 ${runwayData.daysRemaining < RUNWAY_WARNING_DAYS ? 'bg-rose-200 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}><Hourglass className="w-8 h-8" /></div>
@@ -520,7 +674,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {/* SECTION 1.5: 願望清單 + 分類比率圓餅圖（Ivy要求這兩個放最前面） */}
-      <div data-pdf-section className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-4 rounded-[24px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增喵喵心願罐</div>}
           <div className="bg-white p-6 rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 flex flex-col">
               <h4 className="font-bold text-slate-700 flex items-center gap-2"><PieIcon className="w-5 h-5 text-amber-400" />本期消費分類比率</h4>
@@ -562,7 +716,6 @@ const Dashboard: React.FC<DashboardProps> = ({
           這個功能的人看到一個永遠是$0的卡片） */}
       {sharedExpenses.length > 0 && (
         <div
-          data-pdf-section
           onClick={onOpenSharedExpenses}
           className="bg-white p-6 rounded-[32px] shadow-xl shadow-orange-50/50 border border-orange-50 flex items-center justify-between gap-4 cursor-pointer hover:border-purple-100 transition"
         >
@@ -582,7 +735,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       {/* SECTION 2: Category Insights（2026-08-13 Ivy要求把異常消費偵測/支出排行榜挪到更前面，
           原本排最後兩塊搬到最前面：支出排行榜→異常消費偵測→收入來源分析） */}
-      <div data-pdf-section>
+      <div>
           <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-2 mt-4 mb-4"><Search className="w-6 h-6 text-amber-400" />分類洞察</h3>
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-lg shadow-orange-50/50 flex flex-col">
@@ -609,7 +762,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       {/* SECTION 3: Alerts */}
       {timeScope !== 'all' && alerts.length > 0 && (
-          <div data-pdf-section className="bg-white p-6 rounded-[30px] border border-amber-100 shadow-sm">
+          <div className="bg-white p-6 rounded-[30px] border border-amber-100 shadow-sm">
             <h3 className="text-sm font-bold text-slate-500 flex items-center gap-2 uppercase tracking-wider"><AlertCircle className="w-4 h-4 text-rose-400" />需立即關注的項目</h3>
             <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：只有在「系統設定→分類預算設定」裡自己確認過月預算的次分類才會列在這裡，依本期已過天數算出「到今天應該花多少」，實際花費明顯超過妳設定的預算才會提醒——沒設定預算的分類不會出現配速提醒。</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -624,7 +777,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       )}
 
       {/* SECTION 4: Financial Structure */}
-      <div data-pdf-section>
+      <div>
           <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-2 mt-4 mb-1"><BarChart3 className="w-6 h-6 text-amber-400" />財務結構分析</h3>
           <p className="text-[10px] text-slate-300 mb-4">2026-07-23：原本這裡有「潛在財富機會」（純假設性試算，跟實際投資無關）已移除；「償債比率(DTI)」名不符實（沒有貸款資料，實際算的是固定支出佔比），改名後跟下面的佔比長條圖合併成一張卡。</p>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -661,7 +814,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {/* SECTION 5: 固定週期性支出清單 */}
-      <div data-pdf-section className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
+      <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
           <h3 className="text-sm font-bold text-slate-500 flex items-center gap-2 uppercase tracking-wider"><Repeat className="w-4 h-4 text-amber-400" />固定週期性支出</h3>
           <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：不是看你選的分類（分類是固定支出的不一定每月出現），而是看行為模式——同一個商家至少連續出現過3個月、且從第一次出現到現在的月份裡有75%以上都有出現，就列在這裡（例如訂閱制的遊戲特權卡），金額是那幾個月的中位數。</p>
           {recurringExpenses.length === 0 ? (

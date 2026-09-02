@@ -3,7 +3,7 @@
 // 轉成資料表用的欄位格式（snake_case、攤平），反之亦然。
 
 import { supabase } from './supabaseClient';
-import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag, WishlistItem, ReconcileStatus, MerchantAlias, MerchantAliasCandidate, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, ActivityActionType } from '../types';
+import { Transaction, Account, AccountType, L1Category, Discount, TransactionItem, SpecialTag, WishlistItem, ReconcileStatus, MerchantAlias, MerchantAliasCandidate, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, ActivityActionType, AiReport, AiReportContent, TimeScope } from '../types';
 
 // ── 帳戶 ──
 
@@ -526,4 +526,50 @@ export const insertActivityLog = async (
 export const markActivityLogRestored = async (id: string): Promise<void> => {
   const { error } = await supabase.from('activity_log').update({ restored_at: new Date().toISOString() }).eq('id', id);
   if (error) throw error;
+};
+
+// ── 戰情報告（AI生成的財務解讀，見migration_009） ──
+
+interface AiReportRow {
+  id: string;
+  scope: TimeScope;
+  period_label: string;
+  period_start: string;
+  period_end: string;
+  content: AiReportContent;
+  created_at: string;
+}
+
+const rowToAiReport = (row: AiReportRow): AiReport => ({
+  id: row.id,
+  scope: row.scope,
+  periodLabel: row.period_label,
+  periodStart: row.period_start,
+  periodEnd: row.period_end,
+  content: row.content,
+  createdAt: row.created_at,
+});
+
+export const fetchAiReports = async (): Promise<AiReport[]> => {
+  const { data, error } = await supabase.from('ai_reports').select('*').order('created_at', { ascending: false }).limit(50);
+  if (error) throw error;
+  return (data as AiReportRow[]).map(rowToAiReport);
+};
+
+// 存進資料庫後直接回傳完整那一筆(含資料庫生成的id/created_at)，讓畫面可以立刻顯示剛生成
+// 的報告，不用等下次fetchAiReports才看得到。
+export const insertAiReport = async (
+  userId: string,
+  report: { scope: TimeScope; periodLabel: string; periodStart: string; periodEnd: string; content: AiReportContent }
+): Promise<AiReport> => {
+  const { data, error } = await supabase.from('ai_reports').insert({
+    user_id: userId,
+    scope: report.scope,
+    period_label: report.periodLabel,
+    period_start: report.periodStart,
+    period_end: report.periodEnd,
+    content: report.content,
+  }).select('*').single();
+  if (error) throw error;
+  return rowToAiReport(data as AiReportRow);
 };

@@ -241,3 +241,23 @@ export interface DateRange {
   endDate: Date;
   label: string;
 }
+
+// 戰情報告（2026-09-02）：原本「匯出戰情報告」是把畫面圖表截圖拼成PDF，Ivy要求改成
+// AI真的讀資料寫一份解讀+建議的報告，PDF只是這份報告的其中一種輸出形式。每次生成都要
+// 存起來，之後可以回頭看/重新下載，不用重新生成。
+export interface AiReportContent {
+  overallAssessment: string;   // 整體評語，一段話
+  keyPoints: string[];         // 這期的重點摘要，每則一句話
+  anomalyFindings: string[];   // AI自己看資料覺得異常/值得留意的地方，沒有就是空陣列，不硬湊
+  suggestions: string[];       // 建議，每則一句話
+}
+
+export interface AiReport {
+  id: string;
+  scope: TimeScope;
+  periodLabel: string;   // 人類可讀的分析期間文字，例如「2026/08/01 ~ 2026/08/31」
+  periodStart: string;   // yyyy-MM-dd
+  periodEnd: string;     // yyyy-MM-dd
+  content: AiReportContent;
+  createdAt: string;
+}

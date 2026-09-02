@@ -17,7 +17,7 @@ import SharedExpenseListModal from './components/SharedExpenseListModal';
 import ActivityLogPage from './components/ActivityLogPage';
 import SettingsModal from './components/SettingsModal';
 import TransactionFilterPanel, { matchesCategoryFilter } from './components/TransactionFilterPanel';
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, ActivityActionType, LongTermReserve } from './types';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, ActivityActionType, LongTermReserve, AiReport, AiReportContent } from './types';
 import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics, formatMoney, getItemAmount } from './services/logicService';
 import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
@@ -28,7 +28,8 @@ import {
   fetchDeletedTransactions, restoreTransaction, permanentlyDeleteTransaction,
   fetchMerchantAliases, upsertMerchantAlias, setReconcileStatus as dbSetReconcileStatus,
   fetchSharedExpenses, upsertSharedExpense,
-  fetchActivityLog, insertActivityLog, markActivityLogRestored
+  fetchActivityLog, insertActivityLog, markActivityLogRestored,
+  fetchAiReports, insertAiReport
 } from './lib/db';
 import type { Session } from '@supabase/supabase-js';
 import { v4 as uuidv4 } from 'uuid';
@@ -878,6 +879,32 @@ const App: React.FC = () => {
     }
   };
 
+  // 戰情報告（2026-09-02，見migration_009）：AI生成的財務解讀，跟重新裝碗紀錄一樣切到
+  // 首頁時才抓，Dashboard自己呼叫Gemini產生報告內容，這裡只負責存進資料庫＋維護清單，
+  // 讓「戰情報告」彈窗裡的歷史記錄列表跟資料庫保持一致。
+  const [aiReports, setAiReports] = useState<AiReport[]>([]);
+  const [aiReportsLoading, setAiReportsLoading] = useState(false);
+  useEffect(() => {
+    // view預設值就是'dashboard'，跟activityLog那個effect不一樣——activityLog要使用者
+    // 手動切換過去才會觸發(只可能發生在登入後)，這裡如果只看view會在還沒登入、
+    // 登入畫面就顯示的當下直接打Supabase，一定失敗。要多判斷userId存在才抓。
+    if (view !== 'dashboard' || !userId) return;
+    let cancelled = false;
+    setAiReportsLoading(true);
+    fetchAiReports()
+      .then(data => { if (!cancelled) setAiReports(data); })
+      .catch(err => console.error('讀取戰情報告失敗', err))
+      .finally(() => { if (!cancelled) setAiReportsLoading(false); });
+    return () => { cancelled = true; };
+  }, [view, userId]);
+
+  const handleSaveAiReport = async (report: { scope: TimeScope; periodLabel: string; periodStart: string; periodEnd: string; content: AiReportContent }): Promise<AiReport> => {
+    if (!userId) throw new Error('尚未登入');
+    const saved = await insertAiReport(userId, report);
+    setAiReports(prev => [saved, ...prev]);
+    return saved;
+  };
+
   const handleAddTransaction = () => {
     const today = new Date().toISOString().split('T')[0];
     // amount故意用NaN(不是0)當「還沒填」的哨兵值，CalcInput才會顯示空白而不是
@@ -1082,6 +1109,7 @@ const App: React.FC = () => {
             currentDate={currentDate} setCurrentDate={setCurrentDate} penaltyConfig={penaltyConfig} setPenaltyConfig={setPenaltyConfig}
             customRange={customRange} setCustomRange={setCustomRange} accounts={accounts}
             sharedExpenses={sharedExpenses} onOpenSharedExpenses={() => setIsSharedExpenseListOpen(true)}
+            aiReports={aiReports} aiReportsLoading={aiReportsLoading} onSaveAiReport={handleSaveAiReport}
           />}
         {view === 'reconcile' && (
           <ReconcileView
