@@ -189,9 +189,14 @@ Task: Extract every transaction ROW from the given bank statement text — this 
 2. **Date**: use the transaction/consumption date (交易日/消費日), not the posting date (入帳日) or
    the statement print date, if multiple dates are shown per row.
 
-3. **rawDescription**: copy the merchant/description text exactly as printed, including truncated bank
-   codes (e.g. "連支＊樂樂早餐"). Many bank monthly statements have NO description at all (only
-   card-last-4/date/amount) — in that case leave rawDescription empty/omit it, do NOT invent one.
+3. **rawDescription**: copy WHATEVER text is printed on that row that isn't the date/amount/last4,
+   exactly as printed — not just a merchant name. This includes truncated bank codes (e.g. "連支＊
+   樂樂早餐"), and also non-merchant labels/notes like installment markers ("分期(1/12)"), fee/service
+   labels ("手續費"、"分期服務費"), reference numbers, or any other printed annotation on that line —
+   a user reconciling their own records needs to see whatever text is there to recognize what a
+   line is, even if it doesn't look like a merchant name. Many bank monthly statements genuinely have
+   NO text at all on some rows (only card-last-4/date/amount) — only in that case leave rawDescription
+   empty/omit it; do NOT invent text that isn't printed.
 
 4. **last4**: the last 4 digits of the card number if shown, otherwise omit.
 

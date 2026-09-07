@@ -88,6 +88,51 @@ export const reconcile = (
     }
   }
 
+  // 第二輪：銀行有時候會把同一筆消費拆成兩列印在對帳單上(例如主消費+另外一筆手續費、
+  // 分期本金+分期手續費)，Ivy實測抓到的真實案例：她記一筆「開勝國際 $47515」，中國信託
+  // 月結單印成「$47500」+「$15」兩列——單筆金額都對不上她那筆記帳，但同一天這兩列
+  // 加起來剛好等於$47515。第一輪逐列比對只會1對1找最接近的金額，找不到這種1筆記帳
+  // 對應2列銀行資料的情況，這裡針對第一輪還沒配對到的銀行資料列，用「同一天」分組，
+  // 檢查兩兩加總是否對得上還沒配對到的手動記帳——對得上就兩列都算「已對到」，指向
+  // 同一筆手動記帳。只處理「兩列加總」這種最常見的拆分方式，不做兩列以上的排列組合，
+  // 避免過度複雜、增加誤配對風險。
+  const unmatchedEntries = bankRowMatches
+    .map((m, idx) => ({ date: m.bankRow.date, idx }))
+    .filter(({ idx }) => bankRowMatches[idx].status === 'missing_manual');
+
+  const indexesByDate = new Map<string, number[]>();
+  unmatchedEntries.forEach(({ date, idx }) => {
+    const list = indexesByDate.get(date) || [];
+    list.push(idx);
+    indexesByDate.set(date, list);
+  });
+
+  indexesByDate.forEach(indexes => {
+    for (let i = 0; i < indexes.length; i++) {
+      for (let j = i + 1; j < indexes.length; j++) {
+        const rowA = bankRowMatches[indexes[i]].bankRow;
+        const rowB = bankRowMatches[indexes[j]].bankRow;
+        if (bankRowMatches[indexes[i]].status !== 'missing_manual' || bankRowMatches[indexes[j]].status !== 'missing_manual') continue;
+        if (rowA.flowType !== rowB.flowType) continue; // 收支方向要一致才合理加總
+        const sum = rowA.amount + rowB.amount;
+        const dateOk = candidatePool.filter(t =>
+          !usedIds.has(t.id) &&
+          flowMatches(t, rowA, account.id) &&
+          Math.abs(t.amount - sum) <= RECONCILE_AMOUNT_TOLERANCE &&
+          (() => { const delta = daysBetween(t.date, rowA.date); return delta >= min && delta <= max; })()
+        );
+        if (dateOk.length > 0) {
+          dateOk.sort((a, b) => Math.abs(daysBetween(a.date, rowA.date)) - Math.abs(daysBetween(b.date, rowA.date)));
+          const best = dateOk[0];
+          usedIds.add(best.id);
+          bankRowMatches[indexes[i]] = { bankRow: rowA, status: 'matched', matchedTransactionId: best.id };
+          bankRowMatches[indexes[j]] = { bankRow: rowB, status: 'matched', matchedTransactionId: best.id };
+          break; // 這個i已經配對成功，換下一個i
+        }
+      }
+    }
+  });
+
   const today = new Date().toISOString().split('T')[0];
   const manualUpdates: ManualStatusUpdate[] = candidatePool
     .filter(t => !usedIds.has(t.id))
