@@ -100,7 +100,7 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
         if (password) passwordRef.current = password;
         // 頁數防呆兩條路都要套用，避免掃描版PDF繞過去重演「整份丟給AI漏資料」的問題。
         if (parsed.pageCount > RECONCILE_MAX_PDF_PAGES) {
-          throw new Error(`這份對帳單有${parsed.pageCount}頁，看起來涵蓋很長的期間。目前一次只支援月結單(通常1-2頁)，請分批上傳，不要整批貼歷史明細。`);
+          throw new Error(`這份對帳單有${parsed.pageCount}頁，看起來涵蓋很長的期間。目前一次最多支援${RECONCILE_MAX_PDF_PAGES}頁的月結單，請分批上傳，不要整批貼歷史明細。`);
         }
         if (looksLikeScannedPdf(parsed)) {
           return await analyzeBankStatementRowsFromFile(dataUrl);
