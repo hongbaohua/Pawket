@@ -17,7 +17,13 @@ import { extractPdfText, looksLikeScannedPdf, PdfPasswordRequiredError } from '.
 import { analyzeBankStatementRows, analyzeBankStatementRowsFromFile } from '../services/geminiService';
 import { reconcile, BankRowMatch } from '../services/reconciliationService';
 import { findMerchantAliasCandidates, applyHistoricalCategory } from '../services/logicService';
-import { RECONCILE_MAX_PDF_PAGES } from '../config/financialRules';
+import { RECONCILE_MAX_ESTIMATED_ROWS } from '../config/financialRules';
+
+// 從PDF抽出來的純文字裡，粗估「看起來像交易列」有幾筆——銀行對帳單不管哪家、
+// 哪種格式，每一列交易幾乎一定會印一個日期(yyyy/mm/dd、mm/dd、yyyy-mm-dd都算)，
+// 用這個當資料量的估計值，比「頁數」更貼近「AI一次要處理幾筆交易」這個真正的
+// 風險指標，不會被字體大小/欄寬/銀行排版習慣這些跟資料量無關的因素誤導。
+const estimateTransactionRowCount = (text: string): number => (text.match(/\d{2,4}[/\-.]\d{1,2}[/\-.]\d{1,2}/g) || []).length;
 import { v4 as uuidv4 } from 'uuid';
 
 const dataUrlToArrayBuffer = (dataUrl: string): ArrayBuffer => {
@@ -98,12 +104,14 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
         const buffer = dataUrlToArrayBuffer(dataUrl);
         const parsed = await extractPdfText(buffer, password);
         if (password) passwordRef.current = password;
-        // 頁數防呆兩條路都要套用，避免掃描版PDF繞過去重演「整份丟給AI漏資料」的問題。
-        if (parsed.pageCount > RECONCILE_MAX_PDF_PAGES) {
-          throw new Error(`這份對帳單有${parsed.pageCount}頁，看起來涵蓋很長的期間。目前一次最多支援${RECONCILE_MAX_PDF_PAGES}頁的月結單，請分批上傳，不要整批貼歷史明細。`);
-        }
         if (looksLikeScannedPdf(parsed)) {
           return await analyzeBankStatementRowsFromFile(dataUrl);
+        }
+        // 資料量防呆：用抽出來的文字估算大概有幾筆交易列，而不是看頁數(頁數只是排版
+        // 產物，同樣一個月的資料，換個銀行/字體/欄寬頁數就不一樣，容易誤擋正常月結單)。
+        const estimatedRows = estimateTransactionRowCount(parsed.text);
+        if (estimatedRows > RECONCILE_MAX_ESTIMATED_ROWS) {
+          throw new Error(`這份對帳單看起來有大約${estimatedRows}筆交易，資料量偏大、涵蓋很長的期間。目前一次最多支援約${RECONCILE_MAX_ESTIMATED_ROWS}筆的月結單，請分批上傳，不要整批貼歷史明細。`);
         }
         return await analyzeBankStatementRows(parsed.text);
       } catch (err) {
