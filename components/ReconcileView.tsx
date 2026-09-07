@@ -11,7 +11,7 @@
 // 密碼（貼合PDF密碼設定習慣，只問一次，除非真的失敗才重問），抽出來的BankStatementRow
 // 直接合併成一份清單再送進reconcile()一次比對，不用分開跑。
 import React, { useState, useRef, useMemo } from 'react';
-import { Upload, Lock, Loader2, FileSearch, CheckCircle2, AlertTriangle, HelpCircle, Plus, Pencil, X, RotateCcw } from 'lucide-react';
+import { Upload, Lock, Loader2, FileSearch, CheckCircle2, AlertTriangle, HelpCircle, Plus, Pencil, X, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
 import { Account, Transaction, BankStatementRow, MerchantAlias, ReconcileStatus, L1Category, STANDARD_CATEGORIES } from '../types';
 import { extractPdfText, looksLikeScannedPdf, PdfPasswordRequiredError } from '../services/pdfTextExtractor';
 import { analyzeBankStatementRows, analyzeBankStatementRowsFromFile } from '../services/geminiService';
@@ -219,6 +219,18 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
     return transactions.filter(t => ids.has(t.id));
   }, [result, transactions]);
 
+  // Ivy反應「妳記了，但官方紀錄一直沒出現」這種清單只顯示她自己的記帳，完全看不到
+  // 銀行對帳單本身抽出來的原始資料，沒辦法自己肉眼比對到底是真的漏記還是比對邏輯
+  // 沒配對到——只給「結果」、不給「依據」，等於要她盲目相信程式判斷。這裡把
+  // bankRowMatches原封不動列出來(依日期排序)，每一列银行資料都標status，matched的
+  // 話附上配對到的是她哪一筆記帳(商家/日期)，讓她可以直接對照銀行對帳單本人核對。
+  const [showRawBankRows, setShowRawBankRows] = useState(false);
+  const sortedBankRowMatches = useMemo(() => {
+    if (!result) return [];
+    return [...result.bankRowMatches].sort((a, b) => a.bankRow.date.localeCompare(b.bankRow.date));
+  }, [result]);
+  const matchedTxById = useMemo(() => new Map(transactions.map(t => [t.id, t])), [transactions]);
+
   return (
     <div className="p-4 md:p-8 bg-white rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 min-h-[600px]">
       <h2 className="text-2xl font-extrabold text-slate-700 mb-2 flex items-center gap-3">
@@ -299,6 +311,38 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
                   </div>
                 </div>
                 <button onClick={handleReset} className="ml-4 p-3 border border-slate-100 rounded-2xl text-slate-400 hover:bg-slate-50 transition" title="重新上傳另一份"><RotateCcw className="w-5 h-5" /></button>
+              </div>
+
+              <div>
+                <button onClick={() => setShowRawBankRows(v => !v)} className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 rounded-2xl transition text-sm font-bold text-slate-500">
+                  <span>查看這份對帳單的完整原始資料（{sortedBankRowMatches.length}筆，逐筆核對用）</span>
+                  {showRawBankRows ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+                {showRawBankRows && (
+                  <div className="mt-2 space-y-1.5 max-h-96 overflow-y-auto pr-1">
+                    {sortedBankRowMatches.map(m => {
+                      const matchedTx = m.matchedTransactionId ? matchedTxById.get(m.matchedTransactionId) : undefined;
+                      return (
+                        <div key={m.bankRow.id} className={`p-2.5 rounded-xl border flex items-center justify-between gap-3 text-xs ${m.status === 'matched' ? 'bg-emerald-50/50 border-emerald-100' : 'bg-rose-50/50 border-rose-100'}`}>
+                          <div className="min-w-0">
+                            <p className="font-bold text-slate-600">{m.bankRow.date} · {m.bankRow.flowType === 'debit' ? '-' : '+'}${m.bankRow.amount}</p>
+                            <p className="text-slate-400 truncate">{m.bankRow.rawDescription || (m.bankRow.last4 ? `卡號末四碼 ${m.bankRow.last4}` : '（銀行沒有提供商家描述）')}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            {m.status === 'matched' ? (
+                              <>
+                                <p className="font-bold text-emerald-600">✓ 已對到</p>
+                                {matchedTx && <p className="text-slate-400">{matchedTx.date}・{matchedTx.merchant || '（沒有商家名稱）'}</p>}
+                              </>
+                            ) : (
+                              <p className="font-bold text-rose-500">⚠ 沒對到（見下方清單）</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {missingManualRows.length > 0 && (
