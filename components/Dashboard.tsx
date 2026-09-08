@@ -709,6 +709,30 @@ const Dashboard: React.FC<DashboardProps> = ({
          )}
       </div>
 
+      {/* SECTION 1.05: 本期現金流（2026-09-08 Ivy要求從財務結構分析區塊搬到最前面，
+          並且把總收入/總支出兩個數字也一起列出來，不再只有淨現金流一個總數） */}
+      <div className="bg-white p-6 rounded-[30px] shadow-xl shadow-orange-50/50 border border-orange-50 relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-400 to-emerald-400"></div>
+          <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">本期現金流</h4>
+          <p className="text-[10px] text-slate-300 mb-4">來源：本期收入總額－本期支出總額（代購/工作代墊/借貸不算在內，只看真的屬於自己的收支）</p>
+          <div className="flex flex-col sm:flex-row sm:items-end gap-6">
+              <div>
+                  <p className="text-xs font-bold text-slate-400 mb-1">淨現金流</p>
+                  <p className={`text-4xl font-black ${netCashFlow >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{netCashFlow >= 0 ? '+' : ''}{netCashFlow.toLocaleString()}</p>
+              </div>
+              <div className="flex gap-8">
+                  <div>
+                      <p className="text-xs font-bold text-slate-400 mb-1">總收入</p>
+                      <p className="text-xl font-extrabold text-emerald-600">+{totalIncome.toLocaleString()}</p>
+                  </div>
+                  <div>
+                      <p className="text-xs font-bold text-slate-400 mb-1">總支出</p>
+                      <p className="text-xl font-extrabold text-rose-500">-{totalExpense.toLocaleString()}</p>
+                  </div>
+              </div>
+          </div>
+      </div>
+
       {/* SECTION 1.1: 現金緩衝耗盡預警（2026-08-26 Ivy要求往前放、旁邊加「建議每日日常支出」
           方便對照自己現在是花得比建議快還是慢；日均燒錢速度已經用IQR排除單筆極端值，見
           services/logicService.ts的calculateRunway/excludeOutliers說明） */}
@@ -840,39 +864,32 @@ const Dashboard: React.FC<DashboardProps> = ({
           </div>
       )}
 
-      {/* SECTION 4: Financial Structure */}
+      {/* SECTION 4: Financial Structure（2026-09-08：本期淨現金流那張卡搬到最前面的
+          SECTION 1.05去了，這裡只剩固定支出負擔比+支出結構這一張，改成單欄不用grid） */}
       <div>
           <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-2 mt-4 mb-1"><BarChart3 className="w-6 h-6 text-amber-400" />財務結構分析</h3>
           <p className="text-[10px] text-slate-300 mb-4">2026-07-23：原本這裡有「潛在財富機會」（純假設性試算，跟實際投資無關）已移除；「償債比率(DTI)」名不符實（沒有貸款資料，實際算的是固定支出佔比），改名後跟下面的佔比長條圖合併成一張卡。</p>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className={`p-6 rounded-[30px] shadow-xl shadow-orange-50/50 border flex flex-col justify-between ${isDtiHigh ? 'bg-rose-50 border-rose-100' : 'bg-white border-orange-50'}`}>
-                  <div className="flex items-start justify-between mb-4">
-                      <div>
-                          <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2"><Zap className={`w-4 h-4 ${isDtiHigh ? 'text-rose-500' : 'text-amber-400'}`} />固定支出負擔比 + 支出結構</h4>
-                          <p className="text-[10px] text-slate-300 mt-1">來源：固定支出負擔比＝固定支出÷收入；下面三條是固定/變動/投資分別佔收入的%。</p>
-                      </div>
-                      {isDtiHigh && <div className="p-2 bg-rose-200 text-rose-600 rounded-full animate-bounce shrink-0"><AlertTriangle className="w-5 h-5" /></div>}
+          <div className={`p-6 rounded-[30px] shadow-xl shadow-orange-50/50 border flex flex-col justify-between ${isDtiHigh ? 'bg-rose-50 border-rose-100' : 'bg-white border-orange-50'}`}>
+              <div className="flex items-start justify-between mb-4">
+                  <div>
+                      <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2"><Zap className={`w-4 h-4 ${isDtiHigh ? 'text-rose-500' : 'text-amber-400'}`} />固定支出負擔比 + 支出結構</h4>
+                      <p className="text-[10px] text-slate-300 mt-1">來源：固定支出負擔比＝固定支出÷收入；下面三條是固定/變動/投資分別佔收入的%。</p>
                   </div>
-                  <div className="flex items-baseline gap-2 mb-4"><span className={`text-4xl font-extrabold ${isDtiHigh ? 'text-rose-600' : healthMetrics.dtiRatio > DTI_CAUTION_THRESHOLD ? 'text-amber-500' : 'text-emerald-500'}`}>{healthMetrics.hasIncome ? `${healthMetrics.dtiRatio.toFixed(1)}%` : '－'}</span><span className={`text-xs font-bold ${isDtiHigh ? 'text-rose-500' : 'text-slate-400'}`}>{!healthMetrics.hasIncome ? '本期尚無收入紀錄，無法計算佔比' : isDtiHigh ? '固定支出佔比過高' : '固定支出負擔健康'}</span></div>
-                  <div className="space-y-4">
-                      {['Fixed', 'Variable', 'Investment'].map(k => {
-                        const val = healthMetrics.ratios[k.toLowerCase() as keyof typeof healthMetrics.ratios];
-                        const labels = { Fixed: '固定支出', Variable: '變動支出', Investment: '儲蓄投資' };
-                        const color = k === 'Fixed' ? 'bg-slate-600' : k === 'Variable' ? 'bg-amber-400' : 'bg-emerald-400';
-                        return (
-                          <div key={k}>
-                              <div className="flex justify-between text-sm font-bold mb-1"><span className="text-slate-600">{labels[k as keyof typeof labels]}</span><span className="text-slate-600">{val.toFixed(1)}%</span></div>
-                              <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden"><div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(val, 100)}%` }}></div></div>
-                          </div>
-                        )
-                      })}
-                  </div>
+                  {isDtiHigh && <div className="p-2 bg-rose-200 text-rose-600 rounded-full animate-bounce shrink-0"><AlertTriangle className="w-5 h-5" /></div>}
               </div>
-              <div className="bg-white p-6 rounded-[30px] shadow-xl shadow-orange-50/50 border border-orange-50 flex flex-col items-center justify-center text-center relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-400 to-emerald-400"></div>
-                    <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">本期淨現金流</h4>
-                    <p className="text-[10px] text-slate-300 mb-4">來源：本期收入總額－本期支出總額（代購/工作代墊/借貸不算在內，只看真的屬於自己的收支）</p>
-                    <p className={`text-4xl font-black mb-2 ${netCashFlow >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{netCashFlow >= 0 ? '+' : ''}{netCashFlow.toLocaleString()}</p>
+              <div className="flex items-baseline gap-2 mb-4"><span className={`text-4xl font-extrabold ${isDtiHigh ? 'text-rose-600' : healthMetrics.dtiRatio > DTI_CAUTION_THRESHOLD ? 'text-amber-500' : 'text-emerald-500'}`}>{healthMetrics.hasIncome ? `${healthMetrics.dtiRatio.toFixed(1)}%` : '－'}</span><span className={`text-xs font-bold ${isDtiHigh ? 'text-rose-500' : 'text-slate-400'}`}>{!healthMetrics.hasIncome ? '本期尚無收入紀錄，無法計算佔比' : isDtiHigh ? '固定支出佔比過高' : '固定支出負擔健康'}</span></div>
+              <div className="space-y-4">
+                  {['Fixed', 'Variable', 'Investment'].map(k => {
+                    const val = healthMetrics.ratios[k.toLowerCase() as keyof typeof healthMetrics.ratios];
+                    const labels = { Fixed: '固定支出', Variable: '變動支出', Investment: '儲蓄投資' };
+                    const color = k === 'Fixed' ? 'bg-slate-600' : k === 'Variable' ? 'bg-amber-400' : 'bg-emerald-400';
+                    return (
+                      <div key={k}>
+                          <div className="flex justify-between text-sm font-bold mb-1"><span className="text-slate-600">{labels[k as keyof typeof labels]}</span><span className="text-slate-600">{val.toFixed(1)}%</span></div>
+                          <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden"><div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(val, 100)}%` }}></div></div>
+                      </div>
+                    )
+                  })}
               </div>
           </div>
       </div>
