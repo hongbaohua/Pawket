@@ -720,7 +720,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       <div className="bg-white p-6 rounded-[30px] shadow-xl shadow-orange-50/50 border border-orange-50 relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-400 to-emerald-400"></div>
           <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">本期現金流</h4>
-          <p className="text-[10px] text-slate-300 mb-4">來源：本期收入總額－本期支出總額（代購/工作代墊/借貸不算在內，只看真的屬於自己的收支）</p>
+          <p className="text-[10px] text-slate-300 mb-4">本期收入減去支出，不含代購、代墊、借貸這類不是你自己的錢。</p>
           <div className="flex flex-col sm:flex-row sm:items-end gap-6">
               <div>
                   <p className="text-xs font-bold text-slate-400 mb-1">淨現金流</p>
@@ -763,7 +763,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               </div>
           </div>
           <p className="text-[10px] text-slate-300 mt-4 leading-relaxed">
-              來源：手上真正能動用的錢（現金+金融卡帳戶餘額，不含信用卡/電子支付/儲值卡）÷最近90天的日均燒錢速度，估算照這個速度還能撐幾天——日均燒錢速度已經先排除單筆罕見的大額支出（例如買一台筆電），避免被單一一筆特殊花費嚴重低估、誤判成快沒錢。「建議每日日常支出」則是反過來算：先保住緊急預備金不動，剩下的錢照這個節奏花，至少能撐過90天警戒線；跟左邊「目前日均花費」對照，就知道自己現在的花費節奏是比建議快還是慢。
+              手上可動用的錢（現金+金融卡）÷最近90天日均花費，估算還能撐幾天（已排除單筆罕見大額支出，不會被一次性花費誤判快沒錢）。「建議每日日常支出」是留住緊急預備金、能撐過90天的花費上限，跟左邊「目前日均花費」對照就知道自己花得快還是慢。
           </p>
       </div>
 
@@ -772,7 +772,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-4 rounded-[24px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增喵喵心願罐</div>}
           <div className="bg-white p-6 rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 flex flex-col">
               <h4 className="font-bold text-slate-700 flex items-center gap-2"><PieIcon className="w-5 h-5 text-amber-400" />本期消費分類比率</h4>
-              <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：本期全部支出依次分類(L2)加總；如果某個細項(L3)單獨超過總支出15%會拆成獨立一塊（例如飲料）；每塊列出裡面金額最高的商家/店家；超過9塊時，剩下的合併成灰色的「其他」。</p>
+              <p className="text-[10px] text-slate-300 mt-1 mb-4">本期支出依分類加總；細項若單獨超過總支出15%會拆成獨立一塊（例如飲料），每塊列出花最多錢的商家；超過9塊時其餘合併成「其他」。</p>
               {pieData.length === 0 ? (
                 <p className="text-sm text-slate-300 font-medium py-6 text-center flex-1 flex items-center justify-center">這期間還沒有支出紀錄喵～</p>
               ) : (
@@ -834,12 +834,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-lg shadow-orange-50/50 flex flex-col">
                   <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><TrendingDown className="w-4 h-4 text-rose-400" /> 支出排行榜</h4>
-                  <p className="text-[10px] text-slate-300 mb-3">來源：本期支出依次分類(L2)加總，取前3高</p>
+                  <p className="text-[10px] text-slate-300 mb-3">本期支出依分類加總，列出前3高。</p>
                   <div className="flex-1 space-y-4">{expenseBreakdown.slice(0, 3).map((l2Item, idx) => (<div key={l2Item.l2} className="p-4 rounded-2xl border-2 border-slate-50 flex items-center justify-between"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-slate-400">{idx+1}</div><p className="font-bold text-slate-700">{l2Item.l2}</p></div><p className="font-bold text-slate-700">${l2Item.amount.toLocaleString()}</p></div>))}</div>
               </div>
               <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
                   <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><AlertCircle className="w-4 h-4 text-pink-500" /> 異常消費偵測</h4>
-                  <p className="text-[10px] text-slate-300 mb-3">來源：單筆金額跟同次分類(L3)歷史平均比，超過2.2倍且該次分類有5筆以上歷史紀錄才提醒（這是單筆金額異常，跟上面「需立即關注」的整月配速異常是不同角度）</p>
+                  <p className="text-[10px] text-slate-300 mb-3">單筆金額超過同類別歷史平均2.2倍才提醒（該類別要有5筆以上歷史紀錄）。跟上面「需立即關注」看整月配速不同，這裡抓的是單筆異常。</p>
                   {anomalies.length === 0 ? (
                     <p className="text-sm text-slate-300 font-medium py-2">這期間的消費都跟平常差不多，沒有明顯異常喵～</p>
                   ) : (
@@ -848,7 +848,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               </div>
               <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
                   <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><Wallet className="w-4 h-4 text-emerald-400" /> 收入來源分析</h4>
-                  <p className="text-[10px] text-slate-300 mb-3">來源：本期收入依次分類(L2)加總，取前3高</p>
+                  <p className="text-[10px] text-slate-300 mb-3">本期收入依分類加總，列出前3高。</p>
                   <div className="space-y-3">{incomeBreakdown.slice(0, 3).map((item, idx) => (<div key={idx} className="flex justify-between items-center p-3 rounded-2xl bg-emerald-50/50"><span className="font-bold text-slate-700">{item.l2}</span><p className="font-bold text-emerald-600">${item.amount.toLocaleString()}</p></div>))}</div>
               </div>
           </div>
@@ -858,7 +858,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       {timeScope !== 'all' && alerts.length > 0 && (
           <div className="bg-white p-6 rounded-[30px] border border-amber-100 shadow-sm">
             <h3 className="text-sm font-bold text-slate-500 flex items-center gap-2 uppercase tracking-wider"><AlertCircle className="w-4 h-4 text-rose-400" />需立即關注的項目</h3>
-            <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：只有在「系統設定→分類預算設定」裡自己確認過月預算的次分類才會列在這裡，依本期已過天數算出「到今天應該花多少」，實際花費明顯超過妳設定的預算才會提醒——沒設定預算的分類不會出現配速提醒。</p>
+            <p className="text-[10px] text-slate-300 mt-1 mb-4">只有你在「系統設定→分類預算」設過月預算的分類才會出現在這裡；照本期已過天數算出「到今天應該花多少」，實際花費明顯超過才提醒。</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {alerts.slice(0, 4).map(alert => (
                     <div key={alert.id} className={`p-4 rounded-2xl border flex items-start gap-3 ${alert.level === 'critical' ? 'bg-rose-50 border-rose-100' : 'bg-amber-50 border-amber-100'}`}>
@@ -874,12 +874,12 @@ const Dashboard: React.FC<DashboardProps> = ({
           SECTION 1.05去了，這裡只剩固定支出負擔比+支出結構這一張，改成單欄不用grid） */}
       <div>
           <h3 className="text-xl font-extrabold text-slate-700 flex items-center gap-2 mt-4 mb-1"><BarChart3 className="w-6 h-6 text-amber-400" />財務結構分析</h3>
-          <p className="text-[10px] text-slate-300 mb-4">2026-07-23：原本這裡有「潛在財富機會」（純假設性試算，跟實際投資無關）已移除；「償債比率(DTI)」名不符實（沒有貸款資料，實際算的是固定支出佔比），改名後跟下面的佔比長條圖合併成一張卡。</p>
+          <p className="text-[10px] text-slate-300 mb-4">看固定支出佔收入的比重，以及固定/變動/投資支出各佔收入多少比例。</p>
           <div className={`p-6 rounded-[30px] shadow-xl shadow-orange-50/50 border flex flex-col justify-between ${isDtiHigh ? 'bg-rose-50 border-rose-100' : 'bg-white border-orange-50'}`}>
               <div className="flex items-start justify-between mb-4">
                   <div>
                       <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2"><Zap className={`w-4 h-4 ${isDtiHigh ? 'text-rose-500' : 'text-amber-400'}`} />固定支出負擔比 + 支出結構</h4>
-                      <p className="text-[10px] text-slate-300 mt-1">來源：固定支出負擔比＝固定支出÷收入；下面三條是固定/變動/投資分別佔收入的%。</p>
+                      <p className="text-[10px] text-slate-300 mt-1">固定支出負擔比＝固定支出÷收入；下面三條分別是固定/變動/投資支出佔收入的%。</p>
                   </div>
                   {isDtiHigh && <div className="p-2 bg-rose-200 text-rose-600 rounded-full animate-bounce shrink-0"><AlertTriangle className="w-5 h-5" /></div>}
               </div>
@@ -903,7 +903,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       {/* SECTION 5: 固定週期性支出清單 */}
       <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
           <h3 className="text-sm font-bold text-slate-500 flex items-center gap-2 uppercase tracking-wider"><Repeat className="w-4 h-4 text-amber-400" />固定週期性支出</h3>
-          <p className="text-[10px] text-slate-300 mt-1 mb-4">來源：不是看你選的分類（分類是固定支出的不一定每月出現），而是看行為模式——同一個商家至少連續出現過3個月、且從第一次出現到現在的月份裡有75%以上都有出現，就列在這裡（例如訂閱制的遊戲特權卡），金額是那幾個月的中位數。</p>
+          <p className="text-[10px] text-slate-300 mt-1 mb-4">不是看分類，是看行為模式：同一個商家連續出現3個月以上、且出現月份佔比超過75%，就會列在這裡（例如訂閱制服務），金額是這幾個月的中位數。</p>
           {recurringExpenses.length === 0 ? (
             <p className="text-sm text-slate-300 font-medium py-2">目前的資料還看不出有固定每月出現的商家喵～</p>
           ) : (
