@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { WishlistItem, Transaction, Account, LongTermReserve } from '../types';
-import { calculateWishlistMetrics } from '../services/logicService';
+import { calculateWishlistMetrics, formatWishlistPlanMessage } from '../services/logicService';
 import { X, Target, Calendar, DollarSign, Save, Flag, Plus, Trash2, Edit2, ChevronLeft, RotateCcw, ChevronUp, ChevronDown, CheckCircle2, ShieldCheck, Wallet } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -177,6 +177,7 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
                      <div className="space-y-4 pb-2">
                          {items.map((item, idx) => {
                              const m = metrics.items[item.id];
+                             const planMessage = m ? formatWishlistPlanMessage(m) : null;
                              const isTop = idx === 0;
                              return (
                                  <div
@@ -221,10 +222,15 @@ const WishlistModal: React.FC<WishlistModalProps> = ({ items, accounts, allTrans
                                                              <CheckCircle2 className="w-4 h-4" /> {m.isLargeItem ? '可動用餘額夠了，可以買了！' : '日常開銷負擔得起，可以買了！'}
                                                          </p>
                                                      ) : (
-                                                         <p className="text-sm font-bold text-rose-500 mt-2">
-                                                             還差 ${m.shortfall.toLocaleString()}
-                                                             {!m.isLargeItem && m.equivalentDailyAllowanceDays != null && <span className="text-slate-400 font-normal text-xs"> (約{m.equivalentDailyAllowanceDays}天的日常開銷)</span>}
-                                                         </p>
+                                                         <>
+                                                             <p className="text-sm font-bold text-rose-500 mt-2">
+                                                                 還差 ${m.shortfall.toLocaleString()}
+                                                                 {!m.isLargeItem && m.equivalentDailyAllowanceDays != null && <span className="text-slate-400 font-normal text-xs"> (約{m.equivalentDailyAllowanceDays}天的日常開銷)</span>}
+                                                             </p>
+                                                             {planMessage && (
+                                                                 <p className={`text-xs mt-1.5 leading-relaxed ${m.planStatus === 'cashflow_negative' || m.planStatus === 'target_behind' ? 'text-rose-400' : 'text-slate-400'}`}>{planMessage}</p>
+                                                             )}
+                                                         </>
                                                      )}
                                                      <p className="text-[10px] text-slate-300 mt-1">{m.isLargeItem ? '大額心願：已完整保留日常開銷＋緊急預備金安全水位' : '小額心願：只保留緊急預備金，當作日常開銷的一部分判斷夠不夠'}</p>
                                                  </>

@@ -4,7 +4,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { AlertCircle, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper, Users, ArrowDownCircle, ArrowUpCircle, Sparkles, History } from 'lucide-react';
 import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, LongTermReserve, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange, SharedExpense, AiReport, AiReportContent } from '../types';
 import { addMonths, addDays, differenceInDays, format, startOfMonth, endOfMonth, startOfDay, endOfDay, parseISO } from 'date-fns';
-import { analyzeFinancialHealth, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, getCategoryPieData, detectRecurringExpenses, calculateWishlistMetrics, WishlistItemMetrics, calculateProjectedPenalty, calculateRunway, getDateRange } from '../services/logicService';
+import { analyzeFinancialHealth, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, getCategoryPieData, detectRecurringExpenses, calculateWishlistMetrics, WishlistItemMetrics, formatWishlistPlanMessage, calculateProjectedPenalty, calculateRunway, getDateRange } from '../services/logicService';
 import { generateFinancialInterpretation, FinancialInterpretationInput } from '../services/geminiService';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
@@ -61,6 +61,7 @@ const WishlistCard = ({
     onOpenWishlist: () => void,
 }) => {
     const isUrgent = !metrics.canAffordNow && item.targetDate && (metrics.isOverdue || (metrics.daysRemaining != null && metrics.daysRemaining <= 14));
+    const planMessage = formatWishlistPlanMessage(metrics);
 
     const config = metrics.canAffordNow
         ? { textColor: 'text-[#D4AF37]', lightBg: 'bg-[#FFFBE6]', borderColor: 'border-[#FFE082]', icon: <Trophy className="w-5 h-5 text-white" />, mascot: <PartyPopper className="w-6 h-6 text-[#FFD700]" />, message: '可以入手了！', glow: true }
@@ -94,10 +95,15 @@ const WishlistCard = ({
                 {metrics.canAffordNow ? (
                     <p className="text-xs font-bold text-emerald-600 flex items-center gap-1 mt-1"><CheckCircle2 className="w-3.5 h-3.5" /> 餘額夠買了！</p>
                 ) : (
-                    <p className="text-xs font-bold text-rose-500 mt-1">
-                        還差 ${Math.round(metrics.shortfall).toLocaleString()}
-                        {!metrics.isLargeItem && metrics.equivalentDailyAllowanceDays != null && <span className="text-slate-400 font-normal"> (約{metrics.equivalentDailyAllowanceDays}天日常開銷)</span>}
-                    </p>
+                    <>
+                        <p className="text-xs font-bold text-rose-500 mt-1">
+                            還差 ${Math.round(metrics.shortfall).toLocaleString()}
+                            {!metrics.isLargeItem && metrics.equivalentDailyAllowanceDays != null && <span className="text-slate-400 font-normal"> (約{metrics.equivalentDailyAllowanceDays}天日常開銷)</span>}
+                        </p>
+                        {planMessage && (
+                            <p className={`text-[10px] mt-1 leading-relaxed ${metrics.planStatus === 'cashflow_negative' || metrics.planStatus === 'target_behind' ? 'text-rose-400' : 'text-slate-400'}`}>{planMessage}</p>
+                        )}
+                    </>
                 )}
                 {queueCount > 0 && <p className="text-[10px] text-slate-400 mt-1">後面還排了 {queueCount} 個願望</p>}
             </div>

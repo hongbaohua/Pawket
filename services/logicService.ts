@@ -3,7 +3,7 @@ import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeS
 import { format, getDaysInMonth, getDate, startOfMonth, endOfMonth, addMonths, subMonths, differenceInDays, isAfter, isBefore, startOfDay, endOfDay, parseISO, startOfYear, getMonth, getYear, isSameMonth, differenceInMonths, subDays, addDays } from 'date-fns';
 import {
   RUNWAY_ANALYSIS_WINDOW_DAYS, RUNWAY_OUTLIER_IQR_MULTIPLIER, RUNWAY_OUTLIER_MIN_SAMPLE_SIZE, RUNWAY_WARNING_DAYS,
-  WISHLIST_LARGE_ITEM_MONTHLY_RATIO,
+  WISHLIST_LARGE_ITEM_MONTHLY_RATIO, WISHLIST_PACE_LOOKBACK_MONTHS,
   ANOMALY_MIN_HISTORY_COUNT, ANOMALY_AMOUNT_MULTIPLIER, ANOMALY_MIN_AMOUNT,
   FREQUENCY_HISTORY_MONTHS, FREQUENCY_MULTIPLIER, FREQUENCY_MIN_COUNT,
   PIE_L3_PROMOTE_THRESHOLD, PIE_MAX_SLICES,
@@ -682,6 +682,14 @@ export const calculateRecommendedDailyAllowance = (liquidBalance: number, emerge
 // 所以不追蹤「存了多少」，而是追蹤「想買的東西，現在的餘額夠不夠、還差多少」。
 // 可動用餘額 = 現金+金融卡(bank_debit)總餘額 − 日常開銷保留 − 緊急預備金 − 排在前面、還沒買的項目金額。
 // items 陣列的順序＝優先順序（index 0 最優先），分配時先扣優先項目的錢。
+// 「接下來的計畫」狀態（2026-09-08新增）：
+// - not_needed：已經買得起，不需要計畫
+// - cashflow_negative：最近平均淨現金流≤0，沒辦法推算正向的存錢進度，要先改善收支
+// - projected：沒設目標日期，用存錢速度推算大約哪一天能存夠
+// - target_on_track：有設目標日期，照目前的存錢速度來得及達成
+// - target_behind：有設目標日期，照目前的存錢速度來不及達成
+export type WishlistPlanStatus = 'not_needed' | 'cashflow_negative' | 'projected' | 'target_on_track' | 'target_behind';
+
 export interface WishlistItemMetrics {
     totalLiquidBalance: number;      // 現金+金融卡總餘額（電子支付/儲值卡/信用卡不算）
     reservedByEarlierItems: number;  // 排在前面、還沒買的項目已經佔用掉多少
@@ -692,6 +700,13 @@ export interface WishlistItemMetrics {
     isOverdue?: boolean;
     isLargeItem: boolean;            // 見WISHLIST_LARGE_ITEM_MONTHLY_RATIO：大額才要求完整保留安全水位
     equivalentDailyAllowanceDays: number | null; // 這筆金額大約等於幾天的「建議每日日常支出」，null代表算不出來(日常支出建議是0)
+    // 接下來的計畫：用最近WISHLIST_PACE_LOOKBACK_MONTHS個月的平均淨現金流當「存錢速度」，
+    // 推算這筆還差的金額大概什麼時候存得到，或者跟目標日期比對來不來得及。
+    planStatus: WishlistPlanStatus;
+    avgMonthlyNetCashFlow: number;        // 最近幾個月平均淨現金流（收入－支出），畫面顯示依據用
+    projectedDate?: string;              // planStatus==='projected'時，大約哪一天能存夠(yyyy-MM-dd)
+    requiredMonthlyPace?: number;         // 有設targetDate時，照目標日期回推每月需要存多少
+    monthlyPaceGap?: number;             // cashflow_negative／target_behind時，現在的速度還差多少(每月)才夠
 }
 
 export interface WishlistMetricsResult {
@@ -700,6 +715,28 @@ export interface WishlistMetricsResult {
     emergencyFund: number;      // 即時計算出來的緊急預備金
     items: Record<string, WishlistItemMetrics>;
 }
+
+// 「接下來的計畫」用的存錢速度：最近WISHLIST_PACE_LOOKBACK_MONTHS個月的平均淨現金流
+// （收入－支出，代購/工作代墊/借貸不算），當作「照現在這樣下去，大概每個月能多存多少」
+// 的估計值。這裡故意用平均而不是中位數——要反映「照這個真實步調走下去會怎樣」，
+// 異常大的單月支出本來就該拖累估計值，跟calculateSuggestedReserves那種故意抗極端值
+// 的日常開銷保留是不同目的，不能共用同一種算法。
+const calculateAvgMonthlyNetCashFlow = (allTransactions: Transaction[]): number => {
+    const now = new Date();
+    const monthlyNet: Record<string, number> = {};
+    for (let i = 0; i < WISHLIST_PACE_LOOKBACK_MONTHS; i++) {
+        monthlyNet[format(subMonths(now, i), 'yyyy-MM')] = 0;
+    }
+    allTransactions.forEach(t => {
+        if (t.specialTag) return;
+        const key = format(parseISO(t.date), 'yyyy-MM');
+        if (!(key in monthlyNet)) return;
+        if (t.type === 'income') monthlyNet[key] += t.amount;
+        else if (t.type === 'expense') monthlyNet[key] -= t.amount;
+    });
+    const values = Object.values(monthlyNet);
+    return values.reduce((a, b) => a + b, 0) / values.length;
+};
 
 export const calculateWishlistMetrics = (
     items: WishlistItem[],
@@ -724,6 +761,7 @@ export const calculateWishlistMetrics = (
     // 完全不合理。改成：只有大額心願(WISHLIST_LARGE_ITEM_MONTHLY_RATIO)才要求完整保留安全
     // 水位；小額心願只需要不動用緊急預備金，當作日常開銷的一部分來判斷夠不夠。
     const largeItemThreshold = monthlyBaseline * WISHLIST_LARGE_ITEM_MONTHLY_RATIO;
+    const avgMonthlyNetCashFlow = calculateAvgMonthlyNetCashFlow(allTransactions);
 
     const now = new Date();
     const result: Record<string, WishlistItemMetrics> = {};
@@ -736,6 +774,7 @@ export const calculateWishlistMetrics = (
             result[item.id] = {
                 totalLiquidBalance, reservedByEarlierItems, availableForThisItem: 0,
                 shortfall: 0, canAffordNow: true, isLargeItem, equivalentDailyAllowanceDays: null,
+                planStatus: 'not_needed', avgMonthlyNetCashFlow,
             };
             continue;
         }
@@ -751,17 +790,82 @@ export const calculateWishlistMetrics = (
             canAffordNow: shortfall === 0,
             isLargeItem,
             equivalentDailyAllowanceDays: dailyAllowance > 0 ? Math.ceil(item.targetAmount / dailyAllowance) : null,
+            planStatus: 'not_needed',
+            avgMonthlyNetCashFlow,
         };
         if (item.targetDate) {
             const targetDate = parseISO(item.targetDate);
             metrics.isOverdue = isAfter(now, targetDate);
             metrics.daysRemaining = metrics.isOverdue ? 0 : differenceInDays(targetDate, now);
         }
+
+        // 接下來的計畫：只有「還差多少」時才需要算，已經買得起的維持not_needed。
+        if (shortfall > 0) {
+            if (item.targetDate && !metrics.isOverdue) {
+                // 有設目標日期(且還沒過期)：回推每月需要存多少才能如期達成，
+                // 跟目前的存錢速度比對，判斷來不來得及。
+                const monthsUntilTarget = Math.max((metrics.daysRemaining ?? 0) / 30, 1 / 30);
+                const requiredMonthlyPace = shortfall / monthsUntilTarget;
+                metrics.requiredMonthlyPace = requiredMonthlyPace;
+                if (avgMonthlyNetCashFlow <= 0) {
+                    metrics.planStatus = 'cashflow_negative';
+                    metrics.monthlyPaceGap = requiredMonthlyPace - avgMonthlyNetCashFlow;
+                } else if (avgMonthlyNetCashFlow >= requiredMonthlyPace) {
+                    metrics.planStatus = 'target_on_track';
+                } else {
+                    metrics.planStatus = 'target_behind';
+                    metrics.monthlyPaceGap = requiredMonthlyPace - avgMonthlyNetCashFlow;
+                }
+            } else if (item.targetDate && metrics.isOverdue) {
+                // 目標日期已經過了還沒存夠：不再回推「每月要存多少」(除以趨近0的剩餘天數
+                // 會算出離譜的數字)，直接標记來不及，讓畫面顯示還差多少即可。
+                metrics.planStatus = 'target_behind';
+            } else if (avgMonthlyNetCashFlow <= 0) {
+                // 沒設目標日期，但最近平均收支是打平或負的，沒辦法推算正向的存錢進度——
+                // 只要求先改善到打平(0)，不是要求存到特定速度，因為沒有目標日期就沒有
+                // 特定速度可言。
+                metrics.planStatus = 'cashflow_negative';
+                metrics.monthlyPaceGap = -avgMonthlyNetCashFlow;
+            } else {
+                // 沒設目標日期，存錢速度是正的：用這個速度推算大約哪一天存得夠。
+                metrics.planStatus = 'projected';
+                const monthsNeeded = shortfall / avgMonthlyNetCashFlow;
+                metrics.projectedDate = format(addDays(now, Math.ceil(monthsNeeded * 30)), 'yyyy-MM-dd');
+            }
+        }
+
         result[item.id] = metrics;
         reservedByEarlierItems += item.targetAmount;
     }
 
     return { totalLiquidBalance, dailyBuffer, emergencyFund, items: result };
+};
+
+// 把WishlistItemMetrics的planStatus轉成一句話，Dashboard.tsx的心願卡片／WishlistModal.tsx
+// 的完整清單共用同一份文字，不要兩邊各寫一份、之後改一邊忘了改另一邊。
+export const formatWishlistPlanMessage = (m: WishlistItemMetrics): string | null => {
+    const cashflowLabel = m.avgMonthlyNetCashFlow > 0
+        ? `+$${Math.round(m.avgMonthlyNetCashFlow).toLocaleString()}`
+        : m.avgMonthlyNetCashFlow < 0
+        ? `-$${Math.round(Math.abs(m.avgMonthlyNetCashFlow)).toLocaleString()}`
+        : '打平';
+
+    switch (m.planStatus) {
+        case 'not_needed':
+            return null;
+        case 'projected':
+            return m.projectedDate
+                ? `照最近的存錢速度（平均每月${cashflowLabel}），大約${format(parseISO(m.projectedDate), 'yyyy/MM/dd')}能存到`
+                : null;
+        case 'target_on_track':
+            return `照目前的存錢速度（平均每月${cashflowLabel}），來得及在期限前存到，這個目標每月只需要存$${Math.round(m.requiredMonthlyPace ?? 0).toLocaleString()}`;
+        case 'target_behind':
+            return m.requiredMonthlyPace != null
+                ? `照目前的存錢速度（平均每月${cashflowLabel}）來不及在期限前存到，需要每月存到$${Math.round(m.requiredMonthlyPace).toLocaleString()}（還差$${Math.round(m.monthlyPaceGap ?? 0).toLocaleString()}/月）`
+                : '目標日期已經過了還沒存到，繼續加油！';
+        case 'cashflow_negative':
+            return `最近平均每月現金流是${cashflowLabel}，需要先改善到多存$${Math.round(m.monthlyPaceGap ?? 0).toLocaleString()}/月，才能開始朝這個心願前進`;
+    }
 };
 
 // 幫使用者抓一個「不會太緊迫」的日常開銷保留／緊急預備金建議值：
