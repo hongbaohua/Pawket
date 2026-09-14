@@ -1,5 +1,6 @@
 
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig, MerchantAlias, MerchantAliasCandidate, LongTermReserve, TransactionItem } from '../types';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig, MerchantAlias, MerchantAliasCandidate, LongTermReserve, TransactionItem, SharedExpenseParticipant } from '../types';
+import { v4 as uuidv4 } from 'uuid';
 import { format, getDaysInMonth, getDate, startOfMonth, endOfMonth, addMonths, subMonths, differenceInDays, isAfter, isBefore, startOfDay, endOfDay, parseISO, startOfYear, getMonth, getYear, isSameMonth, differenceInMonths, subDays, addDays } from 'date-fns';
 import {
   RUNWAY_ANALYSIS_WINDOW_DAYS, RUNWAY_OUTLIER_IQR_MULTIPLIER, RUNWAY_OUTLIER_MIN_SAMPLE_SIZE, RUNWAY_WARNING_DAYS,
@@ -28,6 +29,40 @@ const isPersonalConsumption = (t: Transaction): boolean => t.type === 'expense' 
 // 的小數直接洩漏到畫面上（2026-08-31 Ivy反應「太醜了」才補的格式化）。
 export const formatMoney = (n: number): string =>
   (Math.round(n * 100) / 100).toLocaleString('zh-TW', { maximumFractionDigits: 2 });
+
+// 共同支出/代墊分帳「標記已結清」共用的結清方式選項——SharedExpenseModal、
+// SharedExpenseListModal、EditTransactionModal的快速結清都用同一份，不要各自宣告一份。
+export const SETTLE_METHODS: NonNullable<SharedExpenseParticipant['settleMethod']>[] = ['現金', '轉帳', 'LINE Pay Money', '其他'];
+
+// 標記已結清時選「順便記一筆」，用這個組出對應的收入/支出交易——「對方欠我」收回來的錢
+// 算收入，「我欠對方」還出去的錢算支出。分類刻意不用陣列第一項的通用預設值（income會被
+// 誤標成薪資收入，expense會被誤標成餐飲食品），固定用語意上比較貼近的「其他」/「社交人情」。
+export const buildSettlementTransaction = (params: {
+  name: string;
+  amount: number;
+  direction: SharedExpenseParticipant['direction'];
+  settleMethod: SharedExpenseParticipant['settleMethod'];
+  accountId?: string;
+  date?: string;
+}): Transaction => {
+  const isIncome = params.direction === 'they_owe_me';
+  const l1 = isIncome ? L1Category.INCOME : L1Category.VARIABLE;
+  const l2 = isIncome ? '其他' : '社交人情';
+  return {
+    id: uuidv4(),
+    date: params.date || new Date().toISOString().split('T')[0],
+    merchant: `分帳結清：${params.name}`,
+    originalText: 'Shared Expense Settlement',
+    amount: params.amount,
+    type: isIncome ? 'income' : 'expense',
+    accountId: params.accountId || undefined,
+    paymentChannel: params.settleMethod,
+    category: { l1, l2, l3: '分帳結清' },
+    confidence: 1,
+    isVerified: true,
+    isSplit: false,
+  };
+};
 
 // 一個品項（含套餐/組合類）的合計金額：本身有標單價就用本身的（單價×數量），
 // 沒有標單價但有子品項，就加總子品項裡「有標單價」的那些——子品項沒標單價的

@@ -3,8 +3,9 @@
 // 刻意不調整任何花費統計/預算邏輯（Ivy 2026-07-27確認），純粹當追蹤用的帳本。
 import React, { useState } from 'react';
 import { X, Plus, Trash2, Users, Check, Link2 } from 'lucide-react';
-import { Transaction, Account, SharedExpense, SharedExpenseParticipant, L1Category } from '../types';
+import { Transaction, Account, SharedExpense, SharedExpenseParticipant } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+import { SETTLE_METHODS, buildSettlementTransaction } from '../services/logicService';
 
 interface SharedExpenseModalProps {
   transaction: Transaction;
@@ -26,8 +27,6 @@ interface ParticipantDraft extends SharedExpenseParticipant {
   settleAction: SettleAction;
   settlementAccountId: string;
 }
-
-const SETTLE_METHODS: NonNullable<SharedExpenseParticipant['settleMethod']>[] = ['現金', '轉帳', 'LINE Pay Money', '其他'];
 
 const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, existing, accounts, allTransactions, onClose, onSave }) => {
   const [totalAmount, setTotalAmount] = useState<number>(existing?.totalAmount ?? transaction.amount);
@@ -97,28 +96,14 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
     // 不需要另外產生交易。
     const additionalSettlements: Transaction[] = participants
       .filter(p => p.settled && !p.wasSettledBefore && p.settleAction === 'record_new' && p.name.trim())
-      .map(p => {
-        const isIncome = p.direction === 'they_owe_me';
-        const l1 = isIncome ? L1Category.INCOME : L1Category.VARIABLE;
-        // 分帳結清這種現金流動跟一般收支性質不同，不套用「陣列第一項」的通用預設值
-        // （那樣income會被誤標成「薪資收入」、expense會被誤標成「餐飲食品」），
-        // 分別挑一個語意上比較貼近的分類：收到別人還錢算「其他」，還錢給別人算「社交人情」。
-        const l2 = isIncome ? '其他' : '社交人情';
-        return {
-          id: uuidv4(),
-          date: p.settledDate || new Date().toISOString().split('T')[0],
-          merchant: `分帳結清：${p.name}`,
-          originalText: 'Shared Expense Settlement',
-          amount: p.owedAmount,
-          type: isIncome ? 'income' : 'expense',
-          accountId: p.settlementAccountId || undefined,
-          paymentChannel: p.settleMethod,
-          category: { l1, l2, l3: '分帳結清' },
-          confidence: 1,
-          isVerified: true,
-          isSplit: false,
-        } as Transaction;
-      });
+      .map(p => buildSettlementTransaction({
+        name: p.name,
+        amount: p.owedAmount,
+        direction: p.direction,
+        settleMethod: p.settleMethod,
+        accountId: p.settlementAccountId,
+        date: p.settledDate,
+      }));
 
     onSave(expense, additionalSettlements);
   };

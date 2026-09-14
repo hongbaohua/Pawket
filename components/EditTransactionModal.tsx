@@ -1,8 +1,8 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account, Discount, SpecialTag, TransactionItem, SharedExpense } from '../types';
+import { Transaction, L1Category, CATEGORY_LABELS, TransactionType, STANDARD_CATEGORIES, Account, Discount, SpecialTag, TransactionItem, SharedExpense, SharedExpenseParticipant } from '../types';
 import { X, Save, Tag, Store, ArrowUpCircle, ArrowDownCircle, Pencil, Plus, ChevronDown, ChevronLeft, ChevronRight, Check, Trash2, AlertCircle, Wallet, Receipt, StickyNote, ShoppingBag, UserCheck, CreditCard, Calculator, Divide, Zap, Loader2, Users, Layers, Ungroup } from 'lucide-react';
-import { calculateAccountBalances, getItemAmount, formatMoney } from '../services/logicService';
+import { calculateAccountBalances, getItemAmount, formatMoney, SETTLE_METHODS, buildSettlementTransaction } from '../services/logicService';
 import { analyzeReceiptItems, ReceiptAnalysisResult } from '../services/geminiService';
 import { v4 as uuidv4 } from 'uuid';
 import SharedExpenseModal from './SharedExpenseModal';
@@ -426,6 +426,22 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   const [pendingSharedExpense, setPendingSharedExpense] = useState<SharedExpense | undefined>(undefined);
   const [pendingAdditionalSettlements, setPendingAdditionalSettlements] = useState<Transaction[]>([]);
 
+  // 2026-09-14新增：Ivy反應「這碗跟誰分」這個完整版分帳畫面對「代墊整筆、單一對象、
+  // 當下就結清」這種最常見的情況太不直覺——標記代購/工作代墊/借貸時，直接在這裡就能
+  // 勾已結清＋選結清方式，存檔時自動產生一筆對應的收入/支出交易，不用跳去另一個畫面
+  // 填一次姓名/金額/方向。只有這筆交易還沒被「這碗跟誰分」設過(多人/部分金額)的自訂
+  // 分帳資料時才顯示這個快速版本，避免跟自訂資料互相打架。
+  const [quickSettled, setQuickSettled] = useState(false);
+  const [quickSettleDirection, setQuickSettleDirection] = useState<SharedExpenseParticipant['direction']>('they_owe_me');
+  const [quickSettleMethod, setQuickSettleMethod] = useState<NonNullable<SharedExpenseParticipant['settleMethod']>>('現金');
+  const [quickSettleAccountId, setQuickSettleAccountId] = useState<string>(accounts.find(a => !a.isArchived)?.id || '');
+  // 已經用完整版「這碗跟誰分」設過多人/部分金額分帳資料的話，快速結清這組UI就不顯示，
+  // 避免兩套機制同時想寫同一筆分帳資料互相覆蓋。
+  const hasCustomSharedExpense = sharedExpenses.some(se => se.transactionId === transaction.id) || !!pendingSharedExpense;
+  // 代購/工作代墊語意上一定是「對方欠我」，方向只有借貸(personal_loan)才需要問使用者——
+  // 避免上一次切到借貸選過「我欠對方」的殘留狀態被誤套用到代購/工作代墊上。
+  const effectiveQuickSettleDirection: SharedExpenseParticipant['direction'] = specialTagType === 'personal_loan' ? quickSettleDirection : 'they_owe_me';
+
   // Validation State
   const [errors, setErrors] = useState<Record<string, boolean>>({});
   const [showErrorToast, setShowErrorToast] = useState(false);
@@ -681,10 +697,42 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
         }
       : undefined;
 
+    // 快速結清（見上面quickSettled狀態的說明）：特殊性質有標記、還沒被完整版「這碗跟誰分」
+    // 設過自訂分帳資料、而且這次真的勾了已結清，才自動組出整筆金額的分帳明細+結清交易。
+    const finalAmount = parseFloat(amount.toString());
+    const quickSettleName = specialTagCounterparty.trim() || '對方';
+    const quickSettleExpense: SharedExpense | undefined = (specialTagType !== 'none' && !hasCustomSharedExpense && quickSettled)
+      ? {
+          id: uuidv4(),
+          transactionId: transaction.id,
+          totalAmount: finalAmount,
+          myShare: 0,
+          participants: [{
+            id: uuidv4(),
+            name: quickSettleName,
+            owedAmount: finalAmount,
+            direction: effectiveQuickSettleDirection,
+            settled: true,
+            settleMethod: quickSettleMethod,
+            settledDate: date,
+          }],
+        }
+      : undefined;
+    const quickSettleTx: Transaction | undefined = quickSettleExpense
+      ? buildSettlementTransaction({
+          name: quickSettleName,
+          amount: finalAmount,
+          direction: effectiveQuickSettleDirection,
+          settleMethod: quickSettleMethod,
+          accountId: quickSettleAccountId,
+          date,
+        })
+      : undefined;
+
     onSave({
       ...transaction,
       date,
-      amount: parseFloat(amount.toString()), // ensure number
+      amount: finalAmount,
       merchant,
       items: items.filter(it => it.name.trim()).map(it => ({ ...it, name: it.name.trim() })).length > 0
         ? items.filter(it => it.name.trim()).map(it => ({ ...it, name: it.name.trim() }))
@@ -703,7 +751,14 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
         l2,
         l3: l3 || '' // Allow empty
       }
-    }, { openSplitAfter: isNew && wantsSplitAfterSave, additionalTransfer, pendingSharedExpense, pendingAdditionalSettlements: pendingAdditionalSettlements.length > 0 ? pendingAdditionalSettlements : undefined });
+    }, {
+      openSplitAfter: isNew && wantsSplitAfterSave,
+      additionalTransfer,
+      pendingSharedExpense: pendingSharedExpense || quickSettleExpense,
+      pendingAdditionalSettlements: pendingAdditionalSettlements.length > 0
+        ? pendingAdditionalSettlements
+        : (quickSettleTx ? [quickSettleTx] : undefined),
+    });
     onClose();
   };
 
@@ -1004,16 +1059,86 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                       SharedExpenseModal(見下方showLocalSharedExpenseModal那段)，存的結果先
                       放在pendingSharedExpense，等這筆交易本身真的存檔時才一起送出，不會提早
                       違反shared_expenses.transaction_id的外鍵限制。已存在的交易(!isNew)則
-                      維持原本作法，直接交給App.tsx的onManageSharedExpense即時寫入資料庫。 */}
-                  {(isNew || onManageSharedExpense) && (
+                      維持原本作法，直接交給App.tsx的onManageSharedExpense即時寫入資料庫。
+
+                      2026-09-14新增：hasCustomSharedExpense為false時（還沒用過完整版設過
+                      多人/部分金額分帳），改顯示下面的「快速結清」——Ivy反應完整版對「整筆
+                      金額、單一對象、當下就結清」這種最常見情況太不直覺，這裡直接勾已結清、
+                      選結清方式，存檔時就會自動組出分帳明細+結清交易，不用跳去另一個畫面。 */}
+                  {(isNew || onManageSharedExpense) && hasCustomSharedExpense && (
                     <button
                       type="button"
                       onClick={() => isNew ? setShowLocalSharedExpenseModal(true) : onManageSharedExpense!(transaction)}
                       className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-purple-50 hover:bg-purple-100 text-purple-500 rounded-xl text-xs font-bold transition"
                     >
                       <Users className="w-3.5 h-3.5" />
-                      {(sharedExpenses.some(se => se.transactionId === transaction.id) || pendingSharedExpense) ? '編輯這碗跟誰分' : '這碗跟誰分'}
+                      編輯這碗跟誰分
                     </button>
+                  )}
+                  {!hasCustomSharedExpense && (
+                    <div className="pt-1 space-y-2">
+                      {specialTagType === 'personal_loan' && (
+                        <div className="flex p-1 bg-[#FFFBF5] rounded-xl border border-slate-100">
+                          {([
+                            { key: 'they_owe_me', label: '對方欠我' },
+                            { key: 'i_owe_them', label: '我欠對方' },
+                          ] as const).map(opt => (
+                            <button
+                              key={opt.key}
+                              type="button"
+                              onClick={() => setQuickSettleDirection(opt.key)}
+                              className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${quickSettleDirection === opt.key ? 'bg-white text-purple-600 shadow-sm' : 'text-slate-400'}`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <label className="flex items-center gap-2 text-xs font-bold text-slate-500 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={quickSettled}
+                          onChange={(e) => setQuickSettled(e.target.checked)}
+                          className="w-4 h-4 accent-purple-500"
+                        />
+                        已結清（整筆 ${formatMoney(parseFloat(amount.toString()) || 0)} 都已經清了）
+                      </label>
+                      {quickSettled && (
+                        <div className="pl-6 space-y-2 animate-in slide-in-from-top-1 border-l-2 border-purple-100">
+                          <div className="flex flex-wrap gap-1.5">
+                            {SETTLE_METHODS.map(m => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => setQuickSettleMethod(m)}
+                                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border transition-all ${quickSettleMethod === m ? 'bg-purple-500 text-white border-purple-500' : 'bg-white text-slate-500 border-slate-200 hover:border-purple-200'}`}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </div>
+                          <select
+                            value={quickSettleAccountId}
+                            onChange={(e) => setQuickSettleAccountId(e.target.value)}
+                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold outline-none"
+                          >
+                            {accounts.filter(a => !a.isArchived).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                          </select>
+                          <p className="text-[10px] text-slate-400">
+                            存檔後會自動產生一筆{effectiveQuickSettleDirection === 'they_owe_me' ? '收到這筆錢的收入' : '付出這筆錢的支出'}交易，存進上面選的帳戶。
+                          </p>
+                        </div>
+                      )}
+                      {(isNew || onManageSharedExpense) && (
+                        <button
+                          type="button"
+                          onClick={() => isNew ? setShowLocalSharedExpenseModal(true) : onManageSharedExpense!(transaction)}
+                          className="text-[11px] text-purple-400 hover:text-purple-500 underline underline-offset-2 transition"
+                        >
+                          需要拆成好幾人分攤，或只有部分金額算代墊？改用完整版本
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

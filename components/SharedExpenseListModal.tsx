@@ -2,8 +2,8 @@
 // 每項可以直接「標記已結清」，不用跳回原始交易一筆一筆找。
 import React, { useState, useMemo } from 'react';
 import { X, Users, Check, ArrowDownCircle, ArrowUpCircle, Link2 } from 'lucide-react';
-import { Transaction, Account, SharedExpense, SharedExpenseParticipant, L1Category } from '../types';
-import { v4 as uuidv4 } from 'uuid';
+import { Transaction, Account, SharedExpense, SharedExpenseParticipant } from '../types';
+import { SETTLE_METHODS, buildSettlementTransaction } from '../services/logicService';
 
 type SettleAction = 'none' | 'record_new' | 'link_existing';
 
@@ -14,8 +14,6 @@ interface SharedExpenseListModalProps {
   onClose: () => void;
   onSettle: (sharedExpenseId: string, participant: SharedExpenseParticipant, additionalSettlement?: Transaction) => void;
 }
-
-const SETTLE_METHODS: NonNullable<SharedExpenseParticipant['settleMethod']>[] = ['現金', '轉帳', 'LINE Pay Money', '其他'];
 
 interface FlatItem {
   sharedExpenseId: string;
@@ -59,24 +57,13 @@ const SharedExpenseListModal: React.FC<SharedExpenseListModalProps> = ({ sharedE
     const p = item.participant;
     let additionalSettlement: Transaction | undefined;
     if (settleAction === 'record_new') {
-      const isIncome = p.direction === 'they_owe_me';
-      const l1 = isIncome ? L1Category.INCOME : L1Category.VARIABLE;
-      // 跟SharedExpenseModal.tsx同樣的理由：不用「陣列第一項」的通用預設分類
-      const l2 = isIncome ? '其他' : '社交人情';
-      additionalSettlement = {
-        id: uuidv4(),
-        date: new Date().toISOString().split('T')[0],
-        merchant: `分帳結清：${p.name}`,
-        originalText: 'Shared Expense Settlement',
+      additionalSettlement = buildSettlementTransaction({
+        name: p.name,
         amount: p.owedAmount,
-        type: isIncome ? 'income' : 'expense',
-        accountId: settlementAccountId || undefined,
-        paymentChannel: settleMethod,
-        category: { l1, l2, l3: '分帳結清' },
-        confidence: 1,
-        isVerified: true,
-        isSplit: false,
-      };
+        direction: p.direction,
+        settleMethod,
+        accountId: settlementAccountId,
+      });
     }
     onSettle(item.sharedExpenseId, {
       ...p,
