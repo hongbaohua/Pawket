@@ -43,25 +43,57 @@ const SplitModal: React.FC<SplitModalProps> = ({ transaction, allTransactions, o
         l2: s.category.l2
       }));
     }
-    // New split initialization
+    // New split initialization：如果這筆交易已經填過品項清單，直接把每個品項變成一筆
+    // 子項目分配，不用再手動打一次名稱/金額——2026-09-14 Ivy反應「填完項目、選擇要
+    // 分裝時，應該直接顯示目前填好的子項目列表」。分類歸屬先預設跟主交易一樣，方便
+    // 後面用下面的批次勾選一次改掉一批（例如水電瓦斯三筆用同一個分類），不用逐筆選。
+    const itemSplits = (transaction.items || []).map(item => ({
+      id: uuidv4(),
+      amount: item.unitPrice != null ? item.unitPrice * (item.quantity || 1) : 0,
+      description: item.name,
+      l1: transaction.category.l1,
+      l2: transaction.category.l2
+    }));
     return [
-      { 
-        id: uuidv4(), 
-        amount: transaction.amount, 
-        description: '', 
-        l1: transaction.category.l1, 
-        l2: transaction.category.l2 
-      }
+      {
+        id: uuidv4(),
+        amount: transaction.amount,
+        description: '',
+        l1: transaction.category.l1,
+        l2: transaction.category.l2
+      },
+      ...itemSplits
     ];
   }, [transaction, allTransactions, isEditingSplit]);
 
   const [splits, setSplits] = useState(initialSplits);
+  // 多選批次設定分類：勾選多個子項目後一次套用同一個分類歸屬/子分類，不用逐筆點選單。
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkL1, setBulkL1] = useState<L1Category>(transaction.category.l1);
+  const [bulkL2, setBulkL2] = useState<string>(transaction.category.l2);
 
   const subItems = useMemo(() => splits.slice(1), [splits]);
   const totalSubAmount = useMemo(() => subItems.reduce((acc, curr) => acc + (isNaN(curr.amount) ? 0 : curr.amount), 0), [subItems]);
-  
+
   const remainingForMain = originalAmount - totalSubAmount;
   const isOverAssigned = remainingForMain < -0.01;
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds(prev => prev.size === subItems.length ? new Set() : new Set(subItems.map(s => s.id)));
+  };
+
+  const applyBulkCategory = () => {
+    setSplits(prev => prev.map(s => selectedIds.has(s.id) ? { ...s, l1: bulkL1, l2: bulkL2 } : s));
+    setSelectedIds(new Set());
+  };
 
   const addSplit = () => {
     const defaultL1 = transaction.type === 'income' ? L1Category.INCOME : L1Category.VARIABLE;
@@ -80,6 +112,12 @@ const SplitModal: React.FC<SplitModalProps> = ({ transaction, allTransactions, o
   const removeSplit = (id: string) => {
     if (splits.length > 1) {
       setSplits(splits.filter(s => s.id !== id));
+      setSelectedIds(prev => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     }
   };
 
@@ -168,23 +206,70 @@ const SplitModal: React.FC<SplitModalProps> = ({ transaction, allTransactions, o
             </div>
           </div>
 
+          {subItems.length > 0 && (
+            <div className="mb-6 p-5 bg-purple-50 border border-purple-100 rounded-[28px] space-y-3">
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <label className="flex items-center gap-2 text-xs font-bold text-purple-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.size > 0 && selectedIds.size === subItems.length}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 accent-purple-500"
+                  />
+                  全選子項目（共 {subItems.length} 項）
+                </label>
+                {selectedIds.size > 0 && <span className="text-[11px] font-bold text-purple-500">已勾選 {selectedIds.size} 項</span>}
+              </div>
+              {selectedIds.size > 0 && (
+                <div className="flex flex-wrap gap-2 items-center animate-in slide-in-from-top-1">
+                  <select
+                    value={bulkL1}
+                    onChange={(e) => { const v = e.target.value as L1Category; setBulkL1(v); setBulkL2(STANDARD_CATEGORIES[v][0]); }}
+                    className="text-xs border border-purple-200 rounded-xl py-2 px-3 font-bold outline-none bg-white text-slate-600"
+                  >
+                    {Object.values(L1Category).map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+                  </select>
+                  <select
+                    value={bulkL2}
+                    onChange={(e) => setBulkL2(e.target.value)}
+                    className="text-xs border border-purple-200 rounded-xl py-2 px-3 font-bold outline-none bg-white text-slate-600"
+                  >
+                    {(STANDARD_CATEGORIES[bulkL1] || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                  </select>
+                  <button type="button" onClick={applyBulkCategory} className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-xl text-xs font-bold transition">
+                    套用到已勾選項目
+                  </button>
+                </div>
+              )}
+              <p className="text-[10px] text-purple-400">勾選多個子項目，一次套用同一個分類，不用逐筆選。</p>
+            </div>
+          )}
+
           <div className="space-y-4">
             {splits.map((split, idx) => {
               const isMain = idx === 0;
               const displayAmount = isMain ? remainingForMain : split.amount;
 
               return (
-                <div key={split.id} className={`flex flex-col gap-4 p-6 border-2 rounded-[32px] transition group relative ${isMain ? 'bg-amber-50/50 border-amber-100 shadow-inner' : 'bg-white border-white shadow-sm hover:border-purple-200'}`}>
-                  
+                <div key={split.id} className={`flex flex-col gap-4 p-6 border-2 rounded-[32px] transition group relative ${isMain ? 'bg-amber-50/50 border-amber-100 shadow-inner' : selectedIds.has(split.id) ? 'bg-purple-50/70 border-purple-200 shadow-sm' : 'bg-white border-white shadow-sm hover:border-purple-200'}`}>
+
                   <div className="flex justify-between items-center">
                       <div className="flex items-center gap-2">
+                        {!isMain && (
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(split.id)}
+                            onChange={() => toggleSelect(split.id)}
+                            className="w-4 h-4 accent-purple-500"
+                          />
+                        )}
                         <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${isMain ? 'bg-amber-200 text-amber-700' : 'bg-purple-100 text-purple-600'}`}>
                             {isMain ? "主項目 (自動計算餘額)" : `分裝項目 #${idx}`}
                         </span>
                         {isMain && <Info className="w-3 h-3 text-amber-400" title="主項目金額由總量減去子項目自動得出" />}
                       </div>
                       {!isMain && (
-                          <button 
+                          <button
                               onClick={() => removeSplit(split.id)}
                               className="p-1.5 text-slate-300 hover:text-rose-400 hover:bg-rose-50 rounded-lg transition"
                           >
