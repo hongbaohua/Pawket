@@ -47,7 +47,10 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
             id: uuidv4(),
             name: transaction.specialTag.counterparty,
             owedAmount: 0,
-            direction: 'they_owe_me',
+            // 2026-09-14修正：「代購」對Ivy來說是「我請別人幫我買」，對方先墊了錢，
+            // 方向該預設「我欠對方」；「工作代墊」是自己先墊、之後跟公司報帳，才是
+            // 「對方欠我」。借貸沒有固定方向，維持原本的預設，反正她本來就要自己確認。
+            direction: transaction.specialTag.type === 'proxy_purchase' ? 'i_owe_them' : 'they_owe_me',
             settled: false,
             wasSettledBefore: false,
             settleAction: 'none',

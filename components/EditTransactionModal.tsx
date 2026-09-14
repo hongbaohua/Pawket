@@ -431,16 +431,28 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   // 勾已結清＋選結清方式，存檔時自動產生一筆對應的收入/支出交易，不用跳去另一個畫面
   // 填一次姓名/金額/方向。只有這筆交易還沒被「這碗跟誰分」設過(多人/部分金額)的自訂
   // 分帳資料時才顯示這個快速版本，避免跟自訂資料互相打架。
+  // 方向的預設猜測（2026-09-14 Ivy修正過一次）：「代購」對Ivy來說是「我請別人幫我買」，
+  // 對方先幫她墊了錢，預設該是「我欠對方」；「工作代墊」是自己先墊工作費用、之後跟
+  // 公司/主管報帳，預設「對方欠我」；「借貸」沒有固定方向，維持原本的「對方欠我」猜測。
+  // 這只是預設值，畫面上一律讓使用者自己確認/切換，不強制鎖死——代購/工作代墊實務上
+  // 也不是100%只會照這個方向發生，鎖死猜錯了使用者反而沒地方修正（上一版就是這樣被
+  // Ivy抓到代購方向猜錯）。
+  const defaultQuickSettleDirection = (type: 'none' | SpecialTag['type']): SharedExpenseParticipant['direction'] =>
+    type === 'proxy_purchase' ? 'i_owe_them' : 'they_owe_me';
   const [quickSettled, setQuickSettled] = useState(false);
-  const [quickSettleDirection, setQuickSettleDirection] = useState<SharedExpenseParticipant['direction']>('they_owe_me');
+  const [quickSettleDirection, setQuickSettleDirection] = useState<SharedExpenseParticipant['direction']>(defaultQuickSettleDirection(specialTagType));
   const [quickSettleMethod, setQuickSettleMethod] = useState<NonNullable<SharedExpenseParticipant['settleMethod']>>('現金');
   const [quickSettleAccountId, setQuickSettleAccountId] = useState<string>(accounts.find(a => !a.isArchived)?.id || '');
   // 已經用完整版「這碗跟誰分」設過多人/部分金額分帳資料的話，快速結清這組UI就不顯示，
   // 避免兩套機制同時想寫同一筆分帳資料互相覆蓋。
   const hasCustomSharedExpense = sharedExpenses.some(se => se.transactionId === transaction.id) || !!pendingSharedExpense;
-  // 代購/工作代墊語意上一定是「對方欠我」，方向只有借貸(personal_loan)才需要問使用者——
-  // 避免上一次切到借貸選過「我欠對方」的殘留狀態被誤套用到代購/工作代墊上。
-  const effectiveQuickSettleDirection: SharedExpenseParticipant['direction'] = specialTagType === 'personal_loan' ? quickSettleDirection : 'they_owe_me';
+
+  // 切換「特殊性質」類型時，方向猜測跟著重新套用預設值——避免切到借貸手動選了
+  // 「我欠對方」之後，又切回代購/工作代墊時殘留著不相關的手動選擇。使用者這次
+  // 如果不同意猜測，切換之後還是可以再手動調整一次，不會被鎖死。
+  useEffect(() => {
+    setQuickSettleDirection(defaultQuickSettleDirection(specialTagType));
+  }, [specialTagType]);
 
   // Validation State
   const [errors, setErrors] = useState<Record<string, boolean>>({});
@@ -711,7 +723,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
             id: uuidv4(),
             name: quickSettleName,
             owedAmount: finalAmount,
-            direction: effectiveQuickSettleDirection,
+            direction: quickSettleDirection,
             settled: true,
             settleMethod: quickSettleMethod,
             settledDate: date,
@@ -722,7 +734,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
       ? buildSettlementTransaction({
           name: quickSettleName,
           amount: finalAmount,
-          direction: effectiveQuickSettleDirection,
+          direction: quickSettleDirection,
           settleMethod: quickSettleMethod,
           accountId: quickSettleAccountId,
           date,
@@ -1077,23 +1089,24 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                   )}
                   {!hasCustomSharedExpense && (
                     <div className="pt-1 space-y-2">
-                      {specialTagType === 'personal_loan' && (
-                        <div className="flex p-1 bg-[#FFFBF5] rounded-xl border border-slate-100">
-                          {([
-                            { key: 'they_owe_me', label: '對方欠我' },
-                            { key: 'i_owe_them', label: '我欠對方' },
-                          ] as const).map(opt => (
-                            <button
-                              key={opt.key}
-                              type="button"
-                              onClick={() => setQuickSettleDirection(opt.key)}
-                              className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${quickSettleDirection === opt.key ? 'bg-white text-purple-600 shadow-sm' : 'text-slate-400'}`}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                      {/* 2026-09-14修正：方向一律顯示可切換，不只借貸——代購/工作代墊的
+                          預設方向猜測不一定對(Ivy就抓到代購的預設猜反了)，讓使用者隨時
+                          能自己改，比鎖死猜錯的方向安全。 */}
+                      <div className="flex p-1 bg-[#FFFBF5] rounded-xl border border-slate-100">
+                        {([
+                          { key: 'they_owe_me', label: '對方欠我' },
+                          { key: 'i_owe_them', label: '我欠對方' },
+                        ] as const).map(opt => (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            onClick={() => setQuickSettleDirection(opt.key)}
+                            className={`flex-1 py-1.5 rounded-lg font-bold text-xs transition-all ${quickSettleDirection === opt.key ? 'bg-white text-purple-600 shadow-sm' : 'text-slate-400'}`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
                       <label className="flex items-center gap-2 text-xs font-bold text-slate-500 cursor-pointer">
                         <input
                           type="checkbox"
@@ -1125,7 +1138,7 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                             {accounts.filter(a => !a.isArchived).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                           </select>
                           <p className="text-[10px] text-slate-400">
-                            存檔後會自動產生一筆{effectiveQuickSettleDirection === 'they_owe_me' ? '收到這筆錢的收入' : '付出這筆錢的支出'}交易，存進上面選的帳戶。
+                            存檔後會自動產生一筆{quickSettleDirection === 'they_owe_me' ? '收到這筆錢的收入' : '付出這筆錢的支出'}交易，存進上面選的帳戶。
                           </p>
                         </div>
                       )}
