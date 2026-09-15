@@ -27,6 +27,19 @@ export const MIN_TEXT_CHARS_PER_PAGE = 30;
 export const looksLikeScannedPdf = (result: PdfExtractResult): boolean =>
   result.charCount < MIN_TEXT_CHARS_PER_PAGE * result.pageCount;
 
+// 2026-09-15新增：Ivy實測中信「CTBC_Bank_Estatement」這類月結單踩到一種
+// looksLikeScannedPdf抓不到的失敗模式——PDF用的中文字型沒有內嵌可還原的編碼對照，
+// pdfjs抽出來的日期/金額(本來就是ASCII數字)完全正常、charCount也不低，但商家名稱
+// 等中文內容整段安靜地變成空字串，不會報錯，肉眼看抽出來的文字才會發現這裡整段是
+// 「TW」「US」這種只剩代碼、沒有任何中文的怪異內容。charCount這個總字數指標量不到
+// 這種「有字數、但該有的中文不見了」的狀況，必須另外用「中文字元密度」判斷才抓得到。
+export const MIN_CJK_CHARS_PER_PAGE = 10;
+
+export const looksLikeUndecodableCjkText = (result: PdfExtractResult): boolean => {
+  const cjkCount = (result.text.match(/[一-鿿]/g) || []).length;
+  return cjkCount < MIN_CJK_CHARS_PER_PAGE * result.pageCount;
+};
+
 export const extractPdfText = async (data: ArrayBuffer, password?: string): Promise<PdfExtractResult> => {
   const loadingTask = pdfjsLib.getDocument({
     data,

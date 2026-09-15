@@ -13,7 +13,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { Upload, Lock, Loader2, FileSearch, CheckCircle2, AlertTriangle, HelpCircle, Plus, Pencil, X, RotateCcw, ChevronDown, ChevronUp } from 'lucide-react';
 import { Account, Transaction, BankStatementRow, MerchantAlias, ReconcileStatus, L1Category, STANDARD_CATEGORIES } from '../types';
-import { extractPdfText, looksLikeScannedPdf, PdfPasswordRequiredError } from '../services/pdfTextExtractor';
+import { extractPdfText, looksLikeScannedPdf, looksLikeUndecodableCjkText, PdfPasswordRequiredError } from '../services/pdfTextExtractor';
 import { analyzeBankStatementRows, analyzeBankStatementRowsFromFile } from '../services/geminiService';
 import { reconcile, BankRowMatch } from '../services/reconciliationService';
 import { findMerchantAliasCandidates, applyHistoricalCategory } from '../services/logicService';
@@ -104,7 +104,11 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
         const buffer = dataUrlToArrayBuffer(dataUrl);
         const parsed = await extractPdfText(buffer, password);
         if (password) passwordRef.current = password;
-        if (looksLikeScannedPdf(parsed)) {
+        // 2026-09-15：只檢查charCount(looksLikeScannedPdf)不夠——中信月結單這類PDF
+        // 中文字型解不出來時，日期/金額照樣有字數，charCount正常，但商家名稱整段消失，
+        // 要另外檢查中文字元密度才抓得到這種情況，一樣退回圖片辨識(見pdfTextExtractor.ts
+        // looksLikeUndecodableCjkText的說明)。
+        if (looksLikeScannedPdf(parsed) || looksLikeUndecodableCjkText(parsed)) {
           return await analyzeBankStatementRowsFromFile(dataUrl);
         }
         // 資料量防呆：用抽出來的文字估算大概有幾筆交易列，而不是看頁數(頁數只是排版
