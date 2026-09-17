@@ -7,6 +7,8 @@ import { analyzeReceiptItems, ReceiptAnalysisResult } from '../services/geminiSe
 import { v4 as uuidv4 } from 'uuid';
 import SharedExpenseModal from './SharedExpenseModal';
 import { CalcInput } from './CalcInput';
+import { SufengdaCalculator } from './SufengdaCalculator';
+import { SUFENGDA_WALLET_DISCOUNT_LABEL } from '../services/sufengdaCalc';
 
 interface EditTransactionModalProps {
   transaction: Transaction;
@@ -413,6 +415,31 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
       return changed ? next : prev;
     });
   }, [fxAllocEnabled, fxAllocSummary, fxAllocAmounts, fxAllocLabel, fxAllocActualTwd]);
+
+  // 2026-09-17新增：速風達代購計算面板（見components/SufengdaCalculator.tsx）。
+  // 套用時整份取代購物清單，所以要一併清掉上面兩個外幣小工具以「品項位置」記住的輸入——
+  // 不清的話它們的useEffect會拿舊輸入把新寫進去的單價蓋掉。
+  const [sufengdaOpen, setSufengdaOpen] = useState(false);
+  const applySufengda = (newItems: TransactionItem[], walletDiscount: number | null) => {
+    setFxInputs({});
+    setFxExpandedIdx(new Set());
+    setFxAllocAmounts({});
+    setFxAllocEnabled(false);
+    setItems(newItems);
+    setExpandedItemIdx(new Set(newItems.map((_, i) => i)));
+    const total = newItems.reduce((sum, it) => sum + getItemAmount(it), 0);
+    // 重新套用時先拿掉上一次產生的錢包折抵，其他使用者自己填的折扣保留
+    const kept = discounts.filter(d => !d.label.startsWith(SUFENGDA_WALLET_DISCOUNT_LABEL));
+    const nextDiscounts = walletDiscount ? [...kept, { label: SUFENGDA_WALLET_DISCOUNT_LABEL, amount: walletDiscount }] : kept;
+    setDiscounts(nextDiscounts);
+    if (showBreakdown || nextDiscounts.length > 0) {
+      setShowBreakdown(true);
+      setGrossAmount(total); // 實付金額由「原始金額－折扣」那個effect自動算
+    } else {
+      setAmount(total);
+    }
+    setSufengdaOpen(false);
+  };
 
   // 特殊標記：代購／工作代墊。輕量標記＋顯示用，不做完整分帳計算。
   const [specialTagType, setSpecialTagType] = useState<'none' | SpecialTag['type']>(transaction.specialTag?.type || 'none');
@@ -1171,6 +1198,16 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
               >
                 {fxAllocEnabled ? '收合「多品項外幣單反推分配」' : '多品項外幣發票？點我用實際扣款台幣金額自動分配到各品項'}
               </button>
+              <button
+                type="button"
+                onClick={() => setSufengdaOpen(v => !v)}
+                className={`text-[10px] font-bold px-2 py-1 rounded-lg ml-1 ${sufengdaOpen ? 'bg-violet-100 text-violet-600' : 'text-slate-400 hover:bg-slate-100'}`}
+              >
+                {sufengdaOpen ? '收合「速風達代購計算」' : '速風達代購？填人民幣＋匯率自動算手續費'}
+              </button>
+              {sufengdaOpen && (
+                <SufengdaCalculator initialItems={items} onApply={applySufengda} onClose={() => setSufengdaOpen(false)} />
+              )}
               {fxAllocEnabled && (
                 <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-xl space-y-2 animate-in slide-in-from-top-1">
                   <p className="text-[10px] text-emerald-600">
