@@ -417,9 +417,11 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   }, [fxAllocEnabled, fxAllocSummary, fxAllocAmounts, fxAllocLabel, fxAllocActualTwd]);
 
   // 2026-09-17新增：速風達代購計算面板（見components/SufengdaCalculator.tsx）。
+  // 入口在「特殊性質→代購」、代購人或商家名稱是速風達時才出現（isSufengda宣告在specialTag狀態之後）。
   // 套用時整份取代購物清單，所以要一併清掉上面兩個外幣小工具以「品項位置」記住的輸入——
   // 不清的話它們的useEffect會拿舊輸入把新寫進去的單價蓋掉。
   const [sufengdaOpen, setSufengdaOpen] = useState(false);
+  const [sufengdaApplied, setSufengdaApplied] = useState(false);
   const applySufengda = (newItems: TransactionItem[], walletDiscount: number | null) => {
     setFxInputs({});
     setFxExpandedIdx(new Set());
@@ -439,12 +441,15 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
       setAmount(total);
     }
     setSufengdaOpen(false);
+    setSufengdaApplied(true);
   };
 
   // 特殊標記：代購／工作代墊。輕量標記＋顯示用，不做完整分帳計算。
   const [specialTagType, setSpecialTagType] = useState<'none' | SpecialTag['type']>(transaction.specialTag?.type || 'none');
   const [specialTagCounterparty, setSpecialTagCounterparty] = useState(transaction.specialTag?.counterparty || '');
   const [specialTagNote, setSpecialTagNote] = useState(transaction.specialTag?.note || '');
+  // 集運運費那類紀錄沒填代購人、但商家名稱就是「速風達」，也要能叫出計算面板
+  const isSufengda = specialTagType === 'proxy_purchase' && (specialTagCounterparty.includes('速風達') || merchant.includes('速風達'));
 
   // 2026-08-21新增：新增交易中(isNew)也能直接設定「這碗跟誰分」，存的結果先放這裡，
   // 等這筆交易本身存檔時才在options裡一起帶給App.tsx，兩筆一起寫進資料庫(順序：先存
@@ -1092,6 +1097,26 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                     placeholder="額外說明（選填，例如：已打統編、0313批次）"
                     className="w-full p-3 bg-[#FFFBF5] border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-purple-300"
                   />
+                  {/* 速風達代購計算：Ivy的心智模型是「代購人填速風達就該出現」，所以入口放在這裡，
+                      只有代購人或商家名稱是速風達才顯示（其他代購人例如團購主的算法不一樣，不適用）。
+                      套用結果寫進下方「喵喵購物清單」。 */}
+                  {isSufengda && (
+                    <div className="space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => { setSufengdaOpen(v => !v); setSufengdaApplied(false); }}
+                        className={`w-full text-xs font-bold px-3 py-2 rounded-xl transition ${sufengdaOpen ? 'bg-violet-100 text-violet-600' : 'bg-violet-50 text-violet-500 hover:bg-violet-100'}`}
+                      >
+                        {sufengdaOpen ? '收合速風達代購計算' : '🧮 速風達代購計算：填人民幣＋匯率，自動算代購/街口手續費'}
+                      </button>
+                      {sufengdaOpen && (
+                        <SufengdaCalculator initialItems={items} onApply={applySufengda} onClose={() => setSufengdaOpen(false)} />
+                      )}
+                      {sufengdaApplied && !sufengdaOpen && (
+                        <p className="text-[11px] font-bold text-emerald-600">✓ 已套用到下方「喵喵購物清單」，實付金額也一起更新了</p>
+                      )}
+                    </div>
+                  )}
                   {/* 分攤明細(規格書階段7)要連結真實的transactionId，新增中的交易在client端
                       其實已經有uuidv4先產生好的id(見App.tsx的handleAddTransaction)，只是
                       還沒真的存進資料庫。2026-08-21改成新增中也能直接設定：這裡開的是本地的
@@ -1198,16 +1223,6 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
               >
                 {fxAllocEnabled ? '收合「多品項外幣單反推分配」' : '多品項外幣發票？點我用實際扣款台幣金額自動分配到各品項'}
               </button>
-              <button
-                type="button"
-                onClick={() => setSufengdaOpen(v => !v)}
-                className={`text-[10px] font-bold px-2 py-1 rounded-lg ml-1 ${sufengdaOpen ? 'bg-violet-100 text-violet-600' : 'text-slate-400 hover:bg-slate-100'}`}
-              >
-                {sufengdaOpen ? '收合「速風達代購計算」' : '速風達代購？填人民幣＋匯率自動算手續費'}
-              </button>
-              {sufengdaOpen && (
-                <SufengdaCalculator initialItems={items} onApply={applySufengda} onClose={() => setSufengdaOpen(false)} />
-              )}
               {fxAllocEnabled && (
                 <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-xl space-y-2 animate-in slide-in-from-top-1">
                   <p className="text-[10px] text-emerald-600">
