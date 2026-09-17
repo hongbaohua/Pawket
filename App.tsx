@@ -429,8 +429,17 @@ const App: React.FC = () => {
     if (userId) {
       (async () => {
         try {
+          // 2026-09-17修好一個真的bug：原本只有「splittingTransaction.id !== parentId」
+          // 才會刪原始那筆，但第一次拆分時parentId就是直接沿用splittingTransaction.id
+          // (見上面第421行)，這個條件永遠是false，導致原始那筆從來沒被刪掉——
+          // deleteTransactionsByParentId只會刪「parent_id欄位=parentId」的列，原始那筆
+          // 自己的parent_id是null，不會被那個條件刪到，兩邊都刪不到就造成原始金額全額
+          // 那筆繼續留在資料庫裡，跟拆出來的子項目同時存在、金額被重複計入統計（Ivy
+          // 實測「水電瓦斯」分類金額多算了一倍才抓到）。改成一律直接刪
+          // splittingTransaction.id，不用再判斷條件——重新編輯既有分裝時這筆本來就會
+          // 被deleteTransactionsByParentId刪到，兩邊刪同一筆不會出錯，只是多一次確保。
           await deleteTransactionsByParentId(parentId);
-          if (splittingTransaction.id !== parentId) await dbDeleteTransaction(splittingTransaction.id);
+          await dbDeleteTransaction(splittingTransaction.id);
           await upsertTransactions(userId, splitTxs);
         } catch (err) { console.error('儲存拆帳失敗', err); }
       })();
