@@ -2,24 +2,13 @@
 // 財務規則設定
 // ============================================================
 // 這裡集中放 Dashboard 各種警示、計算公式用到的「門檻數字」與「起始值」。
-// 想調整「超支多少才警示」「DTI多高算危險」之類的敏感度，改這裡的數字就好，
+// 想調整「超支多少才警示」「固定支出佔多少算危險」之類的敏感度，改這裡的數字就好，
 // 不用去 services/logicService.ts 或 components/Dashboard.tsx 裡翻程式碼找數字。
 //
 // 改完存檔後，重新整理瀏覽器就會套用新數字，不需要額外設定。
 
-import { L1Category } from '../types';
-import type { Budget } from '../types';
 
-// ── 1. 預設預算 ──
-// App 第一次開啟、還沒手動設定過預算時使用的起始值（單位：元/期）。
-// 之後使用者可以在畫面上自行調整，這裡只是「初始值」。
-export const INITIAL_BUDGETS: Budget[] = [
-  { l1: L1Category.FIXED, amount: 2000 },
-  { l1: L1Category.VARIABLE, amount: 1200 },
-  { l1: L1Category.INVESTMENT, amount: 800 },
-];
-
-// ── 3. DTI 償債比率警戒線（固定支出 ÷ 收入 的百分比） ──
+// ── 3. 固定支出負擔比警戒線（固定支出 ÷ 收入 的百分比；畫面上叫「固定支出負擔比」） ──
 export const DTI_CAUTION_THRESHOLD = 30;   // 超過這個百分比，介面轉黃色提醒
 export const DTI_CRITICAL_THRESHOLD = 35;  // 超過這個百分比，介面轉紅色警戒
 

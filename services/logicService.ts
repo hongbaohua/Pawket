@@ -1,6 +1,7 @@
 
-import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig, MerchantAlias, MerchantAliasCandidate, LongTermReserve, TransactionItem, SharedExpenseParticipant } from '../types';
+import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, DateRange, WishlistItem, PenaltyConfig, MerchantAlias, MerchantAliasCandidate, LongTermReserve, TransactionItem, SharedExpenseParticipant, SpecialTag } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+import { STANDARD_CATEGORIES } from '../config/categories';
 import { format, getDaysInMonth, getDate, startOfMonth, endOfMonth, addMonths, subMonths, differenceInDays, isAfter, isBefore, startOfDay, endOfDay, parseISO, startOfYear, getMonth, getYear, isSameMonth, differenceInMonths, subDays, addDays } from 'date-fns';
 import {
   RUNWAY_ANALYSIS_WINDOW_DAYS, RUNWAY_OUTLIER_IQR_MULTIPLIER, RUNWAY_OUTLIER_MIN_SAMPLE_SIZE, RUNWAY_WARNING_DAYS,
@@ -17,19 +18,29 @@ import {
 const toCents = (val: number) => Math.round(val * 100);
 const fromCents = (val: number) => val / 100;
 
-// 「消費分析」類函式（圓餅圖/配速警示/固定週期性/異常提醒等，用來分析Ivy自己的花費習慣）
-// 一律用這個判斷，把有specialTag(代購/工作代墊/借貸)的支出排除在外——這些錢雖然真的
-// 從帳戶流出，但不是Ivy自己的消費，是先幫別人墊、之後會收回來的，混進消費分析只會讓
-// 統計失真（2026-08-11 Ivy反應）。跟「餘額/現金緩衝耗盡預警」這種看「錢真的流出去多少」
-// 的函式是不同的關注點，那些刻意不套用這個排除。
-// 2026-09-17新增排除amount===0：分裝盤拆帳時，如果子項目金額加總剛好等於原始總額，
-// 「主項目」那筆會是$0（沒有剩餘可分配），但category.l3='主項目'那筆本身還是會帶著
-// 一個分類（預設沿用原始交易的分類）——Ivy反應「子項目都已經分類了，$0的主項目不該
-// 還算進那個分類」，例如水電瓦斯帳單拆成水費/電費/天然氣費三筆各自歸類後，$0的主項目
-// 如果還留著「水電瓦斯」分類，會讓那個分類的圓餅圖/固定週期性偵測多算進一筆看似存在
-// 但其實沒有金額的交易，混淆使用者對照清單時的判斷。$0的支出本來就不該影響任何消費
-// 分析的統計結果，這裡直接排除，不只是為了這個分裝盤的case。
-const isPersonalConsumption = (t: Transaction): boolean => t.type === 'expense' && !t.specialTag && t.amount !== 0;
+// ── 「這筆錢算不算你自己的消費」的統一判斷 ──────────────────────────
+//
+// 分帳結清交易的辨識標記：buildSettlementTransaction 產生的「順便記一筆」都會帶這個
+// 細項標籤。用標籤辨識就不需要額外的資料庫欄位，而且這個規則上線前已經存在的舊結清
+// 紀錄也會一起被涵蓋到，不用回頭改資料。
+export const SETTLEMENT_L3 = '分帳結清';
+export const isSettlementTransaction = (t: Transaction): boolean => t.category.l3 === SETTLEMENT_L3;
+
+// 代購/工作代墊/借貸(specialTag)是幫別人先付、之後會收回來的錢；分帳結清則是那些錢
+// 還回來/還出去的那一筆。兩者都「不是你自己的消費」。
+//
+// 2026-09-21 Ivy 確認的規則：**這些錢真的有進出戶頭，所以本期現金流跟帳戶餘額一定要算**
+// （借出跟還款可能相隔當天、好幾天、甚至跨月，不算現金流就看不出錢包真實的凹陷與回填）；
+// **但它們都不是「你把錢花掉了」，所以消費分析一律排除**——分類比率、支出排行、配速
+// 警示、異常偵測、固定週期性支出、燒錢速度、預算建議、安全水位全部套用這條規則。
+export const isOwnMoney = (t: Transaction): boolean => !t.specialTag && !isSettlementTransaction(t);
+
+// 消費分析專用：是不是「你自己花掉的錢」。除了上面的 isOwnMoney，還排除金額為0的交易——
+// 分裝盤拆帳時，如果子項目金額加總剛好等於原始總額，「主項目」那筆會是$0，但它還是帶著
+// 一個分類（預設沿用原始交易的分類）。Ivy 反應「子項目都已經分類了，$0的主項目不該還算進
+// 那個分類」：例如水電瓦斯帳單拆成水費/電費/天然氣費三筆各自歸類後，$0 的主項目如果還留著
+// 「水電瓦斯」分類，圓餅圖/固定週期性偵測就會多算一筆看似存在、其實沒有金額的交易。
+const isPersonalConsumption = (t: Transaction): boolean => t.type === 'expense' && isOwnMoney(t) && t.amount !== 0;
 
 // 品項金額顯示用：畫面上會直接印出unitPrice（有時候是反推分配/浮點數運算的結果，
 // 例如958.0464431910909），四捨五入到分再用toLocaleString印出來，不要讓一長串沒意義
@@ -51,6 +62,9 @@ export const buildSettlementTransaction = (params: {
   settleMethod: SharedExpenseParticipant['settleMethod'];
   accountId?: string;
   date?: string;
+  // 原始那筆交易的特殊性質（代購/工作代墊/借貸），用來決定結清交易要掛哪一種標記。
+  // 沒傳的話當成借貸——那是最單純的「純粹還錢」情境。
+  sourceTagType?: SpecialTag['type'];
 }): Transaction => {
   const isIncome = params.direction === 'they_owe_me';
   const l1 = isIncome ? L1Category.INCOME : L1Category.VARIABLE;
@@ -64,7 +78,14 @@ export const buildSettlementTransaction = (params: {
     type: isIncome ? 'income' : 'expense',
     accountId: params.accountId || undefined,
     paymentChannel: params.settleMethod,
-    category: { l1, l2, l3: '分帳結清' },
+    category: { l1, l2, l3: SETTLEMENT_L3 },
+    // 掛上特殊性質標記，畫面上一眼就看得出「這筆是還錢/收錢，不是消費」，
+    // 消費分析也會跟著 isOwnMoney 一起排除（見上面的說明）。
+    specialTag: {
+      type: params.sourceTagType || 'personal_loan',
+      counterparty: params.name,
+      note: '分帳結清',
+    },
     confidence: 1,
     isVerified: true,
     isSplit: false,
@@ -264,60 +285,46 @@ export const calculateLongTermReserveMonthly = (reserves: LongTermReserve[]): nu
   return reserves.reduce((sum, r) => sum + (r.frequencyMonths > 0 ? r.amount / r.frequencyMonths : 0), 0);
 };
 
+// 超支扣零食：這期的變動支出超過預算時，算出下一期要先扣掉多少預算。
+// 2026-09-21 改掉基準來源：原本是拿 config/financialRules.ts 的 INITIAL_BUDGETS
+// （變動支出 $1,200/期）當門檻，但那份「預設預算」自從分類月預算上線之後，畫面上
+// 早就沒有任何地方可以修改它了——等於門檻永遠停在 $1,200，只要正常生活就一定超支，
+// 算出來的罰金也毫無意義（示範資料實測算出 -$5,071）。改成加總 Ivy 自己在
+// 「系統設定 → 分類預算」設過的變動支出分類預算，沒設定過就不啟動，跟配速警示
+// 「沒設定就不提醒」的原則一致，不自己亂猜基準。
 export const calculateProjectedPenalty = (
     transactions: Transaction[],
-    budgets: Budget[],
+    categoryBudgets: Record<string, number>,
     config: PenaltyConfig
-): { isOverspent: boolean; overage: number; penaltyAmount: number } => {
-    
-    if (!config.enabled) return { isOverspent: false, overage: 0, penaltyAmount: 0 };
+): { isOverspent: boolean; overage: number; penaltyAmount: number; budgetBaseline: number } => {
+
+    const none = { isOverspent: false, overage: 0, penaltyAmount: 0, budgetBaseline: 0 };
+    if (!config.enabled) return none;
 
     const variableSpending = transactions
         .filter(t => isPersonalConsumption(t) && t.category.l1 === L1Category.VARIABLE)
         .reduce((sum, t) => sum + t.amount, 0);
 
-    const variableBudget = budgets.find(b => b.l1 === L1Category.VARIABLE)?.amount || 0;
+    const variableBudget = Object.entries(categoryBudgets)
+        .filter(([l2, amount]) => amount > 0 && STANDARD_CATEGORIES[L1Category.VARIABLE].includes(l2))
+        .reduce((sum, [, amount]) => sum + amount, 0);
+
+    if (variableBudget <= 0) return none;
 
     if (variableSpending > variableBudget) {
         const overage = variableSpending - variableBudget;
         const penaltyAmount = overage * config.ratio;
-        return { isOverspent: true, overage, penaltyAmount };
+        return { isOverspent: true, overage, penaltyAmount, budgetBaseline: variableBudget };
     }
 
-    return { isOverspent: false, overage: 0, penaltyAmount: 0 };
-};
-
-export const validateSplit = (originalAmount: number, splits: { amount: number }[]): boolean => {
-  const originalCents = toCents(originalAmount);
-  const splitSumCents = splits.reduce((acc, curr) => acc + toCents(curr.amount), 0);
-  return Math.abs(originalCents - splitSumCents) < 1; 
-};
-
-export const calculateSuggestedBudget = (historyTransactions: Transaction[]): Budget[] => {
-    const sums: Record<string, number> = {
-        [L1Category.FIXED]: 0,
-        [L1Category.VARIABLE]: 0,
-        [L1Category.INVESTMENT]: 0,
-        [L1Category.INCOME]: 0,
-    };
-    
-    historyTransactions.forEach(t => {
-        if (isPersonalConsumption(t)) {
-            sums[t.category.l1] += t.amount;
-        }
-    });
-
-    return Object.entries(sums)
-        .filter(([l1]) => l1 !== L1Category.INCOME)
-        .map(([l1, amount]) => ({
-            l1: l1 as L1Category,
-            amount: parseFloat((amount * 0.9).toFixed(2)) 
-        }));
+    return { ...none, budgetBaseline: variableBudget };
 };
 
 export const analyzeFinancialHealth = (transactions: Transaction[]) => {
+  // 收入側也要套用 isOwnMoney：收回來的代墊款/借款不是「收入來源」，
+  // 混進來會讓固定支出佔比的分母變大、負擔看起來比實際輕（支出側本來就已經排除了）。
   const income = transactions
-    .filter(t => t.type === 'income')
+    .filter(t => t.type === 'income' && isOwnMoney(t))
     .reduce((acc, t) => acc + t.amount, 0);
 
   const expenses = {
@@ -460,7 +467,7 @@ export const getCategoryBreakdown = (transactions: Transaction[], type: 'income'
         // 不然「借廖妤甄$500」會混進支出排行榜、「廖妤甄還$500」會混進收入來源分析——
         // 這裡跟isPersonalConsumption()同一個原則，但那個helper只認expense，這裡income/
         // expense都要擋，所以直接檢查specialTag本身。
-        if (t.specialTag) return;
+        if (!isOwnMoney(t)) return;
         if (l1Filter && t.category.l1 !== l1Filter) return;
 
         if (!map[t.category.l2]) map[t.category.l2] = { amount: 0, l3Map: {} };
@@ -770,7 +777,7 @@ const calculateAvgMonthlyNetCashFlow = (allTransactions: Transaction[]): number 
         monthlyNet[format(subMonths(now, i), 'yyyy-MM')] = 0;
     }
     allTransactions.forEach(t => {
-        if (t.specialTag) return;
+        if (!isOwnMoney(t)) return;
         const key = format(parseISO(t.date), 'yyyy-MM');
         if (!(key in monthlyNet)) return;
         if (t.type === 'income') monthlyNet[key] += t.amount;
@@ -860,7 +867,7 @@ export const calculateWishlistMetrics = (
                 }
             } else if (item.targetDate && metrics.isOverdue) {
                 // 目標日期已經過了還沒存夠：不再回推「每月要存多少」(除以趨近0的剩餘天數
-                // 會算出離譜的數字)，直接標记來不及，讓畫面顯示還差多少即可。
+                // 會算出離譜的數字)，直接標記來不及，讓畫面顯示還差多少即可。
                 metrics.planStatus = 'target_behind';
             } else if (avgMonthlyNetCashFlow <= 0) {
                 // 沒設目標日期，但最近平均收支是打平或負的，沒辦法推算正向的存錢進度——
@@ -921,9 +928,9 @@ export const calculateSuggestedReserves = (allTransactions: Transaction[], longT
     }
     allTransactions.forEach(t => {
         if (t.type !== 'expense') return;
-        // 2026-08-13補：代購/工作代墊/借貸(specialTag)不是Ivy自己的真實支出，這裡漏了
-        // 排除——跟Dashboard淨現金流那次修的是同一個原則，只是這個函式當時沒有一起改到。
-        if (t.specialTag) return;
+        // 2026-08-13補：代購/工作代墊/借貸不是Ivy自己的真實支出，這裡漏了排除；
+        // 2026-09-21再補上分帳結清（統一改用 isOwnMoney，見檔案開頭的規則說明）。
+        if (!isOwnMoney(t)) return;
         if (t.category.l1 !== L1Category.FIXED && t.category.l1 !== L1Category.VARIABLE) return;
         const key = format(parseISO(t.date), 'yyyy-MM');
         if (key in monthlyTotals) monthlyTotals[key] += t.amount;
@@ -1006,14 +1013,19 @@ export const calculateRunway = (allTransactions: Transaction[], accounts: Accoun
         .filter(t => {
             const d = parseISO(t.date);
             return t.type === 'expense'
+                // 代購/代墊/借貸與分帳結清不是自己的花費，算進日均燒錢速度會高估
+                // 燒錢速度、低估「還能撐幾天」（2026-09-21 補，跟安全水位同一個原則）
+                && isOwnMoney(t)
                 && (t.category.l1 === L1Category.VARIABLE || t.category.l1 === L1Category.FIXED)
                 && isAfter(d, windowStart)
                 && isBefore(d, now);
         })
         .map(t => t.amount);
     const recentExpenses = excludeOutliers(recentExpenseAmounts).reduce((sum, amount) => sum + amount, 0);
+    // 注意要先複製一份再排序：直接 allTransactions.sort() 會就地改動呼叫端傳進來的
+    // 陣列（那是 App.tsx 的 state 陣列），把整份交易紀錄的順序洗成日期升冪。
     const firstTxDate = allTransactions.length > 0
-        ? allTransactions.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0].date
+        ? [...allTransactions].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0].date
         : now.toISOString();
     const actualDays = Math.min(RUNWAY_ANALYSIS_WINDOW_DAYS, differenceInDays(now, parseISO(firstTxDate)) + 1);
     const daysDivisor = Math.max(actualDays, 1);

@@ -770,6 +770,9 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
           settleMethod: quickSettleMethod,
           accountId: quickSettleAccountId,
           date,
+          // 結清交易沿用原本那筆的特殊性質，畫面上才看得出這筆還款是代購/代墊/借貸
+          // 哪一種；消費分析也會一起排除（見 logicService 的 isOwnMoney）。
+          sourceTagType: specialTagType !== 'none' ? specialTagType : undefined,
         })
       : undefined;
 

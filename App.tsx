@@ -19,7 +19,7 @@ import SettingsModal from './components/SettingsModal';
 import TransactionFilterPanel, { matchesCategoryFilter } from './components/TransactionFilterPanel';
 import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, ActivityActionType, LongTermReserve, AiReport, AiReportContent } from './types';
 import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics, formatMoney, getItemAmount } from './services/logicService';
-import { INITIAL_BUDGETS, DEFAULT_PENALTY_CONFIG } from './config/financialRules';
+import { DEFAULT_PENALTY_CONFIG } from './config/financialRules';
 import { supabase, isSupabaseConfigured } from './lib/supabaseClient';
 import {
   seedDefaultAccountsIfEmpty, fetchTransactions, createAccount, updateAccount, archiveAccount, deleteAccount,
@@ -120,7 +120,6 @@ const App: React.FC = () => {
   const [isSharedExpenseListOpen, setIsSharedExpenseListOpen] = useState(false);
   const [isAccountsModalOpen, setIsAccountsModalOpen] = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
-  const [budgets, setBudgets] = useState<Budget[]>(INITIAL_BUDGETS);
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
   // 登入後從 Supabase 載入這個使用者的帳戶跟交易紀錄；沒有帳戶的話先幫她建立預設帳戶清單。
@@ -178,14 +177,27 @@ const App: React.FC = () => {
   };
   
   const [timeScope, setTimeScope] = useState<TimeScope>('natural_month');
-  const [cycleStartDay, setCycleStartDay] = useState<number>(1);
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [customRange, setCustomRange] = useState<{start: Date, end: Date}>({
       start: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
       end: new Date()
   });
 
-  const [penaltyConfig, setPenaltyConfig] = useState<PenaltyConfig>(DEFAULT_PENALTY_CONFIG);
+  // 理財週期結算日 + 超支扣零食設定：2026-09-21改成存進user_metadata。
+  // 原本這兩個都只是元件裡的useState，Ivy在首頁齒輪裡改完、按了「儲存設定」，
+  // 重新整理頁面就會被打回預設值（結算日回到1號、罰則回到關閉），等於設定
+  // 根本存不起來——跟分類月預算/長期預留支出用同一套持久化機制修掉。
+  const cycleStartDay: number = session?.user.user_metadata?.cycleStartDay ?? 1;
+  const penaltyConfig: PenaltyConfig = useMemo(
+    () => session?.user.user_metadata?.penaltyConfig ?? DEFAULT_PENALTY_CONFIG,
+    [session?.user.user_metadata?.penaltyConfig]
+  );
+  // 首頁齒輪裡的兩個設定一起存成同一次 updateUser：拆成兩次連續呼叫會互相競爭
+  // （實測結果是後送出的那個欄位被前一次的回應蓋掉，只存到其中一個）。
+  const handleSaveDashboardSettings = async (settings: { cycleStartDay: number; penaltyConfig: PenaltyConfig }) => {
+      const { error } = await supabase.auth.updateUser({ data: settings });
+      if (error) { console.error('更新首頁設定失敗', error); alert('儲存失敗，請檢查主控台錯誤訊息。'); }
+  };
 
   const [wishlistItems, setWishlistItems] = useState<WishlistItem[]>([]);
   const [isWishlistModalOpen, setIsWishlistModalOpen] = useState(false);
@@ -1113,9 +1125,9 @@ const App: React.FC = () => {
       </aside>
       <main className="flex-1 min-w-0 mt-16 lg:mt-0 lg:ml-80 p-4 lg:p-10 transition-all">
         {view === 'dashboard' && <Dashboard
-            alerts={alerts} budgets={budgets} transactions={filteredTransactions} allTransactions={transactions} wishlistItems={wishlistItems} longTermReserves={longTermReserves} onOpenWishlist={() => setIsWishlistModalOpen(true)} onPrint={handlePrint}
-            timeScope={timeScope} setTimeScope={setTimeScope} cycleStartDay={cycleStartDay} setCycleStartDay={setCycleStartDay} dateRangeLabel={dateRange.label}
-            currentDate={currentDate} setCurrentDate={setCurrentDate} penaltyConfig={penaltyConfig} setPenaltyConfig={setPenaltyConfig}
+            alerts={alerts} categoryBudgets={categoryBudgets} transactions={filteredTransactions} allTransactions={transactions} wishlistItems={wishlistItems} longTermReserves={longTermReserves} onOpenWishlist={() => setIsWishlistModalOpen(true)} onPrint={handlePrint}
+            timeScope={timeScope} setTimeScope={setTimeScope} cycleStartDay={cycleStartDay} dateRangeLabel={dateRange.label}
+            currentDate={currentDate} setCurrentDate={setCurrentDate} penaltyConfig={penaltyConfig} onSaveDashboardSettings={handleSaveDashboardSettings}
             customRange={customRange} setCustomRange={setCustomRange} accounts={accounts}
             sharedExpenses={sharedExpenses} onOpenSharedExpenses={() => setIsSharedExpenseListOpen(true)}
             aiReports={aiReports} aiReportsLoading={aiReportsLoading} onSaveAiReport={handleSaveAiReport}
@@ -1179,7 +1191,7 @@ const App: React.FC = () => {
                 桌機版(lg+)維持原本的表格排版，不受影響。 */}
             <div className="lg:overflow-x-auto">
               <table className="w-full text-left text-sm text-slate-600 block lg:table">
-                <thead className="hidden lg:table-header-group bg-[#FFFBF5] text-xs uppercase font-bold text-slate-400 tracking-wider"><tr><th className="p-6">日期</th><th className="p-6 w-32">帳戶</th><th className="p-6">商家</th><th className="p-6 min-w-[220px]">分類</th><th className="p-6 text-right">金額</th><th className="p-6 text-center no-print">操作</th></tr></thead>
+                <thead className="hidden lg:table-header-group bg-[#FFFBF5] text-xs uppercase font-bold text-slate-400 tracking-wider"><tr><th className="p-4 2xl:p-6">日期</th><th className="p-4 2xl:p-6 w-28 2xl:w-32">帳戶</th><th className="p-4 2xl:p-6">商家</th><th className="p-4 2xl:p-6 min-w-[170px] 2xl:min-w-[220px]">分類</th><th className="p-4 2xl:p-6 text-right">金額</th><th className="p-4 2xl:p-6 text-center no-print">操作</th></tr></thead>
                 <tbody className="block lg:table-row-group divide-y-0 lg:divide-y lg:divide-orange-50 space-y-3 lg:space-y-0 p-3 lg:p-0">
                   {processedTransactions.length === 0 ? (
                     <tr className="block lg:table-row"><td colSpan={6} className="block lg:table-cell p-10 text-center text-slate-400 italic font-medium">喵~ 這裡空空的，快去記帳吧！</td></tr>
@@ -1191,12 +1203,12 @@ const App: React.FC = () => {
                         const toName = accounts.find(a => a.id === t.toAccountId)?.name || '?';
                         return (
                           <tr key={t.id} className="block lg:table-row transition hover:bg-sky-50/30 bg-sky-50/10 rounded-2xl lg:rounded-none border lg:border-0 border-sky-100 mb-3 lg:mb-0 last:mb-0">
-                            <td className="block lg:table-cell px-4 pt-3 lg:p-6 text-xs lg:text-sm text-slate-400 lg:text-slate-600">{t.date}</td>
+                            <td className="block lg:table-cell px-4 pt-3 lg:p-4 2xl:p-6 text-xs lg:text-sm text-slate-400 lg:text-slate-600">{t.date}</td>
                             <td className="hidden lg:table-cell p-6 w-32 text-slate-300 text-xs">—</td>
-                            <td className="block lg:table-cell px-4 pt-1 lg:p-6 font-bold">{t.merchant}</td>
-                            <td className="block lg:table-cell px-4 pt-1 lg:p-6"><span className="px-2 py-1 bg-sky-100 text-sky-600 rounded text-xs font-bold">帳戶互轉 &bull; {fromName} → {toName}</span></td>
-                            <td className="block lg:table-cell px-4 pt-1 lg:p-6 text-left lg:text-right font-bold text-sky-600">${t.amount}</td>
-                            <td className="block lg:table-cell px-4 pb-3 pt-2 lg:p-6 text-left lg:text-center no-print">
+                            <td className="block lg:table-cell px-4 pt-1 lg:p-4 2xl:p-6 font-bold">{t.merchant}</td>
+                            <td className="block lg:table-cell px-4 pt-1 lg:p-4 2xl:p-6"><span className="px-2 py-1 bg-sky-100 text-sky-600 rounded text-xs font-bold">帳戶互轉 &bull; {fromName} → {toName}</span></td>
+                            <td className="block lg:table-cell px-4 pt-1 lg:p-4 2xl:p-6 text-left lg:text-right font-bold text-sky-600">${t.amount}</td>
+                            <td className="block lg:table-cell px-4 pb-3 pt-2 lg:p-4 2xl:p-6 text-left lg:text-center no-print">
                               <div className="flex justify-start lg:justify-center gap-2">
                                 <button onClick={() => setTransferModalState({ open: true, transaction: t })} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯帳戶互轉"><Pencil className="w-4 h-4" /></button>
                                 <button onClick={() => handleDeleteTransaction(t.id)} className="p-2 border rounded-xl hover:bg-rose-50 text-rose-400" title="刪除項目"><Trash2 className="w-4 h-4" /></button>
@@ -1207,8 +1219,8 @@ const App: React.FC = () => {
                       }
                       return (
                         <tr key={t.id} className={`flex flex-wrap lg:table-row transition group rounded-2xl lg:rounded-none border lg:border-0 border-orange-100 mb-3 lg:mb-0 last:mb-0 ${t.type === 'income' ? 'bg-emerald-50/20' : 'hover:bg-orange-50/30'}`}>
-                          <td className="w-1/2 lg:table-cell lg:w-auto px-4 pt-3 lg:p-6 text-xs lg:text-sm text-slate-400 lg:text-slate-600 order-1">{t.date}</td>
-                          <td className="w-1/2 lg:table-cell lg:w-32 px-4 pt-3 lg:p-6 text-xs text-right lg:text-left order-2">
+                          <td className="w-1/2 lg:table-cell lg:w-auto px-4 pt-3 lg:p-4 2xl:p-6 text-xs lg:text-sm text-slate-400 lg:text-slate-600 order-1">{t.date}</td>
+                          <td className="w-1/2 lg:table-cell lg:w-32 px-4 pt-3 lg:p-4 2xl:p-6 text-xs text-right lg:text-left order-2">
                             {(() => {
                               const acc = accounts.find(a => a.id === t.accountId);
                               return acc
@@ -1217,7 +1229,7 @@ const App: React.FC = () => {
                             })()}
                             {t.paymentChannel && <div className="w-24 truncate text-slate-300 font-normal mt-1 text-[10px] ml-auto lg:ml-0" title={t.paymentChannel}>{t.paymentChannel}</div>}
                           </td>
-                          <td className="w-full lg:table-cell px-4 pt-2 lg:p-6 font-bold order-3">
+                          <td className="w-full lg:table-cell px-4 pt-2 lg:p-4 2xl:p-6 font-bold order-3">
                             <span className="flex items-center gap-1.5 flex-wrap">
                               {t.merchant}
                               {t.specialTag && (
@@ -1326,11 +1338,11 @@ const App: React.FC = () => {
                               </span>
                             )}
                           </td>
-                          <td className="w-1/2 lg:table-cell px-4 pt-2 lg:p-6 order-4">
+                          <td className="w-1/2 lg:table-cell px-4 pt-2 lg:p-4 2xl:p-6 order-4">
                             <span className={`px-2 py-1 rounded-lg text-xs font-bold ${L1_TAG_STYLE[t.category.l1]}`}>{CATEGORY_LABELS[t.category.l1]} &bull; {t.category.l2}</span>
                           </td>
-                          <td className={`w-1/2 lg:table-cell px-4 pt-2 lg:p-6 text-right font-bold order-5 ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-700'}`}>{t.type === 'income' ? '+' : '-'}${t.amount}</td>
-                          <td className="w-full lg:table-cell px-4 pb-3 pt-2 lg:p-6 lg:text-center no-print order-6">
+                          <td className={`w-1/2 lg:table-cell px-4 pt-2 lg:p-4 2xl:p-6 text-right font-bold order-5 ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-700'}`}>{t.type === 'income' ? '+' : '-'}${t.amount}</td>
+                          <td className="w-full lg:table-cell px-4 pb-3 pt-2 lg:p-4 2xl:p-6 lg:text-center no-print order-6">
                             <div className="flex justify-end lg:justify-center gap-2">
                               <button onClick={() => setSplittingTransaction(t)} className="p-2 border rounded-xl hover:bg-purple-50 text-purple-400" title="拆帳分類"><Divide className="w-4 h-4" /></button>
                               <button onClick={() => setEditingTransaction(t)} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯項目"><Pencil className="w-4 h-4" /></button>
@@ -1356,8 +1368,8 @@ const App: React.FC = () => {
                         <React.Fragment key={`group-${parentId}`}>
                           {/* ROOT Main Item Row */}
                           <tr className="flex flex-wrap lg:table-row bg-purple-50/30 border-2 lg:border-2 lg:border-t-2 border-purple-100 rounded-2xl lg:rounded-none mb-1 lg:mb-0">
-                             <td className="w-1/2 lg:table-cell lg:w-auto px-4 pt-3 lg:p-6 text-xs font-bold text-purple-400 order-1">{groupDate}</td>
-                             <td className="w-1/2 lg:table-cell lg:w-32 px-4 pt-3 lg:p-6 text-xs text-right lg:text-left order-2">
+                             <td className="w-1/2 lg:table-cell lg:w-auto px-4 pt-3 lg:p-4 2xl:p-6 text-xs font-bold text-purple-400 order-1">{groupDate}</td>
+                             <td className="w-1/2 lg:table-cell lg:w-32 px-4 pt-3 lg:p-4 2xl:p-6 text-xs text-right lg:text-left order-2">
                                {(() => {
                                  const acc = accounts.find(a => a.id === mainItem.accountId);
                                  return acc
@@ -1365,18 +1377,18 @@ const App: React.FC = () => {
                                    : <span className="text-slate-300 font-normal">未指定</span>;
                                })()}
                              </td>
-                             <td className="w-full lg:table-cell px-4 pt-2 lg:p-6 font-black text-slate-700 flex items-center gap-2 order-3">
+                             <td className="w-full lg:table-cell px-4 pt-2 lg:p-4 2xl:p-6 font-black text-slate-700 flex items-center gap-2 order-3">
                                {mainItem.merchant} <span className="text-[10px] bg-purple-200 text-purple-600 px-1.5 py-0.5 rounded-full uppercase tracking-tighter">已分裝</span>
                              </td>
-                             <td className="w-1/2 lg:table-cell px-4 pt-2 lg:p-6 order-4">
+                             <td className="w-1/2 lg:table-cell px-4 pt-2 lg:p-4 2xl:p-6 order-4">
                                 <span className="px-2 py-1 bg-white/80 border border-purple-100 rounded text-xs font-bold text-purple-400">
                                   {CATEGORY_LABELS[mainItem.category.l1]} &bull; {mainItem.category.l2}
                                 </span>
                              </td>
-                             <td className={`w-1/2 lg:table-cell px-4 pt-2 lg:p-6 text-right font-black order-5 ${mainItem.type === 'income' ? 'text-emerald-600' : 'text-slate-700'}`}>
+                             <td className={`w-1/2 lg:table-cell px-4 pt-2 lg:p-4 2xl:p-6 text-right font-black order-5 ${mainItem.type === 'income' ? 'text-emerald-600' : 'text-slate-700'}`}>
                                 {mainItem.type === 'income' ? '+' : '-'}${totalAmount.toFixed(2)}
                              </td>
-                             <td className="w-full lg:table-cell px-4 pb-3 pt-2 lg:p-6 lg:text-center no-print order-6">
+                             <td className="w-full lg:table-cell px-4 pb-3 pt-2 lg:p-4 2xl:p-6 lg:text-center no-print order-6">
                                <div className="flex justify-end lg:justify-center gap-2">
                                   {/* Re-edit existing split */}
                                   <button

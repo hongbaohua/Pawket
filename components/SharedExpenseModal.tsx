@@ -106,6 +106,7 @@ const SharedExpenseModal: React.FC<SharedExpenseModalProps> = ({ transaction, ex
         settleMethod: p.settleMethod,
         accountId: p.settlementAccountId,
         date: p.settledDate,
+        sourceTagType: transaction.specialTag?.type,
       }));
 
     onSave(expense, additionalSettlements);

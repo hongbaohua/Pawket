@@ -4,6 +4,22 @@ import { supabase } from '../lib/supabaseClient';
 
 // 登入畫面：一般帳號密碼登入。第一次用「註冊」建立帳號，之後直接用「登入」，
 // 不用每次都收信點連結。登入狀態會存在瀏覽器裡，重新整理頁面不會登出。
+
+// Supabase 回傳的錯誤訊息全部是英文原文，直接丟到畫面上對使用者沒有意義
+// （例如「Invalid login credentials」），常見的幾種翻成看得懂的說法。
+// 沒對應到的還是照原文顯示，至少不會把真正的錯誤吃掉。
+const AUTH_ERROR_MESSAGES: { match: string; message: string }[] = [
+  { match: 'Invalid login credentials', message: 'Email 或密碼不正確' },
+  { match: 'Email not confirmed', message: '這個 Email 還沒完成驗證，請先去信箱點確認連結' },
+  { match: 'User already registered', message: '這個 Email 已經註冊過了，直接用「登入」就可以' },
+  { match: 'Password should be at least', message: '密碼太短了，至少要 6 碼' },
+  { match: 'Unable to validate email address', message: 'Email 格式看起來不太對，請再確認一次' },
+  { match: 'For security purposes', message: '剛剛嘗試太多次了，請等幾秒再試一次' },
+  { match: 'Failed to fetch', message: '連不上伺服器，請確認網路連線後再試一次' },
+];
+
+const translateAuthError = (raw: string): string =>
+  AUTH_ERROR_MESSAGES.find(e => raw.includes(e.match))?.message || raw;
 const Auth: React.FC = () => {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
@@ -21,7 +37,7 @@ const Auth: React.FC = () => {
       const { data, error } = await supabase.auth.signUp({ email: email.trim(), password });
       if (error) {
         setStatus('error');
-        setErrorMsg(error.message);
+        setErrorMsg(translateAuthError(error.message));
       } else if (!data.session) {
         // 專案有開「Email 確認」的話，註冊後不會立刻拿到 session，要先去信箱確認一次。
         setStatus('signedUpPendingConfirm');
@@ -31,7 +47,7 @@ const Auth: React.FC = () => {
       const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
       if (error) {
         setStatus('error');
-        setErrorMsg(error.message === 'Invalid login credentials' ? 'Email 或密碼不正確' : error.message);
+        setErrorMsg(translateAuthError(error.message));
       }
     }
   };
@@ -42,7 +58,8 @@ const Auth: React.FC = () => {
         <div className="w-16 h-16 bg-gradient-to-br from-amber-300 to-orange-400 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-100 text-white mb-6">
           <Cat className="w-9 h-9" />
         </div>
-        <h1 className="text-2xl font-extrabold text-slate-700 mb-2">Paw<span className="text-amber-500">ket</span></h1>
+        <h1 className="text-2xl font-extrabold text-slate-700 mb-1">Paw<span className="text-amber-500">ket</span> 喵喵財庫</h1>
+        <p className="text-xs font-bold text-slate-300 mb-2">讓每一分錢都變成可愛的形狀 ✨</p>
 
         {status === 'signedUpPendingConfirm' ? (
           <div className="flex flex-col items-center gap-3 text-emerald-600 mt-4">

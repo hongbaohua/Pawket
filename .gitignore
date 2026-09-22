@@ -57,3 +57,8 @@ supabase/fix_*.sql
 *.njsproj
 *.sln
 *.sw?
+
+# 示範用的虛構銀行月結單（build_demo_statement.py 依示範帳號資料即時產生，
+# 每次重灌假資料都會重新產生，不需要版本控管）
+data-import/demo_statement.html
+data-import/demo_statement.pdf

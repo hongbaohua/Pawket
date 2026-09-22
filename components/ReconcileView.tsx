@@ -7,7 +7,7 @@
 // （見PROJECT_STATUS.md的設計說明）。
 // 2026-08-11：支援同一期一次上傳多份檔案再一起比對——Ivy實測發現中華郵政會把同一期
 // VISA明細拆成兩份PDF寄發，只上傳其中一份會讓另一份裡的交易(例如全支付/全聯那筆)
-// 找不到對應的銀行資料，被誤判成「妳記了，但官方紀錄一直沒出現」。所有檔案共用同一組
+// 找不到對應的銀行資料，被誤判成「你記了，但官方紀錄一直沒出現」。所有檔案共用同一組
 // 密碼（貼合PDF密碼設定習慣，只問一次，除非真的失敗才重問），抽出來的BankStatementRow
 // 直接合併成一份清單再送進reconcile()一次比對，不用分開跑。
 import React, { useState, useRef, useMemo } from 'react';
@@ -223,7 +223,7 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
     return transactions.filter(t => ids.has(t.id));
   }, [result, transactions]);
 
-  // Ivy反應「妳記了，但官方紀錄一直沒出現」這種清單只顯示她自己的記帳，完全看不到
+  // Ivy反應「你記了，但官方紀錄一直沒出現」這種清單只顯示她自己的記帳，完全看不到
   // 銀行對帳單本身抽出來的原始資料，沒辦法自己肉眼比對到底是真的漏記還是比對邏輯
   // 沒配對到——只給「結果」、不給「依據」，等於要她盲目相信程式判斷。這裡把
   // bankRowMatches原封不動列出來(依日期排序)，每一列银行資料都標status，matched的
@@ -241,7 +241,7 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
         <div className="p-3 bg-sky-100 rounded-2xl text-sky-500"><FileSearch className="w-6 h-6" /></div>
         餵食核對
       </h2>
-      <p className="text-sm text-slate-400 mb-6 ml-1">上傳一份銀行月結單，跟妳自己記的帳互相核對——不是精確比對商家名稱，是看日期+金額對不對得上。</p>
+      <p className="text-sm text-slate-400 mb-6 ml-1">上傳一份銀行月結單，跟你自己記的帳互相核對——不是精確比對商家名稱，是看日期+金額對不對得上。</p>
 
       <div className="mb-6">
         <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">選帳戶</label>
@@ -352,7 +352,7 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
               {missingManualRows.length > 0 && (
                 <div>
                   <h4 className="font-extrabold text-rose-500 mb-1 flex items-center gap-1"><AlertTriangle className="w-4 h-4" />官方有紀錄，你可能忘了記（{missingManualRows.length}）</h4>
-                  <p className="text-xs text-slate-400 mb-2">每一筆點「新增這筆」直接開新增交易表單，資料先幫妳帶好</p>
+                  <p className="text-xs text-slate-400 mb-2">每一筆點「新增這筆」直接開新增交易表單，資料先幫你帶好</p>
                   <div className="space-y-2">
                     {missingManualRows.map(row => (
                       <div key={row.id} className="p-3 bg-white border border-rose-100 rounded-2xl flex items-center justify-between gap-3">
@@ -369,7 +369,7 @@ const ReconcileView: React.FC<ReconcileViewProps> = ({
 
               {missingOfficialTxs.length > 0 && (
                 <div>
-                  <h4 className="font-extrabold text-orange-500 mb-1 flex items-center gap-1"><HelpCircle className="w-4 h-4" />妳記了，但官方紀錄一直沒出現（{missingOfficialTxs.length}）</h4>
+                  <h4 className="font-extrabold text-orange-500 mb-1 flex items-center gap-1"><HelpCircle className="w-4 h-4" />你記了，但官方紀錄一直沒出現（{missingOfficialTxs.length}）</h4>
                   <p className="text-xs text-slate-400 mb-2">可能是日期或金額打錯了，點進去可以確認/修改</p>
                   <div className="space-y-2">
                     {missingOfficialTxs.map(t => (

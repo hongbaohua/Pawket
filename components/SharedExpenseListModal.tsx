@@ -2,7 +2,7 @@
 // 每項可以直接「標記已結清」，不用跳回原始交易一筆一筆找。
 import React, { useState, useMemo } from 'react';
 import { X, Users, Check, ArrowDownCircle, ArrowUpCircle, Link2 } from 'lucide-react';
-import { Transaction, Account, SharedExpense, SharedExpenseParticipant } from '../types';
+import { Transaction, Account, SharedExpense, SharedExpenseParticipant, SpecialTag } from '../types';
 import { SETTLE_METHODS, buildSettlementTransaction } from '../services/logicService';
 
 type SettleAction = 'none' | 'record_new' | 'link_existing';
@@ -20,6 +20,8 @@ interface FlatItem {
   participant: SharedExpenseParticipant;
   merchant: string;
   date: string;
+  // 原始那筆交易的特殊性質，結清時要一起帶給 buildSettlementTransaction
+  sourceTagType?: SpecialTag['type'];
 }
 
 const SharedExpenseListModal: React.FC<SharedExpenseListModalProps> = ({ sharedExpenses, transactions, accounts, onClose, onSettle }) => {
@@ -34,7 +36,7 @@ const SharedExpenseListModal: React.FC<SharedExpenseListModalProps> = ({ sharedE
     sharedExpenses.forEach(se => {
       const tx = transactions.find(t => t.id === se.transactionId);
       se.participants.filter(p => !p.settled).forEach(p => {
-        result.push({ sharedExpenseId: se.id, participant: p, merchant: tx?.merchant || '（找不到原始交易）', date: tx?.date || '' });
+        result.push({ sharedExpenseId: se.id, participant: p, merchant: tx?.merchant || '（找不到原始交易）', date: tx?.date || '', sourceTagType: tx?.specialTag?.type });
       });
     });
     return result.sort((a, b) => b.date.localeCompare(a.date));
@@ -63,6 +65,7 @@ const SharedExpenseListModal: React.FC<SharedExpenseListModalProps> = ({ sharedE
         direction: p.direction,
         settleMethod,
         accountId: settlementAccountId,
+        sourceTagType: item.sourceTagType,
       });
     }
     onSettle(item.sharedExpenseId, {

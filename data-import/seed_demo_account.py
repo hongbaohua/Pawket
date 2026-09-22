@@ -35,7 +35,9 @@ CRED_PATH = os.path.join(os.path.dirname(ROOT), '示範帳號_作品集截圖用
 
 DEMO_EMAIL = 'pawket.demo@example.com'
 DEMO_NICKNAME = '示範喵'
-TODAY = date(2026, 9, 21)
+# 假資料一律生到「今天」為止：寫死日期的話，過幾天再跑就會變成「最後一筆是好幾天前」，
+# 截圖看起來像沒在用的帳號。用當天日期，隨時重跑都是新鮮的。
+TODAY = date.today()
 
 
 # ── 基礎工具 ──────────────────────────────────────────────
@@ -127,22 +129,34 @@ def wipe(user_id):
 # ── 2. 假資料內容 ──────────────────────────────────────────
 FIXED, VARIABLE, INVESTMENT, INCOME = 'Fixed', 'Variable', 'Investment', 'Income'
 
+# 銀行名稱刻意用虛構的「喵喵銀行 / 喵喵郵局」，不掛真實金融機構的名字：
+# 這個帳號的畫面會被放進公開作品集，而且示範用的銀行對帳單（給餵食核對跑比對用的
+# 那份 PDF）是我們自己產生的假文件——假文件配真實銀行名稱並不妥當，用虛構銀行最乾淨。
 ACCOUNTS = [
     # name, institution, type, posting_delay, 期初餘額
-    ('玉山銀行簽帳卡', '玉山銀行', 'bank_debit', (1, 3), 28500),
-    ('中華郵政存簿', '中華郵政', 'bank_debit', (1, 2), 46000),
+    ('喵喵銀行簽帳卡', '喵喵銀行', 'bank_debit', (1, 3), 28500),
+    ('喵喵郵局存簿', '喵喵郵局', 'bank_debit', (1, 2), 46000),
     ('現金錢包', None, 'cash', None, 3200),
     ('悠遊卡', None, 'stored_value', None, 420),
     ('LINE Pay Money', None, 'e_wallet', None, 860),
 ]
 
+# 店家清單刻意給得多一點：太少家的話，每一家都會「每個月都出現、金額又差不多」，
+# 首頁的「固定週期性支出」就會把日常吃飯的店也一起列進去（那張卡片是要凸顯訂閱制/
+# 房租這種真正的固定支出）。多幾家輪流出現比較接近真實生活，也讓那張卡片只留下
+# 真正該在上面的項目。
 BREAKFAST = [('晨光早餐店', ['起司蛋餅', '奶茶']), ('美而美', ['鮪魚三明治', '紅茶']),
-             ('全家超商', ['御飯糰', '拿鐵']), ('豆漿大王', ['鹹豆漿', '燒餅'])]
+             ('全家超商', ['御飯糰', '拿鐵']), ('豆漿大王', ['鹹豆漿', '燒餅']),
+             ('三重王早餐', ['蘿蔔糕', '豆漿']), ('拉亞漢堡', ['薯泥蛋堡', '冰咖啡']),
+             ('巷口飯糰', ['傳統飯糰']), ('7-ELEVEN', ['茶葉蛋', '無糖豆漿'])]
 LUNCH = [('阿姨自助餐', ['三菜一肉']), ('麵屋小林', ['豚骨拉麵']), ('八方雲集', ['鍋貼10顆', '酸辣湯']),
-         ('Subway', ['潛艇堡'])]
+         ('Subway', ['潛艇堡']), ('池上木片便當', ['排骨便當']), ('丼飯屋', ['親子丼']),
+         ('越南河粉店', ['牛肉河粉']), ('吉野家', ['牛丼']), ('公司樓下義大利麵', ['青醬雞肉麵'])]
 DINNER = [('小南門火鍋', ['番茄鍋']), ('路邊滷味攤', ['滷味一份']), ('café 日安', ['義大利麵']),
-          ('7-ELEVEN', ['微波便當', '關東煮'])]
-DRINKS = [('可不可熟成紅茶', ['熟成紅茶大']), ('五十嵐', ['四季春微糖少冰']), ('星巴克', ['那堤中杯'])]
+          ('7-ELEVEN', ['微波便當', '關東煮']), ('三媽臭臭鍋', ['泡菜鍋']),
+          ('鹹水雞攤', ['鹹水雞一份']), ('大苑子隔壁熱炒', ['炒飯']), ('壽司郎', ['迴轉壽司 6 盤'])]
+DRINKS = [('可不可熟成紅茶', ['熟成紅茶大']), ('五十嵐', ['四季春微糖少冰']), ('星巴克', ['那堤中杯']),
+          ('迷客夏', ['珍珠紅茶拿鐵']), ('清心福全', ['多多綠'])]
 DAILY = [('全聯福利中心', ['衛生紙', '洗髮精']), ('寶雅', ['沐浴乳', '棉花棒']),
          ('家樂福', ['洗衣精', '垃圾袋'])]
 PET = [('喵星人寵物店', ['豆腐砂 2 包']), ('蝦皮購物', ['主食罐 24 罐']), ('好朋友動物醫院', ['結紮後回診'])]
@@ -208,44 +222,44 @@ def build_dataset(user_id):
 
         # ── 收入 ──
         add(date(y, m, 5), '沐光設計工作室', 38000, 'income', INCOME, '薪資收入', '月薪',
-            account='玉山銀行簽帳卡', note=f'{m}月薪資', hour=10)
+            account='喵喵銀行簽帳卡', note=f'{m}月薪資', hour=10)
         if m in (5, 7, 9):
             add(date(y, m, 18), '接案 - 品牌識別設計', 6000, 'income', INCOME, '兼職收入', '接案',
-                account='中華郵政存簿', hour=17)
+                account='喵喵郵局存簿', hour=17)
         if m == 7:
             add(date(y, m, 10), '沐光設計工作室', 12000, 'income', INCOME, '獎金紅利', '年中獎金',
-                account='玉山銀行簽帳卡', hour=10)
+                account='喵喵銀行簽帳卡', hour=10)
 
         # ── 固定支出 ──
         add(date(y, m, 1), '房東 - 民生東路套房', 11500, 'expense', FIXED, '居住房租', '月租',
-            account='玉山銀行簽帳卡', hour=9)
+            account='喵喵銀行簽帳卡', hour=9)
         add(date(y, m, 8), '中華電信', 599, 'expense', FIXED, '電信網路', '手機月租',
-            account='玉山銀行簽帳卡', hour=9)
+            account='喵喵銀行簽帳卡', hour=9)
         add(date(y, m, 12), 'Netflix', 270, 'expense', FIXED, '訂閱服務', '影音',
-            account='玉山銀行簽帳卡', channel='VISA', hour=9)
+            account='喵喵銀行簽帳卡', channel='VISA', hour=9)
         add(date(y, m, 15), 'Spotify', 149, 'expense', FIXED, '訂閱服務', '音樂',
-            account='玉山銀行簽帳卡', channel='VISA', hour=9)
+            account='喵喵銀行簽帳卡', channel='VISA', hour=9)
         if m in (4, 6, 8):
             add(date(y, m, 20), '台電 / 台水', rng.choice([874, 1103, 962]), 'expense', FIXED,
-                '水電瓦斯', '雙月帳單', account='中華郵政存簿', hour=11)
+                '水電瓦斯', '雙月帳單', account='喵喵郵局存簿', hour=11)
         if m == 5:
             add(date(y, m, 20), '富邦產物保險', 8400, 'expense', FIXED, '保險費用', '年繳機車險＋意外險',
-                account='中華郵政存簿', note='一年一次，已登記在長期預留支出', hour=11)
+                account='喵喵郵局存簿', note='一年一次，已登記在長期預留支出', hour=11)
 
         # ── 投資儲蓄 ──
         add(date(y, m, 10), '定期定額 - 全球股票 ETF', 3000, 'expense', INVESTMENT, '定期定額', 'ETF',
-            account='中華郵政存簿', hour=9)
+            account='喵喵郵局存簿', hour=9)
         add(date(y, m, 6), '存進緊急預備金', 5000, 'transfer', INVESTMENT, '緊急預備金', '每月轉存',
-            from_acc='玉山銀行簽帳卡', to_acc='中華郵政存簿', hour=10)
+            from_acc='喵喵銀行簽帳卡', to_acc='喵喵郵局存簿', hour=10)
 
         # ── 儲值 / 轉帳 ──
         add(date(y, m, 3), '悠遊卡加值', 500, 'transfer', VARIABLE, '轉帳', '加值',
             from_acc='現金錢包', to_acc='悠遊卡', hour=8)
         add(date(y, m, 14), 'LINE Pay Money 儲值', 1000, 'transfer', VARIABLE, '轉帳', '儲值',
-            from_acc='玉山銀行簽帳卡', to_acc='LINE Pay Money', hour=20)
+            from_acc='喵喵銀行簽帳卡', to_acc='LINE Pay Money', hour=20)
         topups[(y, m)] = txs[-1]
         add(date(y, m, 2), '領現金', 3000, 'transfer', VARIABLE, '轉帳', '提款',
-            from_acc='玉山銀行簽帳卡', to_acc='現金錢包', hour=8)
+            from_acc='喵喵銀行簽帳卡', to_acc='現金錢包', hour=8)
         withdrawals[(y, m)] = txs[-1]
 
         # ── 變動支出：日常 ──
@@ -266,14 +280,14 @@ def build_dataset(user_id):
                 shop, its = rng.choice(LUNCH)
                 amt = rng.choice([90, 100, 110, 120, 135, 150])
                 add(d, shop, amt, 'expense', VARIABLE, '餐飲食品', '午餐',
-                    account=rng.choice(['現金錢包', 'LINE Pay Money', '玉山銀行簽帳卡']),
+                    account=rng.choice(['現金錢包', 'LINE Pay Money', '喵喵銀行簽帳卡']),
                     items=[{'name': n} for n in its], hour=12)
 
             if rng.random() < 0.55:
                 shop, its = rng.choice(DINNER)
                 amt = rng.choice([120, 140, 160, 180, 210])
                 add(d, shop, amt, 'expense', VARIABLE, '餐飲食品', '晚餐',
-                    account=rng.choice(['現金錢包', '玉山銀行簽帳卡']),
+                    account=rng.choice(['現金錢包', '喵喵銀行簽帳卡']),
                     items=[{'name': n} for n in its], hour=19)
 
             if rng.random() < 0.45:
@@ -290,19 +304,19 @@ def build_dataset(user_id):
             if wd == 5 and rng.random() < 0.8:
                 shop, its = rng.choice(DAILY)
                 add(d, shop, rng.choice([236, 318, 425, 512, 640]), 'expense', VARIABLE,
-                    '生活日用', '日用品', account='玉山銀行簽帳卡',
+                    '生活日用', '日用品', account='喵喵銀行簽帳卡',
                     items=[{'name': n} for n in its], hour=16)
 
         # ── 變動支出：每月幾筆比較大的 ──
         add(date(y, m, 9), rng.choice([p[0] for p in PET]), rng.choice([680, 790, 880]),
-            'expense', VARIABLE, '寵物花費', '貓咪用品', account='玉山銀行簽帳卡',
+            'expense', VARIABLE, '寵物花費', '貓咪用品', account='喵喵銀行簽帳卡',
             items=[{'name': '豆腐砂 2 包', 'unitPrice': 245, 'quantity': 2},
                    {'name': '主食罐', 'unitPrice': 39, 'quantity': 6}], hour=20)
         add(date(y, m, 22), '威秀影城', 330, 'expense', VARIABLE, '休閒娛樂', '電影',
-            account='玉山銀行簽帳卡', channel='VISA', hour=19)
+            account='喵喵銀行簽帳卡', channel='VISA', hour=19)
         if m % 2 == 0:
             add(date(y, m, 26), 'UNIQLO', rng.choice([790, 1290, 990]), 'expense', VARIABLE,
-                '服飾美妝', '衣物', account='玉山銀行簽帳卡', hour=15)
+                '服飾美妝', '衣物', account='喵喵銀行簽帳卡', hour=15)
         if m in (4, 7, 9):
             add(date(y, m, 17), '好朋友動物醫院', rng.choice([450, 680]), 'expense', VARIABLE,
                 '醫療保健', '看診', account='現金錢包', hour=11)
@@ -324,7 +338,7 @@ def build_dataset(user_id):
             {'name': '中杯可樂', 'unitPrice': 35}]},
             {'name': '勁辣雞腿堡', 'unitPrice': 65}], hour=12)
     add(date(2026, 9, 19), '兩廳院售票', 1480, 'expense', VARIABLE, '休閒娛樂', '展演',
-        account='玉山銀行簽帳卡', channel='VISA',
+        account='喵喵銀行簽帳卡', channel='VISA',
         items=[{'name': '爵士音樂會票券', 'subItems': [
             {'name': '票價', 'unitPrice': 1400},
             {'name': '系統手續費', 'unitPrice': 50},
@@ -332,12 +346,12 @@ def build_dataset(user_id):
 
     # (3) 特殊性質標記：代購 / 工作代墊 / 借貸
     add(date(2026, 9, 6), '日本零食代購', 1280, 'expense', VARIABLE, '其他雜項', '代購',
-        account='玉山銀行簽帳卡',
+        account='喵喵銀行簽帳卡',
         special={'type': 'proxy_purchase', 'counterparty': '小美', 'note': '0906 批次'},
         items=[{'name': '抹茶生巧克力', 'unitPrice': 356, 'quantity': 2, 'note': '日幣 1,180 × 匯率 0.302'},
                {'name': '柚子軟糖', 'unitPrice': 284, 'quantity': 2}], hour=14)
     add(date(2026, 9, 11), '文具倉庫', 2450, 'expense', VARIABLE, '其他雜項', '工作代墊',
-        account='玉山銀行簽帳卡',
+        account='喵喵銀行簽帳卡',
         special={'type': 'work_advance', 'counterparty': '工作室', 'note': '已開統編，月底報帳'},
         note='部門文具採購，公司之後匯款', hour=16)
     add(date(2026, 9, 13), '借給阿哲', 500, 'expense', INVESTMENT, '借貸往來', '借出',
@@ -351,24 +365,24 @@ def build_dataset(user_id):
     # parent_id 外鍵指著它，所以這裡照樣留一列 deleted_at 有值的原始交易，
     # 順便讓垃圾桶畫面有東西可以看。
     add(date(2026, 9, 14), '全聯福利中心', 1246, 'expense', VARIABLE, '生活日用', '',
-        account='玉山銀行簽帳卡', tx_id=split_parent, hour=17,
+        account='喵喵銀行簽帳卡', tx_id=split_parent, hour=17,
         note='這筆被分裝成三份，原始整筆保留在垃圾桶')
     txs[-1]['deleted_at'] = '2026-09-14T17:40:00+08:00'
     add(date(2026, 9, 14), '全聯福利中心', 546, 'expense', VARIABLE, '生活日用', '主項目',
-        account='玉山銀行簽帳卡', parent=split_parent, is_split=True,
+        account='喵喵銀行簽帳卡', parent=split_parent, is_split=True,
         note='週末採買一次結帳，事後分裝成三類', hour=17)
     add(date(2026, 9, 14), '週末食材', 420, 'expense', VARIABLE, '餐飲食品', '分裝項目',
-        account='玉山銀行簽帳卡', parent=split_parent, is_split=True, hour=17)
+        account='喵喵銀行簽帳卡', parent=split_parent, is_split=True, hour=17)
     add(date(2026, 9, 14), '貓砂補貨', 280, 'expense', VARIABLE, '寵物花費', '分裝項目',
-        account='玉山銀行簽帳卡', parent=split_parent, is_split=True, hour=17)
+        account='喵喵銀行簽帳卡', parent=split_parent, is_split=True, hour=17)
 
     # (5) 共同支出／分帳
     dinner_id = add(date(2026, 9, 8), '燒肉眾', 1860, 'expense', VARIABLE, '社交人情', '聚餐',
-                    account='玉山銀行簽帳卡', channel='VISA',
+                    account='喵喵銀行簽帳卡', channel='VISA',
                     special={'type': 'proxy_purchase', 'counterparty': '小美、阿哲'},
                     note='三人平分，我先付', hour=20)
     settle_id = add(date(2026, 9, 9), '小美還款', 620, 'income', INCOME, '退款', '分帳結清',
-                    account='玉山銀行簽帳卡', note='燒肉眾分帳結清', hour=10)
+                    account='喵喵銀行簽帳卡', note='燒肉眾分帳結清', hour=10)
     movie_id = add(date(2026, 8, 22), '威秀影城 - 小美代買', 640, 'expense', VARIABLE, '休閒娛樂', '電影',
                    account='現金錢包',
                    special={'type': 'proxy_purchase', 'counterparty': '小美'},
@@ -376,10 +390,10 @@ def build_dataset(user_id):
 
     # (6) 3C 大額支出（用來展示「日均燒錢速度排除極端值」的情境）
     add(date(2026, 6, 14), '燦坤 3C', 28900, 'expense', VARIABLE, '3C電子', '筆電',
-        account='玉山銀行簽帳卡', channel='VISA',
+        account='喵喵銀行簽帳卡', channel='VISA',
         note='舊筆電陣亡，換新工作機', hour=15)
     add(date(2026, 7, 3), 'Hahow 線上課程', 1200, 'expense', VARIABLE, '學習進修', '線上課程',
-        account='玉山銀行簽帳卡', hour=21)
+        account='喵喵銀行簽帳卡', hour=21)
     add(date(2026, 8, 16), '婚禮紅包 - 表姊', 3600, 'expense', VARIABLE, '社交人情', '禮金',
         account='現金錢包', hour=12)
 
@@ -404,15 +418,15 @@ def build_dataset(user_id):
     for (y, m), row in topups.items():
         row['net_amount'] = row['gross_amount'] = round_up(monthly_outflow('LINE Pay Money', y, m) + 400, 100)
 
-    # ── 對帳狀態：9 月玉山那批已經跑過餵食核對 ──
-    sept_esun = [t for t in txs if t['date'].startswith('2026-09')
-                 and t['account_id'] == acc_id['玉山銀行簽帳卡'] and t['type'] == 'expense'
+    # ── 對帳狀態：9 月喵喵銀行那批已經跑過餵食核對 ──
+    sept_bank = [t for t in txs if t['date'].startswith('2026-09')
+                 and t['account_id'] == acc_id['喵喵銀行簽帳卡'] and t['type'] == 'expense'
                  and not t.get('deleted_at')]
-    for t in sept_esun:
+    for t in sept_bank:
         t['reconcile_status'] = 'matched'
-    if len(sept_esun) >= 3:
-        sept_esun[-1]['reconcile_status'] = 'pending_settlement'
-        sept_esun[-2]['reconcile_status'] = 'missing_official'
+    if len(sept_bank) >= 3:
+        sept_bank[-1]['reconcile_status'] = 'pending_settlement'
+        sept_bank[-2]['reconcile_status'] = 'missing_official'
 
     shared = [
         {
@@ -514,6 +528,11 @@ def main():
             '餐飲食品': 6500, '生活日用': 2500, '交通通勤': 1200, '休閒娛樂': 1500,
             '寵物花費': 1000, '網路購物': 1200, '服飾美妝': 1000,
         },
+        # 理財週期結算日與「超支扣零食」：2026-09-21 起這兩個設定會存進 user_metadata
+        # （以前只存在記憶體，重新整理就被打回預設值），示範帳號也一起帶上，
+        # 截圖時看得到「已經設定好的狀態」而不是全新預設值。
+        'cycleStartDay': 1,
+        'penaltyConfig': {'enabled': True, 'ratio': 0.5, 'targetCategory': '休閒娛樂'},
         'longTermReserves': [
             {'id': new_id(), 'name': '機車強制險 + 意外險', 'l2': '保險費用',
              'amount': 8400, 'frequencyMonths': 12},

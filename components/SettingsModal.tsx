@@ -298,9 +298,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             onToggle={() => toggleSection('budget')}
           >
             <p className="text-xs text-slate-400 leading-relaxed">
-              「近3個月」是最近的花費習慣，「全部歷史」是長期基準，兩個都只是參考——系統不會自己套用，月預算要妳自己看過決定再填。
-              <span className="font-bold text-slate-500">這兩個數字只根據 Pawket 裡實際有記錄的交易算出來</span>，如果妳知道有些花費沒記到（例如現金支付），
-              自己往上調整成更貼近真實情況的數字即可。設定過月預算的分類，「需立即關注的項目」才會用這個預算幫妳看有沒有超支；沒設定的分類不會出現配速提醒。
+              「近3個月」是最近的花費習慣，「全部歷史」是長期基準，兩個都只是參考——系統不會自己套用，月預算要你自己看過決定再填。
+              <span className="font-bold text-slate-500">這兩個數字只根據 Pawket 裡實際有記錄的交易算出來</span>，如果你知道有些花費沒記到（例如現金支付），
+              自己往上調整成更貼近真實情況的數字即可。設定過月預算的分類，「需立即關注的項目」才會用這個預算幫你看有沒有超支；沒設定的分類不會出現配速提醒。
             </p>
             {suggestions.length === 0 ? (
               <p className="text-xs text-slate-300 text-center py-2">目前累積的紀錄還不夠列出建議值（至少要3個月歷史）</p>

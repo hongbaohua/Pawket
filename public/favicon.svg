@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Pawket">
+  <!-- 圓角底：沿用 App 主色（琥珀→橘）漸層，跟登入畫面/側欄的貓咪圖示同一組顏色 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FCD34D" />
+      <stop offset="100%" stop-color="#FB923C" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)" />
+  <!-- 貓臉：耳朵 + 臉 + 眼睛 + 鼻子 -->
+  <path d="M18 20 L18 32 L27 24 Z" fill="#FFFFFF" />
+  <path d="M46 20 L46 32 L37 24 Z" fill="#FFFFFF" />
+  <circle cx="32" cy="36" r="15" fill="#FFFFFF" />
+  <circle cx="26" cy="34" r="2.6" fill="#7C4A12" />
+  <circle cx="38" cy="34" r="2.6" fill="#7C4A12" />
+  <path d="M32 40 l-3 -2.6 h6 Z" fill="#FB923C" />
+  <path d="M32 40.5 v2.5" stroke="#FB923C" stroke-width="1.8" stroke-linecap="round" />
+  <path d="M29.5 44.5 a3 3 0 0 0 5 0" stroke="#FB923C" stroke-width="1.8" fill="none" stroke-linecap="round" />
+</svg>

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
-import { AlertCircle, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Gavel, Scale, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper, Users, ArrowDownCircle, ArrowUpCircle, Sparkles, History } from 'lucide-react';
+import { AlertCircle, Download, TrendingDown, Cat, Smile, Frown, Meh, Calendar, Settings, X, ChevronLeft, ChevronRight, ChevronDown, Zap, BarChart3, AlertTriangle, Info, PieChart as PieIcon, Search, Repeat, Wallet, Target, Cookie, AlertOctagon, Hourglass, Loader2, Sprout, Leaf, Flame, Trophy, CheckCircle2, PartyPopper, Users, ArrowDownCircle, ArrowUpCircle, Sparkles, History } from 'lucide-react';
 import { Alert, Transaction, Account, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, LongTermReserve, Budget, PenaltyConfig, STANDARD_CATEGORIES, DateRange, SharedExpense, AiReport, AiReportContent } from '../types';
 import { addMonths, addDays, differenceInDays, format, startOfMonth, endOfMonth, startOfDay, endOfDay, parseISO } from 'date-fns';
 import { analyzeFinancialHealth, analyzeL3Anomalies, analyzeL2Frequency, getCategoryBreakdown, getCategoryPieData, detectRecurringExpenses, calculateWishlistMetrics, WishlistItemMetrics, formatWishlistPlanMessage, calculateProjectedPenalty, calculateRunway, getDateRange } from '../services/logicService';
@@ -13,7 +13,7 @@ import AccountBalances, { AccountBalancesCollapsedPill } from './AccountBalances
 
 interface DashboardProps {
   alerts: Alert[];
-  budgets: Budget[];
+  categoryBudgets: Record<string, number>;
   transactions: Transaction[];
   allTransactions: Transaction[];
   accounts: Account[];
@@ -26,12 +26,11 @@ interface DashboardProps {
   timeScope: TimeScope;
   setTimeScope: (scope: TimeScope) => void;
   cycleStartDay: number;
-  setCycleStartDay: (day: number) => void;
   dateRangeLabel: string;
   currentDate: Date;
   setCurrentDate: (date: Date) => void;
   penaltyConfig: PenaltyConfig;
-  setPenaltyConfig: (config: PenaltyConfig) => void;
+  onSaveDashboardSettings: (settings: { cycleStartDay: number; penaltyConfig: PenaltyConfig }) => void;
   customRange: {start: Date, end: Date};
   setCustomRange: (range: {start: Date, end: Date}) => void;
   aiReports: AiReport[];
@@ -113,15 +112,15 @@ const WishlistCard = ({
 };
 
 const Dashboard: React.FC<DashboardProps> = ({
-    alerts, budgets, transactions, allTransactions, accounts, wishlistItems, longTermReserves, sharedExpenses, onOpenWishlist, onOpenSharedExpenses, onPrint, timeScope, setTimeScope, cycleStartDay, setCycleStartDay, dateRangeLabel, currentDate, setCurrentDate, penaltyConfig, setPenaltyConfig, customRange, setCustomRange, aiReports, aiReportsLoading, onSaveAiReport
+    alerts, categoryBudgets, transactions, allTransactions, accounts, wishlistItems, longTermReserves, sharedExpenses, onOpenWishlist, onOpenSharedExpenses, onPrint, timeScope, setTimeScope, cycleStartDay, dateRangeLabel, currentDate, setCurrentDate, penaltyConfig, onSaveDashboardSettings, customRange, setCustomRange, aiReports, aiReportsLoading, onSaveAiReport
 }) => {
-  // 代購/工作代墊/借貸(specialTag)不是Ivy自己的真實收入/支出，本期消費分類比率(圓餅圖)
-  // 之前已經用isPersonalConsumption()排除了支出側，但這裡的淨現金流/支出結構/收入來源分析
-  // 是Dashboard自己另外算的，沒有套用到同一個排除規則——「借廖妤甄$500」會被當成真的
-  // 投資儲蓄支出、「廖妤甄還$500」會被當成真的收入，兩邊金額一樣時剛好抵消看不出來，
-  // 金額不一樣（例如部分還款）時淨現金流就會算錯。統一用specialTag直接過濾掉。
-  const expenses = transactions.filter(t => t.type === 'expense' && !t.specialTag);
-  const incomes = transactions.filter(t => t.type === 'income' && !t.specialTag);
+  // 本期現金流刻意「錢有進出就算」，包含代購/工作代墊/借貸與分帳結清——2026-09-21
+  // Ivy 確認的規則：借出跟收回可能相隔當天、好幾天甚至跨月，現金流要看得出錢包真實的
+  // 凹陷與回填，不能兩邊都不算（舊版只排除支出側、收入側照算，反而讓淨現金流虛胖）。
+  // 這些錢不算「消費」的部分，統一由 services/logicService 的 isOwnMoney 在各個消費
+  // 分析函式裡排除，跟這張卡片是兩種不同的關注點。
+  const expenses = transactions.filter(t => t.type === 'expense');
+  const incomes = transactions.filter(t => t.type === 'income');
   const expenseData = [{ name: CATEGORY_LABELS[L1Category.VARIABLE], value: expenses.filter(t => t.category.l1 === L1Category.VARIABLE).reduce((a, b) => a + b.amount, 0) }, { name: CATEGORY_LABELS[L1Category.FIXED], value: expenses.filter(t => t.category.l1 === L1Category.FIXED).reduce((a, b) => a + b.amount, 0) }, { name: CATEGORY_LABELS[L1Category.INVESTMENT], value: expenses.filter(t => t.category.l1 === L1Category.INVESTMENT).reduce((a, b) => a + b.amount, 0) }].filter(d => d.value > 0);
   const totalExpense = expenseData.reduce((acc, curr) => acc + curr.value, 0);
   const totalIncome = incomes.reduce((acc, curr) => acc + curr.amount, 0);
@@ -130,7 +129,6 @@ const Dashboard: React.FC<DashboardProps> = ({
   const pieData = useMemo(() => getCategoryPieData(transactions), [transactions]);
   const recurringExpenses = useMemo(() => detectRecurringExpenses(allTransactions), [allTransactions]);
   const anomalies = useMemo(() => analyzeL3Anomalies(transactions, allTransactions), [transactions, allTransactions]);
-  const freqAlerts = useMemo(() => analyzeL2Frequency(transactions, allTransactions, currentDate), [transactions, allTransactions, currentDate]);
   const incomeBreakdown = useMemo(() => getCategoryBreakdown(transactions, 'income'), [transactions]);
   const expenseBreakdown = useMemo(() => getCategoryBreakdown(transactions, 'expense', L1Category.VARIABLE), [transactions]); 
   const topWishlistItem = useMemo(() => wishlistItems.find(i => !i.isPurchased) || null, [wishlistItems]);
@@ -138,7 +136,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     () => calculateWishlistMetrics(wishlistItems, accounts, allTransactions, longTermReserves),
     [wishlistItems, accounts, allTransactions, longTermReserves]
   );
-  const penaltyData = useMemo(() => timeScope === 'all' ? { isOverspent: false, overage: 0, penaltyAmount: 0 } : calculateProjectedPenalty(transactions, budgets, penaltyConfig), [transactions, budgets, penaltyConfig, timeScope]);
+  const penaltyData = useMemo(() => timeScope === 'all' ? { isOverspent: false, overage: 0, penaltyAmount: 0 } : calculateProjectedPenalty(transactions, categoryBudgets, penaltyConfig), [transactions, categoryBudgets, penaltyConfig, timeScope]);
   const runwayData = useMemo(() => calculateRunway(allTransactions, accounts, longTermReserves), [allTransactions, accounts, longTermReserves]);
   // 共同支出／代墊分帳(階段7)：只算還沒結清的，加總「別人欠我」跟「我欠別人」各自的金額。
   const sharedExpenseTotals = useMemo(() => {
@@ -304,7 +302,14 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   const [isBalancesExpanded, setIsBalancesExpanded] = useState(false);
 
-  const saveSettings = () => { if (tempCycleDay >= 1 && tempCycleDay <= 31) { setCycleStartDay(tempCycleDay); setPenaltyConfig(tempPenaltyConfig); setShowSettings(false); } };
+  // 設定改成存進 user_metadata（見 App.tsx 的 handleUpdateCycleStartDay / handleUpdatePenaltyConfig），
+  // 不再只是元件內的 state——以前按了「儲存設定」，重新整理就會被打回預設值。
+  const saveSettings = () => {
+    if (tempCycleDay >= 1 && tempCycleDay <= 31) {
+      onSaveDashboardSettings({ cycleStartDay: tempCycleDay, penaltyConfig: tempPenaltyConfig });
+      setShowSettings(false);
+    }
+  };
   const navigateMonth = (direction: number) => setCurrentDate(addMonths(currentDate, direction));
   const handleMonthSelect = (monthIndex: number) => { setCurrentDate(new Date(pickerYear, monthIndex, 1)); setShowDatePicker(false); };
 
@@ -314,7 +319,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     let bgColor = "bg-emerald-50", message = "Meow~ 財務狀況很健康喔！", subMessage = "目前一切都在掌控中，繼續保持！", face = <Smile className="w-6 h-6 text-emerald-500" />;
     if (timeScope === 'all') { bgColor = "bg-indigo-50"; message = "喵～這是我們的累積成果！"; subMessage = `目前共記錄了 ${allTransactions.length} 筆交易。`; face = <Cat className="w-6 h-6 text-indigo-500" />; }
     else if (status === 'caution') { bgColor = "bg-amber-50"; message = "注意喔！花費有點快了..."; subMessage = "建議減少不必要的零食開銷。"; face = <Meh className="w-6 h-6 text-amber-500" />; }
-    else if (status === 'alert') { bgColor = "bg-rose-50"; if (isPenaltyActive) { message = "罰則啟動！下期預算縮減"; subMessage = `強制扣除 $${penaltyData.penaltyAmount.toFixed(0)}。`; face = <AlertOctagon className="w-6 h-6 text-rose-500" />; } else if (isDtiHigh) { message = "壓力山大！固定債務過高！"; subMessage = "DTI 償債比率危險。"; face = <Frown className="w-6 h-6 text-rose-500" />; } else { message = "喵嗚！超支了！快停下來！"; subMessage = "請立即檢視紅色項目！"; face = <Frown className="w-6 h-6 text-rose-500" />; } }
+    else if (status === 'alert') { bgColor = "bg-rose-50"; if (isPenaltyActive) { message = "超支囉！下期零食要被扣了"; subMessage = `這期超出的部分，下期預算會少 $${penaltyData.penaltyAmount.toFixed(0)}。`; face = <AlertOctagon className="w-6 h-6 text-rose-500" />; } else if (isDtiHigh) { message = "壓力山大！固定支出太重了！"; subMessage = "固定支出佔收入的比重已經超過警戒線。"; face = <Frown className="w-6 h-6 text-rose-500" />; } else { message = "喵嗚！超支了！快停下來！"; subMessage = "請立即檢視紅色項目！"; face = <Frown className="w-6 h-6 text-rose-500" />; } }
     return (
       <div className={`col-span-1 md:col-span-2 rounded-[28px] px-6 py-4 flex items-center justify-between shadow-sm border border-white relative overflow-hidden transition-colors duration-500 ${bgColor}`}>
          <div className="z-10 flex flex-col justify-center min-w-0">
@@ -370,16 +375,17 @@ const Dashboard: React.FC<DashboardProps> = ({
                 <div className="h-px bg-slate-100"></div>
                 <div>
                    <div className="flex justify-between items-center mb-2">
-                       <p className="text-xs text-slate-400 font-bold uppercase flex items-center gap-1"><Gavel className="w-3 h-3" /> 預算罰則系統 (Beta)</p>
+                       <p className="text-xs text-slate-400 font-bold uppercase flex items-center gap-1"><Cookie className="w-3 h-3" /> 超支扣零食</p>
                        <label className="relative inline-flex items-center cursor-pointer">
                           <input type="checkbox" checked={tempPenaltyConfig.enabled} onChange={e => setTempPenaltyConfig({...tempPenaltyConfig, enabled: e.target.checked})} className="sr-only peer" />
                           <div className="w-9 h-5 bg-slate-200 rounded-full peer peer-checked:bg-amber-400 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
                        </label>
                    </div>
+                   <p className="text-[10px] text-slate-300 mb-2 leading-relaxed">這期的變動支出如果超過預算，下一期就從你指定的分類預算裡先扣掉一部分，當作「這個月多吃了，下個月少吃一點零食」的自我約束。基準是你在「系統設定 → 分類預算」設過的變動支出預算總和，沒設定過的話不會啟動。</p>
                    {tempPenaltyConfig.enabled && (
                        <div className="bg-slate-50 p-3 rounded-2xl space-y-3 animate-in fade-in">
                            <div>
-                               <label className="text-[10px] font-bold text-slate-500 mb-1 block">懲罰目標分類</label>
+                               <label className="text-[10px] font-bold text-slate-500 mb-1 block">下期要扣哪一類的預算</label>
                                <select 
                                   value={tempPenaltyConfig.targetCategory}
                                   onChange={e => setTempPenaltyConfig({...tempPenaltyConfig, targetCategory: e.target.value})}
@@ -389,7 +395,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                                </select>
                            </div>
                            <div>
-                               <label className="text-[10px] font-bold text-slate-500 mb-1 block">懲罰比例</label>
+                               <label className="text-[10px] font-bold text-slate-500 mb-1 block">扣掉超支金額的幾成</label>
                                <div className="flex items-center gap-2">
                                   <input type="range" min="0.1" max="1.0" step="0.1" value={tempPenaltyConfig.ratio} onChange={e => setTempPenaltyConfig({...tempPenaltyConfig, ratio: parseFloat(e.target.value)})} className="flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-amber-400" />
                                   <span className="text-xs font-bold text-amber-600">{Math.round(tempPenaltyConfig.ratio * 100)}%</span>
@@ -418,7 +424,7 @@ const Dashboard: React.FC<DashboardProps> = ({
                       </div>
 
                       <div className="overflow-y-auto pr-1 flex flex-col gap-6">
-                        <p className="text-slate-400 font-medium">選一個想分析的期間，Meowney 會讀這期的真實資料，寫一份解讀+建議，即時幫妳看有沒有異常。</p>
+                        <p className="text-slate-400 font-medium">選一個想分析的期間，Meowney 會讀這期的真實資料，寫一份解讀+建議，即時幫你看有沒有異常。</p>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             {/* Option 1: All Time */}
@@ -697,20 +703,21 @@ const Dashboard: React.FC<DashboardProps> = ({
         )}
       </div>
 
-      {/* SECTION 1: Mascot（+預算罰則生效時才並排顯示一張卡，DTI已經改名跟支出結構合併搬到下面） */}
+      {/* SECTION 1: Mascot（+「超支扣零食」生效時才並排顯示一張卡，固定支出負擔比已經
+          改名跟支出結構合併搬到下面） */}
       <div className={`grid grid-cols-1 gap-6 bg-transparent ${isPenaltyActive ? 'md:grid-cols-3' : ''}`}>
          <MeowneyMascot status={meowneyStatus} />
          {isPenaltyActive && (
             <div className="rounded-[40px] p-6 border bg-rose-50 border-rose-100 flex flex-col justify-between relative overflow-hidden group">
-                 <div className="absolute top-0 right-0 p-4 opacity-5"><Gavel className="w-32 h-32 text-rose-500" /></div>
+                 <div className="absolute top-0 right-0 p-4 opacity-5"><Cookie className="w-32 h-32 text-rose-500" /></div>
                  <div className="flex items-start justify-between z-10">
                      <div>
-                        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2"><Scale className="w-4 h-4 text-rose-500" />預算罰則生效</h3>
+                        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2"><Cookie className="w-4 h-4 text-rose-500" />下期零食被扣了</h3>
                         <div className="mt-2 flex items-baseline gap-2"><span className="text-4xl font-extrabold text-rose-600">-${penaltyData.penaltyAmount.toFixed(0)}</span></div>
                      </div>
                      <div className="p-2 bg-rose-200 text-rose-600 rounded-full animate-bounce"><AlertOctagon className="w-6 h-6" /></div>
                  </div>
-                 <div className="mt-4 pt-4 border-t border-rose-200 z-10"><p className="text-xs font-bold leading-relaxed text-rose-500">警告：下期預算將強制縮減。</p></div>
+                 <div className="mt-4 pt-4 border-t border-rose-200 z-10"><p className="text-xs font-bold leading-relaxed text-rose-500">下一期的「{penaltyConfig.targetCategory}」預算會自動少掉這筆錢。</p></div>
             </div>
          )}
       </div>
@@ -720,7 +727,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       <div className="bg-white p-6 rounded-[30px] shadow-xl shadow-orange-50/50 border border-orange-50 relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-400 to-emerald-400"></div>
           <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">本期現金流</h4>
-          <p className="text-[10px] text-slate-300 mb-4">本期收入減去支出，不含代購、代墊、借貸這類不是你自己的錢。</p>
+          <p className="text-[10px] text-slate-300 mb-4">這期錢包真的進出了多少：代購、代墊、借貸、分帳結清這些「幫別人先付、之後收回來」的錢也算在內（錢確實有進出戶頭）。下面的消費分析則一律不算這些。</p>
           <div className="flex flex-col sm:flex-row sm:items-end gap-6">
               <div>
                   <p className="text-xs font-bold text-slate-400 mb-1">淨現金流</p>
@@ -772,7 +779,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           {topWishlistItem ? <WishlistCard item={topWishlistItem} metrics={wishlistMetrics.items[topWishlistItem.id]} queueCount={wishlistItems.filter(i => !i.isPurchased).length - 1} onOpenWishlist={onOpenWishlist} /> : <div className="bg-white p-4 rounded-[24px] border border-orange-50 flex items-center justify-center text-slate-300 text-sm cursor-pointer hover:bg-orange-50/30 transition" onClick={onOpenWishlist}>還沒有想買的東西，點這裡新增喵喵心願罐</div>}
           <div className="bg-white p-6 rounded-[40px] shadow-xl shadow-orange-50/50 border border-orange-50 flex flex-col">
               <h4 className="font-bold text-slate-700 flex items-center gap-2"><PieIcon className="w-5 h-5 text-amber-400" />本期消費分類比率</h4>
-              <p className="text-[10px] text-slate-300 mt-1 mb-4">本期支出依分類加總；細項若單獨超過總支出15%會拆成獨立一塊（例如飲料），每塊列出花最多錢的商家；超過9塊時其餘合併成「其他」。</p>
+              <p className="text-[10px] text-slate-300 mt-1 mb-4">本期支出依分類加總；細項若單獨超過總支出15%會拆成獨立一塊（例如飲料），每塊列出花最多錢的商家；超過9塊時其餘合併成「其他」。代購／代墊／借貸／分帳結清不算在內。</p>
               {pieData.length === 0 ? (
                 <p className="text-sm text-slate-300 font-medium py-6 text-center flex-1 flex items-center justify-center">這期間還沒有支出紀錄喵～</p>
               ) : (
@@ -834,7 +841,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
               <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-lg shadow-orange-50/50 flex flex-col">
                   <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><TrendingDown className="w-4 h-4 text-rose-400" /> 支出排行榜</h4>
-                  <p className="text-[10px] text-slate-300 mb-3">本期支出依分類加總，列出前3高。</p>
+                  <p className="text-[10px] text-slate-300 mb-3">本期支出依分類加總，列出前3高。代購／代墊／借貸／分帳結清不算在內（那些錢只計入上面的本期現金流）。</p>
                   <div className="flex-1 space-y-4">{expenseBreakdown.slice(0, 3).map((l2Item, idx) => (<div key={l2Item.l2} className="p-4 rounded-2xl border-2 border-slate-50 flex items-center justify-between"><div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center font-bold text-slate-400">{idx+1}</div><p className="font-bold text-slate-700">{l2Item.l2}</p></div><p className="font-bold text-slate-700">${l2Item.amount.toLocaleString()}</p></div>))}</div>
               </div>
               <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
@@ -848,7 +855,7 @@ const Dashboard: React.FC<DashboardProps> = ({
               </div>
               <div className="bg-white p-6 rounded-[30px] border border-orange-50 shadow-sm">
                   <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-2"><Wallet className="w-4 h-4 text-emerald-400" /> 收入來源分析</h4>
-                  <p className="text-[10px] text-slate-300 mb-3">本期收入依分類加總，列出前3高。</p>
+                  <p className="text-[10px] text-slate-300 mb-3">本期收入依分類加總，列出前3高。收回來的代墊款／借款不算收入來源（那些錢只計入上面的本期現金流）。</p>
                   <div className="space-y-3">{incomeBreakdown.slice(0, 3).map((item, idx) => (<div key={idx} className="flex justify-between items-center p-3 rounded-2xl bg-emerald-50/50"><span className="font-bold text-slate-700">{item.l2}</span><p className="font-bold text-emerald-600">${item.amount.toLocaleString()}</p></div>))}</div>
               </div>
           </div>
