@@ -1286,6 +1286,7 @@ const App: React.FC = () => {
                                         <span key={idx} className="inline-flex flex-col gap-1 text-[11px] font-normal bg-slate-100 px-2.5 py-1.5 rounded-2xl">
                                           <span className="flex items-center gap-1 font-bold text-slate-600">
                                             {item.name}
+                                            {(item.quantity && item.quantity !== 1) ? <span className="text-slate-400 font-normal">×{item.quantity}份</span> : null}
                                             {comboAmount > 0 && <span className="text-slate-400 font-normal">${formatMoney(comboAmount)}</span>}
                                           </span>
                                           <span className="flex flex-wrap gap-1 pl-2 border-l-2 border-slate-200">

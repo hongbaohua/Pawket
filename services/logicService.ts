@@ -95,9 +95,11 @@ export const buildSettlementTransaction = (params: {
 // 一個品項（含套餐/組合類）的合計金額：本身有標單價就用本身的（單價×數量），
 // 沒有標單價但有子品項，就加總子品項裡「有標單價」的那些——子品項沒標單價的
 // （純粹列出內含什麼、不單獨計價）不列入加總，避免重複灌水或算出不該有的金額。
+// 2026-10-05：套餐本身的數量＝「印了/買了幾份」，子品項加總是「一份」的價格，要再乘上
+// 套餐數量（Ivy記樺舍印刷「TOTOMOLO護照」印10份，原本數量填了卻被忽略、只算1份）。
 export const getItemAmount = (item: TransactionItem): number => {
   if (item.unitPrice != null) return item.unitPrice * (item.quantity || 1);
-  if (item.subItems?.length) return item.subItems.reduce((sum, sub) => sum + getItemAmount(sub), 0);
+  if (item.subItems?.length) return item.subItems.reduce((sum, sub) => sum + getItemAmount(sub), 0) * (item.quantity || 1);
   return 0;
 };
 

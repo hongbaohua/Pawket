@@ -133,8 +133,28 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     setItems(prev => {
       const target = prev[idx];
       if (!target.subItems?.length) return prev;
-      return [...prev.slice(0, idx), ...prev.slice(idx + 1), ...target.subItems];
+      // 套餐有份數(例如印10份)時，攤平後每個子品項的數量要乘上份數，合計金額才不會變少
+      const sets = target.quantity || 1;
+      const flattened = sets === 1 ? target.subItems : target.subItems.map(sub => ({ ...sub, quantity: (sub.quantity || 1) * sets }));
+      return [...prev.slice(0, idx), ...prev.slice(idx + 1), ...flattened];
     });
+  };
+
+  // 5%營業稅（2026-10-05，Ivy記樺舍印刷時問「營業稅怎麼寫」）：以其他品項合計×5%、
+  // 四捨五入到整數（台灣發票稅額以元為單位），寫成一個獨立品項。已經有名稱含「營業稅」
+  // 的品項就直接更新它的金額（品項改了之後再按一次即可重算），沒有才新增一列。
+  const TAX_NAME_RE = /營業稅/;
+  const applyBusinessTax = () => {
+    const base = items.filter(it => !TAX_NAME_RE.test(it.name)).reduce((sum, it) => sum + getItemAmount(it), 0);
+    const tax = Math.round(base * 0.05);
+    const existingIdx = items.findIndex(it => TAX_NAME_RE.test(it.name));
+    if (existingIdx >= 0) {
+      setItems(items.map((it, i) => i === existingIdx ? { ...it, unitPrice: tax, quantity: undefined, subItems: undefined } : it));
+      setExpandedItemIdx(s => new Set(s).add(existingIdx));
+    } else {
+      setItems([...items, { name: '5%營業稅', unitPrice: tax }]);
+      setExpandedItemIdx(s => new Set(s).add(items.length));
+    }
   };
 
   // 打包成套餐：勾選2個以上品項後可以合併成一個套餐品項（原本各自的品項變成子品項）。
@@ -1330,12 +1350,13 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                               <CalcInput
                                 value={it.unitPrice}
                                 onCommit={n => updateItemField(idx, 'unitPrice', String(n))}
+                                placeholder={isCombo ? '留空=子品項加總' : undefined}
                                 readOnly={fxAllocEnabled && (fxAllocAmounts[idx] ?? '').trim() !== ''}
                                 className={`w-full p-2 border rounded-lg text-sm font-bold outline-none ${fxAllocEnabled && (fxAllocAmounts[idx] ?? '').trim() !== '' ? 'bg-slate-50 text-slate-400 border-slate-200' : 'bg-[#FFFBF5] border-slate-200 focus:border-amber-300'}`}
                               />
                             </div>
                             <div className="min-w-0">
-                              <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">數量</label>
+                              <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1">{isCombo ? '份數（子品項×份數）' : '數量'}</label>
                               <CalcInput value={it.quantity} onCommit={n => updateItemField(idx, 'quantity', String(n))} placeholder="1" className="w-full p-2 bg-[#FFFBF5] border border-slate-200 rounded-lg text-sm font-bold outline-none focus:border-amber-300" />
                             </div>
                             <div className="min-w-0 col-span-2 sm:col-span-1">
@@ -1404,7 +1425,12 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                     <button type="button" onClick={cancelBundle} className="px-3 py-2 text-slate-400 hover:text-slate-500 text-xs font-bold transition shrink-0">取消</button>
                   </div>
                 )}
-                <button type="button" onClick={addItemRow} className="text-xs font-bold text-slate-400 hover:text-amber-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> 新增品項</button>
+                <div className="flex flex-wrap items-center gap-4">
+                  <button type="button" onClick={addItemRow} className="text-xs font-bold text-slate-400 hover:text-amber-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> 新增品項</button>
+                  {itemsSubtotal > 0 && (
+                    <button type="button" onClick={applyBusinessTax} title="用其他品項合計×5%（四捨五入到元）新增或更新「營業稅」品項" className="text-xs font-bold text-slate-400 hover:text-amber-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> 5%營業稅</button>
+                  )}
+                </div>
               </div>
             </div>
 
