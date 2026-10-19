@@ -1053,13 +1053,30 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 ml-1">
                  日期
               </label>
-              <input
-                 ref={dateRef}
-                 type="date"
-                 value={date}
-                 onChange={e => setDate(e.target.value)}
-                 className={`w-full p-4 bg-white border rounded-2xl font-bold text-slate-700 transition outline-none shadow-sm ${errors.date ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200 focus:border-amber-300 focus:ring-4 focus:ring-amber-50'}`}
-              />
+              {/* 2026-10-19 Ivy：複製半年前的紀錄時，日期要一路往回選很麻煩——加「今天／昨天」一鍵帶入（用本地時區，不用toISOString的UTC日期） */}
+              <div className="flex gap-2 items-stretch">
+                <input
+                   ref={dateRef}
+                   type="date"
+                   value={date}
+                   onChange={e => setDate(e.target.value)}
+                   className={`flex-1 min-w-0 p-4 bg-white border rounded-2xl font-bold text-slate-700 transition outline-none shadow-sm ${errors.date ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200 focus:border-amber-300 focus:ring-4 focus:ring-amber-50'}`}
+                />
+                {[{ label: '今天', offset: 0 }, { label: '昨天', offset: -1 }].map(({ label, offset }) => {
+                  const d = new Date(); d.setDate(d.getDate() + offset);
+                  const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => setDate(ymd)}
+                      className={`px-3 rounded-2xl text-xs font-bold border transition shrink-0 ${date === ymd ? 'bg-amber-400 text-white border-amber-400' : 'bg-white text-slate-500 border-slate-200 hover:border-amber-300'}`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Merchant Field with Autocomplete：選好商家後，失焦會自動推薦帳戶/付款通道/分類 */}
