@@ -87,7 +87,13 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   const addDiscountRow = () => setDiscounts(prev => [...prev, { label: '', amount: NaN }]);
   const updateDiscountRow = (idx: number, field: 'label' | 'amount' | 'appliesTo', value: string) => {
     if (field === 'appliesTo') {
-      setDiscounts(prev => prev.map((d, i) => i === idx ? { ...d, appliesTo: value || undefined } : d));
+      // 點品項名稱切換：這筆折扣有沒有折在這個品項上（可以選多個；全部取消＝整筆折扣）
+      setDiscounts(prev => prev.map((d, i) => {
+        if (i !== idx) return d;
+        const cur = d.appliesTo || [];
+        const next = cur.includes(value) ? cur.filter(n => n !== value) : [...cur, value];
+        return { ...d, appliesTo: next.length ? next : undefined };
+      }));
       return;
     }
     setDiscounts(prev => prev.map((d, i) => i === idx ? { ...d, [field]: field === 'amount' ? parseFloat(value) || 0 : value } : d));
@@ -695,8 +701,8 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     const noPrice = named.find(x => !(splitAlloc[x.i]?.gross > 0));
     if (noPrice) return `「${noPrice.it.name.trim()}」還沒填單價，分裝要知道每個品項多少錢。`;
     if (items.some((it, i) => !it.name.trim() && splitAlloc[i]?.gross > 0)) return '有品項填了金額但沒填名稱。';
-    const badTarget = effectiveDiscounts.find(d => d.appliesTo && !namedItemNames.includes(d.appliesTo.trim()));
-    if (badTarget) return `折扣「${badTarget.label || '折扣'}」指定的品項「${badTarget.appliesTo}」找不到，請重新選擇。`;
+    const badTarget = effectiveDiscounts.find(d => (d.appliesTo || []).some(n => !namedItemNames.includes(n.trim())));
+    if (badTarget) return `折扣「${badTarget.label || '折扣'}」指定的品項「${(badTarget.appliesTo || []).filter(n => !namedItemNames.includes(n.trim())).join('、')}」找不到（品項改名了？），請重新選擇。`;
     const itemsGross = named.reduce((sum, x) => sum + splitAlloc[x.i].gross, 0);
     const target = showBreakdown ? grossAmount : amount;
     if (Math.abs(itemsGross - target) > 0.01) {
@@ -1605,16 +1611,20 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                     {namedItemNames.length >= 2 && discounts.length > 0 && (
                       <div className="space-y-1.5 pt-1">
                         {discounts.map((d, idx) => (
-                          <div key={idx} className="flex items-center gap-2 text-[11px]">
-                            <span className="text-slate-400 font-bold shrink-0">「{d.label || `折扣${idx + 1}`}」折在</span>
-                            <select
-                              value={d.appliesTo || ''}
-                              onChange={e => updateDiscountRow(idx, 'appliesTo', e.target.value)}
-                              className="flex-1 min-w-0 border border-slate-200 rounded-lg py-1 px-2 font-bold outline-none bg-white text-slate-600"
-                            >
-                              <option value="">整筆（按品項金額比例分攤）</option>
-                              {namedItemNames.map(n => <option key={n} value={n}>{n}</option>)}
-                            </select>
+                          <div key={idx} className="flex items-start gap-2 text-[11px]">
+                            <span className="text-slate-400 font-bold shrink-0 pt-1">「{d.label || `折扣${idx + 1}`}」折在</span>
+<div className="flex-1 flex flex-wrap gap-1">
+                          {namedItemNames.map(n => {
+                            const on = (d.appliesTo || []).includes(n);
+                            return (
+                              <button key={n} type="button" onClick={() => updateDiscountRow(idx, 'appliesTo', n)}
+                                className={`px-2 py-1 rounded-lg text-[11px] font-bold border transition ${on ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-200 text-slate-500 hover:border-emerald-300'}`}>
+                                {n}
+                              </button>
+                            );
+                          })}
+                          {!(d.appliesTo || []).length && <span className="text-[10px] text-slate-400 self-center">未選＝整筆按比例分攤</span>}
+                        </div>
                           </div>
                         ))}
                       </div>
@@ -1706,18 +1716,22 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
 
                 {effectiveDiscounts.length > 0 && namedItemNames.length >= 2 && (
                   <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-2xl space-y-2">
-                    <p className="text-[10px] font-bold text-emerald-600 uppercase">折扣折在哪個品項？</p>
+                    <p className="text-[10px] font-bold text-emerald-600 uppercase">折扣折在哪些品項？（可複選）</p>
                     {discounts.map((d, idx) => d.amount ? (
-                      <div key={idx} className="flex items-center gap-2">
-                        <span className="flex-1 text-xs font-bold text-slate-600 truncate">{d.label || '折扣'} -${formatMoney(d.amount)}</span>
-                        <select
-                          value={d.appliesTo || ''}
-                          onChange={e => updateDiscountRow(idx, 'appliesTo', e.target.value)}
-                          className="text-xs border border-emerald-200 rounded-xl py-1.5 px-2 font-bold outline-none bg-white text-slate-600 max-w-[60%]"
-                        >
-                          <option value="">整筆折扣（按金額比例分攤）</option>
-                          {namedItemNames.map(n => <option key={n} value={n}>只折「{n}」</option>)}
-                        </select>
+                      <div key={idx} className="space-y-1">
+                        <span className="block text-xs font-bold text-slate-600 truncate">{d.label || '折扣'} -${formatMoney(d.amount)}　折在：</span>
+<div className="flex flex-wrap gap-1">
+                          {namedItemNames.map(n => {
+                            const on = (d.appliesTo || []).includes(n);
+                            return (
+                              <button key={n} type="button" onClick={() => updateDiscountRow(idx, 'appliesTo', n)}
+                                className={`px-2 py-1 rounded-lg text-[11px] font-bold border transition ${on ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-slate-200 text-slate-500 hover:border-emerald-300'}`}>
+                                {n}
+                              </button>
+                            );
+                          })}
+                          {!(d.appliesTo || []).length && <span className="text-[10px] text-slate-400 self-center">未選＝整筆按比例分攤</span>}
+                        </div>
                       </div>
                     ) : null)}
                   </div>

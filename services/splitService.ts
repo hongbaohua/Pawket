@@ -47,7 +47,7 @@ const distribute = (total: number, weights: number[], decimals: number): number[
 
 /**
  * 算出每個品項分到多少折扣、實付多少。
- * - 折扣有 appliesTo（品項名稱）→ 整筆算在那個品項上（同名品項不只一個時按金額比例分給它們）
+ * - 折扣有 appliesTo（品項名稱，可多個）→ 只在這些品項之間按金額比例分
  * - 沒有 appliesTo → 按所有品項的原價比例分攤
  */
 export const allocateItems = (items: TransactionItem[], discounts: Discount[]): ItemAllocation[] => {
@@ -59,19 +59,21 @@ export const allocateItems = (items: TransactionItem[], discounts: Discount[]): 
   discounts.forEach(d => {
     const amt = d.amount || 0;
     if (!amt) return;
-    const target = d.appliesTo?.trim();
-    const targetIdx = target ? items.map((it, i) => (it.name.trim() === target ? i : -1)).filter(i => i >= 0) : [];
+    const targets = (d.appliesTo || []).map(n => n.trim()).filter(Boolean);
+    const targetIdx = targets.length ? items.map((it, i) => (targets.includes(it.name.trim()) ? i : -1)).filter(i => i >= 0) : [];
     const pool = targetIdx.length > 0 ? targetIdx : items.map((_, i) => i);
     const shares = distribute(amt, pool.map(i => grosses[i]), decimals);
     pool.forEach((itemIdx, k) => {
       if (!shares[k]) return;
       result[itemIdx].discount = round(result[itemIdx].discount + shares[k], 2);
-      result[itemIdx].discountParts.push({ label: d.label, amount: shares[k], ...(targetIdx.length > 0 ? { appliesTo: target } : {}) });
+      result[itemIdx].discountParts.push({ label: d.label, amount: shares[k], ...(targetIdx.length > 0 ? { appliesTo: targets } : {}) });
     });
   });
   result.forEach(r => { r.net = round(r.gross - r.discount, 2); });
   return result;
 };
+
+const sameTargets = (a?: string[], b?: string[]) => (a || []).slice().sort().join('|') === (b || []).slice().sort().join('|');
 
 const categoryKey = (c: CategoryHierarchy) => `${c.l1}|${c.l2}|${c.l3 || ''}`;
 
@@ -122,7 +124,7 @@ export const buildSplitChildren = (
     // 同一個折扣名稱（同一個 appliesTo）合併成一列
     const merged: Discount[] = [];
     g.idx.forEach(i => alloc[i].discountParts.forEach(p => {
-      const ex = merged.find(m => m.label === p.label && (m.appliesTo || '') === (p.appliesTo || ''));
+      const ex = merged.find(m => m.label === p.label && sameTargets(m.appliesTo, p.appliesTo));
       if (ex) ex.amount = round(ex.amount + p.amount, 2); else merged.push({ ...p });
     }));
     const hasDiscount = merged.some(d => d.amount);
@@ -171,7 +173,7 @@ export const mergeSplitGroup = (children: Transaction[]): Transaction => {
       items.push({ name, unitPrice: c.grossAmount ?? c.amount, splitCategory: cat });
     }
     (c.discounts || []).forEach(d => {
-      const ex = discounts.find(m => m.label === d.label && (m.appliesTo || '') === (d.appliesTo || ''));
+      const ex = discounts.find(m => m.label === d.label && sameTargets(m.appliesTo, d.appliesTo));
       if (ex) ex.amount = round(ex.amount + d.amount, 2); else discounts.push({ ...d });
     });
   });
