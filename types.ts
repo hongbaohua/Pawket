@@ -38,6 +38,9 @@ export interface Account {
 export interface Discount {
   label: string;
   amount: number;
+  // 這個折扣是折在哪個品項上（填品項名稱）。留空＝整筆的折扣，分裝時按品項金額比例分攤。
+  // 2026-10-19 Ivy：全家「吐司(有折扣)+預購積木」這種，折扣只屬於吐司，不能平均攤到積木上。
+  appliesTo?: string;
 }
 
 // 特殊交易性質標記：代購（幫別人買/別人幫忙買）、工作代墊（先墊付，之後跟公司/主管報帳）、
@@ -65,6 +68,9 @@ export interface TransactionItem {
   quantity?: number; // 數量（選填，沒填視為1）
   note?: string; // 額外說明（選填，例如匯率換算依據、代購批次）
   subItems?: TransactionItem[]; // 套餐/組合的子項目（選填）
+  // 分裝用：這個品項歸到哪個分類（只在填資料時開了「分裝」才會用到）。2026-10-19重做分裝：
+  // 分裝改成在填資料時就對每個品項選分類，存檔時同分類的品項併成一筆子交易，沒有「主項目」。
+  splitCategory?: CategoryHierarchy;
 }
 
 export interface Transaction {

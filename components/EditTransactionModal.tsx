@@ -9,6 +9,7 @@ import SharedExpenseModal from './SharedExpenseModal';
 import { CalcInput } from './CalcInput';
 import { SufengdaCalculator } from './SufengdaCalculator';
 import { SUFENGDA_WALLET_DISCOUNT_LABEL } from '../services/sufengdaCalc';
+import { allocateItems, buildSplitChildren } from '../services/splitService';
 
 interface EditTransactionModalProps {
   transaction: Transaction;
@@ -19,7 +20,19 @@ interface EditTransactionModalProps {
   onTagAction?: (action: 'rename' | 'delete', l1: L1Category, oldName: string, newName?: string) => void;
   onManageSharedExpense?: (transaction: Transaction) => void;
   onClose: () => void;
-  onSave: (updatedTransaction: Transaction, options?: { openSplitAfter?: boolean; additionalTransfer?: Transaction; pendingSharedExpense?: SharedExpense; pendingAdditionalSettlements?: Transaction[] }) => void;
+  onSave: (updatedTransaction: Transaction, options?: EditSaveOptions) => void;
+  // 重新編輯既有分裝群組時傳入群組裡所有子交易（transaction 是 mergeSplitGroup 合併後的那筆）
+  splitGroup?: Transaction[];
+  // 從列表的「分裝」按鈕打開：一打開就是分裝模式
+  startInSplitMode?: boolean;
+}
+
+export interface EditSaveOptions {
+  additionalTransfer?: Transaction;
+  pendingSharedExpense?: SharedExpense;
+  pendingAdditionalSettlements?: Transaction[];
+  // 有分裝（或原本是分裝群組）時：存檔要寫入的所有交易，以及要移除的舊子交易 id
+  splitResult?: { children: Transaction[]; removedIds: string[] };
 }
 
 const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
@@ -31,7 +44,9 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     onTagAction,
     onManageSharedExpense,
     onClose,
-    onSave
+    onSave,
+    splitGroup,
+    startInSplitMode = false
 }) => {
   const [merchant, setMerchant] = useState(transaction.merchant);
   const [note, setNote] = useState(transaction.note || '');
@@ -70,7 +85,11 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   // amount故意用NaN當「還沒填」的哨兵值，不是0——CalcInput會把NaN顯示成空白，
   // 0則會照字面顯示"0"，變成使用者要先手動刪掉那個"0"才能打真正的金額。
   const addDiscountRow = () => setDiscounts(prev => [...prev, { label: '', amount: NaN }]);
-  const updateDiscountRow = (idx: number, field: 'label' | 'amount', value: string) => {
+  const updateDiscountRow = (idx: number, field: 'label' | 'amount' | 'appliesTo', value: string) => {
+    if (field === 'appliesTo') {
+      setDiscounts(prev => prev.map((d, i) => i === idx ? { ...d, appliesTo: value || undefined } : d));
+      return;
+    }
     setDiscounts(prev => prev.map((d, i) => i === idx ? { ...d, [field]: field === 'amount' ? parseFloat(value) || 0 : value } : d));
   };
   const removeDiscountRow = (idx: number) => setDiscounts(prev => prev.filter((_, i) => i !== idx));
@@ -534,7 +553,9 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
   // 1.日期/店家/收支/通道/帳戶 2.性質/品項/金額 3.分類(自動推薦)+分裝詢問 4.備註。
   // 只有「新增」才走分步驟(編輯已有資料不需要)，桌機版維持一次全部顯示(不受此狀態影響)。
   const [currentStep, setCurrentStep] = useState(1);
-  const [wantsSplitAfterSave, setWantsSplitAfterSave] = useState(false);
+  // 分裝模式（2026-10-19重做）：開了之後不選整筆的分類，改成每個品項各自選分類，
+  // 折扣按指定品項/比例算進去，存檔時直接拆好，不用存完再開分裝盤逐筆改。
+  const [splitMode, setSplitMode] = useState<boolean>(!!splitGroup || startInSplitMode);
 
   // Generate unique merchant names for autocomplete
   const merchantSuggestions = useMemo(() => {
@@ -643,6 +664,62 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
       }));
   }, [l1, customCategoryHistory, sessionTags]);
 
+  // ===== 分裝（每個品項各自的分類） =====
+  const l2OptionsFor = (cat: L1Category): string[] =>
+    Array.from(new Set([...(STANDARD_CATEGORIES[cat] || []), ...(customCategoryHistory[cat] || []), ...(sessionTags[cat] || [])]));
+  // 品項還沒選過分類時先帶「目前整筆的分類」（商家歷史推薦），使用者再逐項改
+  const fallbackSplitCategory = { l1, l2, l3: l3 || '' };
+  const itemCategory = (it: TransactionItem) => it.splitCategory || fallbackSplitCategory;
+  const setItemCategory = (idx: number, patch: Partial<{ l1: L1Category; l2: string; l3: string }>) => {
+    setItems(prev => prev.map((it, i) => {
+      if (i !== idx) return it;
+      const cur = it.splitCategory || fallbackSplitCategory;
+      const next = { ...cur, ...patch };
+      if (patch.l1 && patch.l1 !== cur.l1) next.l2 = l2OptionsFor(patch.l1)[0] || '';
+      return { ...it, splitCategory: next };
+    }));
+  };
+  const effectiveDiscounts = useMemo(
+    () => (showBreakdown ? discounts.filter(d => d.amount) : []),
+    [showBreakdown, discounts]
+  );
+  const splitAlloc = useMemo(
+    () => allocateItems(items.map(it => ({ ...it, name: it.name.trim() })), effectiveDiscounts),
+    [items, effectiveDiscounts]
+  );
+  const namedItemNames = useMemo(() => Array.from(new Set(items.map(it => it.name.trim()).filter(Boolean))), [items]);
+  const splitError = useMemo((): string | null => {
+    if (!splitMode) return null;
+    const named = items.map((it, i) => ({ it, i })).filter(x => x.it.name.trim());
+    if (named.length < 2) return '分裝至少要有 2 個品項：到「喵喵購物清單」把每樣東西填成一個品項（含單價）。';
+    const noPrice = named.find(x => !(splitAlloc[x.i]?.gross > 0));
+    if (noPrice) return `「${noPrice.it.name.trim()}」還沒填單價，分裝要知道每個品項多少錢。`;
+    if (items.some((it, i) => !it.name.trim() && splitAlloc[i]?.gross > 0)) return '有品項填了金額但沒填名稱。';
+    const badTarget = effectiveDiscounts.find(d => d.appliesTo && !namedItemNames.includes(d.appliesTo.trim()));
+    if (badTarget) return `折扣「${badTarget.label || '折扣'}」指定的品項「${badTarget.appliesTo}」找不到，請重新選擇。`;
+    const itemsGross = named.reduce((sum, x) => sum + splitAlloc[x.i].gross, 0);
+    const target = showBreakdown ? grossAmount : amount;
+    if (Math.abs(itemsGross - target) > 0.01) {
+      return `品項合計 $${formatMoney(itemsGross)} 跟${showBreakdown ? '原始金額' : '實付金額'} $${formatMoney(target || 0)} 對不上（差 $${formatMoney(Math.abs(itemsGross - (target || 0)))}），請檢查品項有沒有漏填。`;
+    }
+    return null;
+  }, [splitMode, items, splitAlloc, effectiveDiscounts, namedItemNames, showBreakdown, grossAmount, amount]);
+  // 分裝預覽：同一個分類的品項會併成一筆，這裡先算給使用者看存檔後會變成幾筆、各多少
+  const splitSummary = useMemo(() => {
+    const groups: { key: string; cat: { l1: L1Category; l2: string; l3: string }; names: string[]; net: number }[] = [];
+    items.forEach((it, i) => {
+      if (!it.name.trim()) return;
+      const cat = itemCategory(it);
+      const key = `${cat.l1}|${cat.l2}|${cat.l3 || ''}`;
+      const g = groups.find(x => x.key === key);
+      const net = splitAlloc[i]?.net || 0;
+      if (g) { g.names.push(it.name.trim()); g.net += net; }
+      else groups.push({ key, cat: { ...cat, l3: cat.l3 || '' }, names: [it.name.trim()], net });
+    });
+    return groups;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, splitAlloc, l1, l2, l3]);
+
   // Logic to handle L2 selection with Income Auto-fill
   const handleL2Change = (newL2: string) => {
       setL2(newL2);
@@ -740,6 +817,11 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
     // 2026-08-13：編輯既有交易(不是新增)存檔前要二次確認——Ivy要求整個app的修改/刪除
     // 都要有二次確認，不能等她發現某個功能沒做才補。用window.confirm是刻意的：原生
     // 對話框不在畫面上跟原本的按鈕同一個位置，不會被連續點擊誤觸過去。
+    if (splitError) {
+        alert(`分裝還沒填完整：\n${splitError}`);
+        return;
+    }
+
     if (!isNew && !window.confirm(`確定要儲存對「${merchant || '這筆交易'}」的修改嗎？`)) return;
 
     // 當場儲值：選了電子錢包/儲值卡帳戶+勾了「有儲值」+填了金額跟來源帳戶，
@@ -796,14 +878,14 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
         })
       : undefined;
 
-    onSave({
+    const namedItems = items.filter(it => it.name.trim()).map(it => ({ ...it, name: it.name.trim() }));
+    const savedTx: Transaction = {
       ...transaction,
       date,
       amount: finalAmount,
       merchant,
-      items: items.filter(it => it.name.trim()).map(it => ({ ...it, name: it.name.trim() })).length > 0
-        ? items.filter(it => it.name.trim()).map(it => ({ ...it, name: it.name.trim() }))
-        : undefined,
+      // 不是分裝時，品項不帶分類（splitCategory只在分裝時有意義）
+      items: namedItems.length > 0 ? namedItems.map(({ splitCategory, ...rest }) => rest) : undefined,
       note: note.trim() || undefined,
       type,
       accountId: accountId || undefined,
@@ -817,9 +899,32 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
         l1,
         l2,
         l3: l3 || '' // Allow empty
-      }
-    }, {
-      openSplitAfter: isNew && wantsSplitAfterSave,
+      },
+      isSplit: false,
+      parentId: undefined,
+    };
+
+    // 分裝：照每個品項的分類直接拆好（同分類併成一筆，折扣按指定品項/比例算進去），
+    // 沒有主項目。原本是分裝群組、這次把分裝關掉的話，就合併回一筆，舊的子交易移除。
+    let splitResult: EditSaveOptions['splitResult'];
+    if (splitMode || splitGroup) {
+      const groupIds = (splitGroup || []).map(t => t.id);
+      const children = splitMode
+        ? buildSplitChildren(
+            savedTx,
+            namedItems,
+            showBreakdown ? discounts.filter(d => d.label.trim() || d.amount) : [],
+            { l1, l2, l3: l3 || '' },
+            splitGroup?.[0]?.parentId || transaction.id,
+            groupIds,
+          )
+        : [savedTx];
+      const keepIds = new Set(children.map(c => c.id));
+      splitResult = { children, removedIds: groupIds.filter(id => !keepIds.has(id)) };
+    }
+
+    onSave(splitResult ? splitResult.children[0] : savedTx, {
+      splitResult,
       additionalTransfer,
       pendingSharedExpense: pendingSharedExpense || quickSettleExpense,
       pendingAdditionalSettlements: pendingAdditionalSettlements.length > 0
@@ -1233,12 +1338,12 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
             </div>
 
             {/* Items Field：這筆買了什麼，無論一項還是多項都填在這裡（跟「分裝盤」不是同一件事，
-                分裝盤是把這筆錢拆到不同預算分類，這裡純粹是記錄買了什麼東西） */}
+                分裝時每個品項會各自選分類，見下面分類那一步） */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1 ml-1">
                 <ShoppingBag className="w-3 h-3" /> 喵喵購物清單（選填，這筆買了什麼）
               </label>
-              <p className="text-[10px] text-slate-300 ml-1 -mt-1">這裡只記錄買了什麼，不會拆分類；要把錢拆到不同預算類別請用「貓咪零食分裝盤」（明細列的分裝按鈕）</p>
+              <p className="text-[10px] text-slate-300 ml-1 -mt-1">每樣東西填一個品項＋單價；如果品項屬於不同類別（例如吐司=餐飲、積木=娛樂），到「分類」那一步選「分裝」，每個品項各自選分類</p>
               <button
                 type="button"
                 onClick={() => setFxAllocEnabled(v => !v)}
@@ -1495,6 +1600,25 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                         <button type="button" onClick={() => removeDiscountRow(idx)} className="p-2 text-slate-300 hover:text-rose-400 transition"><Trash2 className="w-4 h-4" /></button>
                       </div>
                     ))}
+                    {/* 折扣折在哪個品項：品項有2樣以上才需要選。分裝時會照這個把折扣算到對的品項上
+                        （例如只有吐司有第二件折扣，積木沒有）；留空=整筆折扣，按品項金額比例分攤。 */}
+                    {namedItemNames.length >= 2 && discounts.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        {discounts.map((d, idx) => (
+                          <div key={idx} className="flex items-center gap-2 text-[11px]">
+                            <span className="text-slate-400 font-bold shrink-0">「{d.label || `折扣${idx + 1}`}」折在</span>
+                            <select
+                              value={d.appliesTo || ''}
+                              onChange={e => updateDiscountRow(idx, 'appliesTo', e.target.value)}
+                              className="flex-1 min-w-0 border border-slate-200 rounded-lg py-1 px-2 font-bold outline-none bg-white text-slate-600"
+                            >
+                              <option value="">整筆（按品項金額比例分攤）</option>
+                              {namedItemNames.map(n => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     <button type="button" onClick={addDiscountRow} className="text-xs font-bold text-slate-400 hover:text-amber-500 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> 新增折扣項目</button>
                   </div>
                   <p className="text-[11px] text-slate-400">實付金額 = 原始金額 − 折扣總和，自動算好，不用自己減。</p>
@@ -1505,6 +1629,125 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
 
           {/* STEP 3：分類歸屬（依照商家歷史自動推薦選好，使用者再手動調整）／詢問是否分裝拆帳 */}
           <div className={`${isNew && currentStep !== 3 ? 'hidden' : ''} md:block space-y-6`}>
+            {/* 分裝開關：一筆裡有不同類別的東西（例如吐司=餐飲、積木=娛樂）就打開，
+                每個品項各自選分類，沒有整筆的主分類 */}
+            {type !== 'transfer' && (
+              <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-purple-600">
+                    <Divide className="w-4 h-4 shrink-0" />
+                    <span className="text-sm font-bold">這筆裡面有不同類別的東西嗎？</span>
+                  </div>
+                  <div className="flex bg-white border border-purple-100 rounded-xl p-0.5 shrink-0">
+                    <button type="button" onClick={() => setSplitMode(false)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${!splitMode ? 'bg-purple-500 text-white' : 'text-slate-400'}`}>同一類</button>
+                    <button type="button" onClick={() => setSplitMode(true)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${splitMode ? 'bg-purple-500 text-white' : 'text-slate-400'}`}>分裝</button>
+                  </div>
+                </div>
+                {splitMode && <p className="text-[11px] text-purple-400">每個品項各自選分類，同分類的品項存檔後會併成一筆；折扣會照你指定的品項（或按金額比例）算進去。</p>}
+                {!splitMode && splitGroup && <p className="text-[11px] text-purple-400">關掉分裝存檔後，這個分裝群組會合併回一筆，用下面選的分類。</p>}
+              </div>
+            )}
+
+            {splitMode && type !== 'transfer' && (
+              <div className="p-5 bg-white rounded-3xl border border-purple-100 space-y-4 shadow-sm">
+                <p className="text-xs font-bold text-purple-500 uppercase tracking-wider flex items-center gap-1">
+                  <Tag className="w-3 h-3" /> 每個品項的分類
+                </p>
+                {items.filter(it => it.name.trim()).length === 0 && (
+                  <p className="text-xs text-slate-400">還沒有品項。先到「喵喵購物清單」把買的東西逐項填好（含單價）。</p>
+                )}
+                <div className="space-y-3">
+                  {items.map((it, idx) => {
+                    if (!it.name.trim()) return null;
+                    const cat = itemCategory(it);
+                    const a = splitAlloc[idx];
+                    return (
+                      <div key={idx} className="p-3 bg-purple-50/40 border border-purple-100 rounded-2xl space-y-2">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="font-bold text-slate-700 text-sm truncate">{it.name}</span>
+                          <span className="text-sm font-black text-slate-700 whitespace-nowrap">
+                            {a && a.discount > 0 && <span className="text-[11px] font-bold text-slate-300 line-through mr-1">${formatMoney(a.gross)}</span>}
+                            ${formatMoney(a?.net || 0)}
+                          </span>
+                        </div>
+                        {a && a.discount > 0 && (
+                          <p className="text-[10px] text-emerald-500 font-bold">
+                            {a.discountParts.map(p => `${p.label || '折扣'} -$${formatMoney(p.amount)}`).join('、')}
+                          </p>
+                        )}
+                        <div className="grid grid-cols-2 gap-2">
+                          <select
+                            value={cat.l1}
+                            onChange={e => setItemCategory(idx, { l1: e.target.value as L1Category })}
+                            className="w-full text-xs border border-purple-200 rounded-xl py-2 px-2 font-bold outline-none bg-white text-slate-600"
+                          >
+                            {Object.values(L1Category).map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+                          </select>
+                          <select
+                            value={cat.l2}
+                            onChange={e => setItemCategory(idx, { l2: e.target.value })}
+                            className="w-full text-xs border border-purple-200 rounded-xl py-2 px-2 font-bold outline-none bg-white text-slate-600"
+                          >
+                            {Array.from(new Set([...l2OptionsFor(cat.l1), cat.l2].filter(Boolean))).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                          </select>
+                        </div>
+                        <input
+                          type="text"
+                          list="l3-suggestions"
+                          value={cat.l3 || ''}
+                          onChange={e => setItemCategory(idx, { l3: e.target.value })}
+                          placeholder="細項標籤（選填，例如：早餐）"
+                          className="w-full text-xs p-2 bg-white border border-purple-100 rounded-xl font-bold text-slate-600 outline-none placeholder:font-normal placeholder:text-slate-300 focus:border-purple-300"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {effectiveDiscounts.length > 0 && namedItemNames.length >= 2 && (
+                  <div className="p-3 bg-emerald-50/50 border border-emerald-100 rounded-2xl space-y-2">
+                    <p className="text-[10px] font-bold text-emerald-600 uppercase">折扣折在哪個品項？</p>
+                    {discounts.map((d, idx) => d.amount ? (
+                      <div key={idx} className="flex items-center gap-2">
+                        <span className="flex-1 text-xs font-bold text-slate-600 truncate">{d.label || '折扣'} -${formatMoney(d.amount)}</span>
+                        <select
+                          value={d.appliesTo || ''}
+                          onChange={e => updateDiscountRow(idx, 'appliesTo', e.target.value)}
+                          className="text-xs border border-emerald-200 rounded-xl py-1.5 px-2 font-bold outline-none bg-white text-slate-600 max-w-[60%]"
+                        >
+                          <option value="">整筆折扣（按金額比例分攤）</option>
+                          {namedItemNames.map(n => <option key={n} value={n}>只折「{n}」</option>)}
+                        </select>
+                      </div>
+                    ) : null)}
+                  </div>
+                )}
+
+                {splitSummary.length > 0 && (
+                  <div className="pt-2 border-t border-purple-100 space-y-1">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase">存檔後會變成</p>
+                    {splitSummary.map(g => (
+                      <div key={g.key} className="flex items-center justify-between gap-2 text-xs">
+                        <span className="font-bold text-slate-600 truncate">
+                          {CATEGORY_LABELS[g.cat.l1]} • {g.cat.l2}{g.cat.l3 ? ` • ${g.cat.l3}` : ''}
+                          <span className="font-normal text-slate-400">（{g.names.join('、')}）</span>
+                        </span>
+                        <span className="font-black text-purple-600 whitespace-nowrap">${formatMoney(g.net)}</span>
+                      </div>
+                    ))}
+                    {splitSummary.length === 1 && (
+                      <p className="text-[11px] text-amber-500 font-bold">所有品項都是同一個分類，存檔後就是一般的一筆，不會分裝。</p>
+                    )}
+                  </div>
+                )}
+
+                {splitError && (
+                  <p className="text-[11px] font-bold text-rose-500 flex items-start gap-1"><AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {splitError}</p>
+                )}
+              </div>
+            )}
+
+            {!splitMode && (
             <div className="p-6 bg-white rounded-3xl border border-slate-100 space-y-4 shadow-sm">
               <div
                   className="flex justify-between items-center cursor-pointer"
@@ -1632,22 +1875,6 @@ const EditTransactionModal: React.FC<EditTransactionModalProps> = ({
                   </div>
               )}
             </div>
-
-            {/* 詢問是否分裝拆帳：只有新增才問，儲存後如果選是，會直接接著打開分裝盤 */}
-            {isNew && (
-              <div className="p-4 bg-purple-50/50 border border-purple-100 rounded-2xl flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-purple-600">
-                  <Divide className="w-4 h-4 shrink-0" />
-                  <span className="text-sm font-bold">這筆要不要分裝拆帳？</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setWantsSplitAfterSave(v => !v)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold transition ${wantsSplitAfterSave ? 'bg-purple-500 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}
-                >
-                  {wantsSplitAfterSave ? '存檔後要分裝' : '不用分裝'}
-                </button>
-              </div>
             )}
           </div>
 

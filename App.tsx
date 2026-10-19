@@ -3,8 +3,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { List, PieChart as PieIcon, Pencil, ArrowUpRight, ArrowDownRight, TrendingUp, Download, Upload, Cat, PawPrint, Fish, Coffee, Home, Utensils, Car, PiggyBank, Wallet, Plus, Trash2, RotateCcw, Target, Search, X, Filter, ChevronDown, ChevronUp, CornerDownRight, CreditCard, Coins, Divide, Undo2, LogOut, Repeat, FileSearch, History, Settings, Copy } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import ReconcileView from './components/ReconcileView';
-import SplitModal from './components/SplitModal';
-import EditTransactionModal from './components/EditTransactionModal';
+import EditTransactionModal, { EditSaveOptions } from './components/EditTransactionModal';
+import { mergeSplitGroup } from './services/splitService';
 import BatchCorrectionModal from './components/BatchCorrectionModal';
 import WishlistModal from './components/WishlistModal';
 import TrashModal from './components/TrashModal';
@@ -272,11 +272,30 @@ const App: React.FC = () => {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
-  const [splittingTransaction, setSplittingTransaction] = useState<Transaction | null>(null);
   // 罐罐明細本列表：品項/備註太長會把列高撐得很高，預設收合只顯示前幾個/第一行，點了才展開全部。
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set());
   const toggleRowExpanded = (id: string) => setExpandedRowIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  // 分裝（2026-10-19重做）：編輯既有分裝群組時，群組裡所有子交易；以及「從分裝按鈕打開」
+  const [editingSplitGroup, setEditingSplitGroup] = useState<Transaction[] | null>(null);
+  const [editingStartSplit, setEditingStartSplit] = useState(false);
+  const closeEditor = () => { setEditingTransaction(null); setEditingSplitGroup(null); setEditingStartSplit(false); };
+  // 打開編輯畫面：分裝群組裡的任何一筆，一律打開整個群組合併後的畫面（分裝是整筆一起改的，
+  // 單獨改其中一筆子交易會讓群組對不起來）
+  const openEditor = (t: Transaction, startSplit = false) => {
+    if (t.isSplit && t.parentId) {
+      const group = transactions.filter(x => x.parentId === t.parentId);
+      if (group.length > 0) {
+        setEditingSplitGroup(group);
+        setEditingStartSplit(true);
+        setEditingTransaction(mergeSplitGroup(group));
+        return;
+      }
+    }
+    setEditingSplitGroup(null);
+    setEditingStartSplit(startSplit);
+    setEditingTransaction(t);
+  };
   // 對帳模組「新增這筆」流程用：記著這次開EditTransactionModal是為了補一列銀行對帳單的
   // missing_manual資料，存檔成功後要順便把這次確認的商家名稱學起來，記進商家別名候選清單。
   const [pendingAliasLearn, setPendingAliasLearn] = useState<{ officialPattern: string; accountId?: string } | null>(null);
@@ -428,63 +447,26 @@ const App: React.FC = () => {
       .catch(err => console.error('寫入編輯歷程失敗', err));
   };
 
-  const handleSplitSave = (splitTxs: Transaction[]) => {
-    if (!splittingTransaction) return;
-    const parentId = splittingTransaction.parentId || splittingTransaction.id;
-    const before = transactions.filter(t => t.id === splittingTransaction.id || t.parentId === parentId);
-    setTransactions(prev => [
-        // Remove all previous children of this split if re-editing
-        ...prev.filter(t => t.id !== splittingTransaction.id && t.parentId !== parentId),
-        ...splitTxs
-    ]);
-    setSplittingTransaction(null);
-    if (userId) {
-      (async () => {
-        try {
-          // 2026-09-17修好一個真的bug：原本只有「splittingTransaction.id !== parentId」
-          // 才會刪原始那筆，但第一次拆分時parentId就是直接沿用splittingTransaction.id
-          // (見上面第421行)，這個條件永遠是false，導致原始那筆從來沒被刪掉——
-          // deleteTransactionsByParentId只會刪「parent_id欄位=parentId」的列，原始那筆
-          // 自己的parent_id是null，不會被那個條件刪到，兩邊都刪不到就造成原始金額全額
-          // 那筆繼續留在資料庫裡，跟拆出來的子項目同時存在、金額被重複計入統計（Ivy
-          // 實測「水電瓦斯」分類金額多算了一倍才抓到）。改成一律直接刪
-          // splittingTransaction.id，不用再判斷條件——重新編輯既有分裝時這筆本來就會
-          // 被deleteTransactionsByParentId刪到，兩邊刪同一筆不會出錯，只是多一次確保。
-          await deleteTransactionsByParentId(parentId);
-          await dbDeleteTransaction(splittingTransaction.id);
-          await upsertTransactions(userId, splitTxs);
-        } catch (err) { console.error('儲存拆帳失敗', err); }
-      })();
-      logActivity('split', `把「${splittingTransaction.merchant || '這筆'}」拆成 ${splitTxs.length} 份分裝盤`, splitTxs.map(t => t.id), before);
-    }
-  };
-
   const handleCancelSplit = (parentId: string) => {
     const splitTxs = transactions.filter(t => t.parentId === parentId);
     if (splitTxs.length === 0) return;
+    if (!window.confirm('確定要取消分裝、合併回一筆嗎？（合併後用第一個品項的分類，可以再編輯）')) return;
 
-    // Find main item to use as template, or sum up children
-    const mainItem = splitTxs.find(t => t.category.l3 === '主項目') || splitTxs[0];
-    const totalAmount = splitTxs.reduce((sum, t) => sum + t.amount, 0);
-
+    // 合併回一筆：品項、折扣、原始金額全部併回來（不是只把金額加總）
+    const merged = mergeSplitGroup(splitTxs);
     const restoredTx: Transaction = {
-        ...mainItem,
-        id: parentId,
+        ...merged,
         parentId: undefined,
         isSplit: false,
-        amount: totalAmount,
-        merchant: mainItem.merchant,
-        category: {
-            ...mainItem.category,
-            l3: ''
-        }
+        items: merged.items?.map(({ splitCategory, ...rest }) => rest),
     };
+    const removedIds = splitTxs.map(t => t.id).filter(id => id !== restoredTx.id);
 
     setLastCanceledSplit({ originalTxs: splitTxs, restoredTx });
     setLastDeletedTransaction(null);
 
     setTransactions(prev => [
-        ...prev.filter(t => t.parentId !== parentId),
+        ...prev.filter(t => t.parentId !== parentId && t.id !== restoredTx.id),
         restoredTx
     ]);
 
@@ -494,7 +476,7 @@ const App: React.FC = () => {
     if (userId) {
       (async () => {
         try {
-          await deleteTransactionsByParentId(parentId);
+          for (const id of removedIds) await dbDeleteTransaction(id);
           await upsertTransaction(userId, restoredTx);
         } catch (err) { console.error('取消拆帳失敗', err); }
       })();
@@ -517,22 +499,37 @@ const App: React.FC = () => {
     if (userId) {
       (async () => {
         try {
-          await dbDeleteTransaction(restoredTx.id);
+          // 合併後那筆如果沿用了其中一筆子交易的id，就不能先刪掉（upsert不會清掉刪除標記）
+          if (!originalTxs.some(t => t.id === restoredTx.id)) await dbDeleteTransaction(restoredTx.id);
+          // 取消時被軟刪除的子交易要先救回來，再寫回原本的內容
+          for (const t of originalTxs) await restoreTransaction(t.id);
           await upsertTransactions(userId, originalTxs);
         } catch (err) { console.error('復原拆帳失敗', err); }
       })();
     }
   };
 
-  const handleEditSave = (updatedTx: Transaction, options?: { openSplitAfter?: boolean; additionalTransfer?: Transaction; pendingSharedExpense?: SharedExpense; pendingAdditionalSettlements?: Transaction[] }) => {
+  const handleEditSave = (updatedTx: Transaction, options?: EditSaveOptions) => {
     const existingTx = transactions.find(t => t.id === updatedTx.id);
+    // 分裝：一次寫入拆好的所有子交易，移除舊群組裡沒沿用到的子交易
+    const split = options?.splitResult;
+    const savedTxs = split ? split.children : [updatedTx];
+    const removedIds = new Set(split?.removedIds || []);
+    const savedIds = new Set(savedTxs.map(t => t.id));
+    const beforeSnapshot = transactions.filter(t => savedIds.has(t.id) || removedIds.has(t.id));
     setTransactions(prev => {
-      const next = prev.some(t => t.id === updatedTx.id) ? prev.map(t => t.id === updatedTx.id ? updatedTx : t) : [updatedTx, ...prev];
+      const kept = prev.filter(t => !removedIds.has(t.id));
+      const replaced = kept.map(t => savedTxs.find(x => x.id === t.id) || t);
+      const next = [...savedTxs.filter(x => !kept.some(t => t.id === x.id)), ...replaced];
       const withTransfer = options?.additionalTransfer ? [options.additionalTransfer, ...next] : next;
       return options?.pendingAdditionalSettlements?.length ? [...options.pendingAdditionalSettlements, ...withTransfer] : withTransfer;
     });
     if (userId) {
-      if (existingTx) {
+      if (split && savedTxs.length > 1) {
+        logActivity('split', `「${updatedTx.merchant || '這筆'}」分裝成 ${savedTxs.length} 筆（${savedTxs.map(t => `${CATEGORY_LABELS[t.category.l1]}•${t.category.l2} $${t.amount}`).join('、')}）`, savedTxs.map(t => t.id), beforeSnapshot);
+      } else if (split && beforeSnapshot.length > 1) {
+        logActivity('cancel_split', `「${updatedTx.merchant || '這筆'}」取消分裝，合併回 1 筆`, [updatedTx.id], beforeSnapshot);
+      } else if (existingTx) {
         logActivity('edit', `編輯「${updatedTx.merchant || '這筆'}」`, [updatedTx.id], [existingTx]);
       } else {
         logActivity('add', `新增一筆「${updatedTx.merchant || '(未命名)'}」`, [updatedTx.id], []);
@@ -550,11 +547,8 @@ const App: React.FC = () => {
       const expense = options.pendingSharedExpense;
       setSharedExpenses(prev => prev.some(se => se.id === expense.id) ? prev.map(se => se.id === expense.id ? expense : se) : [...prev, expense]);
     }
-    setEditingTransaction(null);
-    // 新增流程第3步問過「要不要分裝拆帳」，選是的話存檔後直接接著開分裝盤，不用存完再回去找按鈕點。
-    if (options?.openSplitAfter) {
-        setSplittingTransaction(updatedTx);
-    } else if (similarTransactionAlertsEnabled) {
+    closeEditor();
+    if (!split && similarTransactionAlertsEnabled) {
         const candidates = findSimilarTransactions(updatedTx, transactions);
         if (candidates.length > 0) {
             setBatchSource(updatedTx);
@@ -566,7 +560,10 @@ const App: React.FC = () => {
       // transactions表之後才能寫入——shared_expenses.transaction_id是外鍵，指向的
       // 這筆交易如果還沒存在，會直接違反外鍵限制寫入失敗，所以用.then()接在後面，
       // 不能跟upsertTransaction並行送出(見schema.sql shared_expenses表定義)。
-      const txSaved = upsertTransaction(userId, updatedTx).catch(err => console.error('儲存交易失敗', err));
+      const txSaved = (async () => {
+        for (const id of removedIds) await dbDeleteTransaction(id);
+        await upsertTransactions(userId, savedTxs);
+      })().catch(err => console.error('儲存交易失敗', err));
       // 當場儲值：連帶產生的那筆帳戶互轉也要一併存進資料庫，不然重整頁面就消失了。
       if (options?.additionalTransfer) {
         upsertTransaction(userId, options.additionalTransfer).catch(err => console.error('儲存儲值交易失敗', err));
@@ -1138,7 +1135,7 @@ const App: React.FC = () => {
             transactions={transactions}
             merchantAliases={merchantAliases}
             onAddFromBankRow={handleAddFromBankRow}
-            onEditTransaction={setEditingTransaction}
+            onEditTransaction={(t: Transaction) => openEditor(t)}
             onApplyReconcileStatuses={handleApplyReconcileStatuses}
             onOpenAccountsModal={() => setIsAccountsModalOpen(true)}
           />
@@ -1345,8 +1342,8 @@ const App: React.FC = () => {
                           <td className={`w-1/2 lg:table-cell px-4 pt-2 lg:p-4 2xl:p-6 text-right font-bold order-5 ${t.type === 'income' ? 'text-emerald-500' : 'text-slate-700'}`}>{t.type === 'income' ? '+' : '-'}${t.amount}</td>
                           <td className="w-full lg:table-cell px-4 pb-3 pt-2 lg:p-4 2xl:p-6 lg:text-center no-print order-6">
                             <div className="flex justify-end lg:justify-center gap-2">
-                              <button onClick={() => setSplittingTransaction(t)} className="p-2 border rounded-xl hover:bg-purple-50 text-purple-400" title="拆帳分類"><Divide className="w-4 h-4" /></button>
-                              <button onClick={() => setEditingTransaction(t)} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯項目"><Pencil className="w-4 h-4" /></button>
+                              <button onClick={() => openEditor(t, true)} className="p-2 border rounded-xl hover:bg-purple-50 text-purple-400" title="分裝（不同品項分到不同類別）"><Divide className="w-4 h-4" /></button>
+                              <button onClick={() => openEditor(t)} className="p-2 border rounded-xl hover:bg-amber-50" title="編輯項目"><Pencil className="w-4 h-4" /></button>
                               <button onClick={() => handleDuplicateTransaction(t)} className="p-2 border rounded-xl hover:bg-sky-50 text-sky-400" title="複製這筆"><Copy className="w-4 h-4" /></button>
                               <button onClick={() => handleDeleteTransaction(t.id)} className="p-2 border rounded-xl hover:bg-rose-50 text-rose-400" title="刪除項目"><Trash2 className="w-4 h-4" /></button>
                             </div>
@@ -1360,10 +1357,10 @@ const App: React.FC = () => {
                       const totalAmount = children.reduce((sum, c) => sum + (isNaN(c.amount) ? 0 : c.amount), 0);
                       const groupDate = children[0]?.date;
                       
-                      // Identitfy the anchor record (主項目)
-                      const mainItem = children.find(c => c.category.l3 === '主項目') || children[0];
-                      // Sub items are everything else
-                      const subItemsList = children.filter(c => c.category.l3 !== '主項目' && c.amount !== 0);
+                      // 群組代表筆（商家/帳戶/日期以它為準）。新版分裝沒有「主項目」，每一筆都是一個分類；
+                      // 舊資料的主項目如果還有金額也要列出來，不然那部分的錢在畫面上會不見。
+                      const mainItem = children.find(c => c.id === parentId) || children.find(c => c.category.l3 === '主項目') || children[0];
+                      const subItemsList = children.filter(c => c.amount !== 0);
 
                       return (
                         <React.Fragment key={`group-${parentId}`}>
@@ -1383,7 +1380,7 @@ const App: React.FC = () => {
                              </td>
                              <td className="w-1/2 lg:table-cell px-4 pt-2 lg:p-4 2xl:p-6 order-4">
                                 <span className="px-2 py-1 bg-white/80 border border-purple-100 rounded text-xs font-bold text-purple-400">
-                                  {CATEGORY_LABELS[mainItem.category.l1]} &bull; {mainItem.category.l2}
+                                  分裝 {subItemsList.length} 類
                                 </span>
                              </td>
                              <td className={`w-1/2 lg:table-cell px-4 pt-2 lg:p-4 2xl:p-6 text-right font-black order-5 ${mainItem.type === 'income' ? 'text-emerald-600' : 'text-slate-700'}`}>
@@ -1393,9 +1390,9 @@ const App: React.FC = () => {
                                <div className="flex justify-end lg:justify-center gap-2">
                                   {/* Re-edit existing split */}
                                   <button
-                                    onClick={() => setSplittingTransaction(mainItem)}
+                                    onClick={() => openEditor(mainItem)}
                                     className="p-2 border border-purple-200 bg-white rounded-xl hover:bg-purple-100 text-purple-500 transition-colors shadow-sm"
-                                    title="編輯分裝比例"
+                                    title="編輯分裝"
                                   >
                                     <Divide className="w-4 h-4" />
                                   </button>
@@ -1420,7 +1417,12 @@ const App: React.FC = () => {
                                   </div>
                                 </td>
                                 <td className="w-full lg:table-cell px-3 pt-1 lg:p-4 text-slate-600 font-bold order-3">
-                                  {child.merchant}
+                                  {child.items?.length ? child.items.map(i => i.name).join('、') : child.merchant}
+                                  {child.discounts && child.discounts.length > 0 && (
+                                    <span className="ml-2 text-[10px] font-bold text-emerald-500">
+                                      ${child.grossAmount} {child.discounts.map(d => `${d.label || '折扣'}-$${d.amount}`).join(' ')}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="w-1/2 lg:table-cell px-3 pt-1 lg:p-4 order-4">
                                   <span className="px-2 py-1 bg-slate-100 rounded text-xs">
@@ -1432,7 +1434,7 @@ const App: React.FC = () => {
                                 </td>
                                 <td className="w-full lg:table-cell px-3 pb-2 pt-1 lg:p-4 lg:text-center no-print order-6">
                                    <div className="flex justify-end lg:justify-center gap-1 opacity-100 lg:opacity-0 lg:group-hover/child:opacity-100 transition-opacity">
-                                      <button onClick={() => setEditingTransaction(child)} className="p-1.5 hover:text-amber-500 transition" title="編輯此子項內容"><Pencil className="w-3.5 h-3.5" /></button>
+                                      <button onClick={() => openEditor(child)} className="p-1.5 hover:text-amber-500 transition" title="編輯分裝"><Pencil className="w-3.5 h-3.5" /></button>
                                       <button onClick={() => handleDeleteTransaction(child.id)} className="p-1.5 hover:text-rose-400 transition" title="刪除此子項"><Trash2 className="w-3.5 h-3.5" /></button>
                                    </div>
                                 </td>
@@ -1448,8 +1450,7 @@ const App: React.FC = () => {
           </div>
         )}
       </main>
-      {splittingTransaction && <SplitModal transaction={splittingTransaction} allTransactions={transactions} onClose={() => setSplittingTransaction(null)} onSave={handleSplitSave} />}
-      {editingTransaction && <EditTransactionModal transaction={editingTransaction} allTransactions={transactions} accounts={accounts} customCategoryHistory={customCategoryHistory} sharedExpenses={sharedExpenses} onTagAction={handleTagAction} onManageSharedExpense={setManagingSharedExpenseTx} onClose={() => { setEditingTransaction(null); setPendingAliasLearn(null); }} onSave={handleEditSave} />}
+      {editingTransaction && <EditTransactionModal key={editingTransaction.id} transaction={editingTransaction} splitGroup={editingSplitGroup || undefined} startInSplitMode={editingStartSplit} allTransactions={transactions} accounts={accounts} customCategoryHistory={customCategoryHistory} sharedExpenses={sharedExpenses} onTagAction={handleTagAction} onManageSharedExpense={setManagingSharedExpenseTx} onClose={() => { closeEditor(); setPendingAliasLearn(null); }} onSave={handleEditSave} />}
       {managingSharedExpenseTx && (
         <SharedExpenseModal
           transaction={managingSharedExpenseTx}
