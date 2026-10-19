@@ -16,7 +16,9 @@ import SharedExpenseModal from './components/SharedExpenseModal';
 import SharedExpenseListModal from './components/SharedExpenseListModal';
 import ActivityLogPage from './components/ActivityLogPage';
 import SettingsModal from './components/SettingsModal';
-import TransactionFilterPanel, { matchesCategoryFilter } from './components/TransactionFilterPanel';
+import { matchesCategoryFilter } from './components/TransactionFilterPanel';
+import LedgerSearchBar from './components/LedgerSearchBar';
+import { parseQuery, buildHaystack, matchesQuery, matchesFieldFilters, resolveDateRange, FieldFilter, DateFilter } from './services/searchService';
 import { Transaction, Account, Budget, Alert, L1Category, CATEGORY_LABELS, TimeScope, WishlistItem, STANDARD_CATEGORIES, PenaltyConfig, SpecialTag, MerchantAlias, ReconcileStatus, SharedExpense, SharedExpenseParticipant, ActivityLogEntry, ActivityActionType, LongTermReserve, AiReport, AiReportContent } from './types';
 import { generateMonthlyPacingAlerts, getDateRange, findSimilarTransactions, calculateWishlistMetrics, formatMoney, getItemAmount } from './services/logicService';
 import { DEFAULT_PENALTY_CONFIG } from './config/financialRules';
@@ -266,7 +268,9 @@ const App: React.FC = () => {
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTagFilters, setSelectedTagFilters] = useState<Set<string>>(new Set());
-  const [isFilterExpanded, setIsFilterExpanded] = useState(false);
+  // 明細本查找（2026-10-19重做）：點建議變成的精確篩選（商家/品項/帳戶）、日期範圍
+  const [fieldFilters, setFieldFilters] = useState<FieldFilter[]>([]);
+  const [ledgerDateFilter, setLedgerDateFilter] = useState<DateFilter>({ preset: 'all' });
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement>(null);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -334,27 +338,22 @@ const App: React.FC = () => {
       });
   };
 
+  // 明細本只套日期的結果（常用分類快速標籤用）
+  const ledgerDateScoped = useMemo(() => {
+      const range = resolveDateRange(ledgerDateFilter);
+      return range ? transactions.filter(t => t.date >= range.start && t.date <= range.end) : transactions;
+  }, [transactions, ledgerDateFilter]);
+
   const processedTransactions = useMemo(() => {
-      let result = [...transactions];
+      let result = [...ledgerDateScoped];
+      // 搜尋規則見 services/searchService.ts：多關鍵字AND、-排除、金額(>500/100-300)、
+      // 日期(10/19、2026-10、10月)，分類用中文比對，帳戶/通道/折扣/代購性質也一起搜。
       if (searchTerm.trim()) {
-          const lowerTerm = searchTerm.toLowerCase();
-          // 原本沒有搜尋 note/品項/代購對象/代購性質標籤本身，Ivy把「代購」兩個字從商家/
-          // 品項文字移除、改成直接選「代購」性質後，搜尋「代購」完全找不到——因為
-          // specialTag.type本身(proxy_purchase/work_advance)從來沒有被搜尋比對過，
-          // 只搜了counterparty/note這些附加文字。這裡把性質對應的中文標籤也加進搜尋範圍。
-          const specialTagLabel = (tag?: SpecialTag) => tag?.type === 'proxy_purchase' ? '代購' : tag?.type === 'work_advance' ? '工作代墊' : tag?.type === 'personal_loan' ? '借貸' : '';
-          result = result.filter(t =>
-              t.merchant.toLowerCase().includes(lowerTerm) ||
-              (t.originalText || '').toLowerCase().includes(lowerTerm) ||
-              (t.note || '').toLowerCase().includes(lowerTerm) ||
-              (t.items || []).some(it => it.name.toLowerCase().includes(lowerTerm) || (it.note || '').toLowerCase().includes(lowerTerm)) ||
-              specialTagLabel(t.specialTag).includes(searchTerm.trim()) ||
-              (t.specialTag?.counterparty || '').toLowerCase().includes(lowerTerm) ||
-              (t.specialTag?.note || '').toLowerCase().includes(lowerTerm) ||
-              t.category.l1.toLowerCase().includes(lowerTerm) ||
-              t.category.l2.toLowerCase().includes(lowerTerm) ||
-              (t.category.l3 || '').toLowerCase().includes(lowerTerm)
-          );
+          const q = parseQuery(searchTerm);
+          result = result.filter(t => matchesQuery(t, q, buildHaystack(t, accounts)));
+      }
+      if (fieldFilters.length > 0) {
+          result = result.filter(t => matchesFieldFilters(t, fieldFilters));
       }
       if (selectedTagFilters.size > 0) {
           result = result.filter(t => matchesCategoryFilter(t, selectedTagFilters));
@@ -369,7 +368,13 @@ const App: React.FC = () => {
           const createdDiff = new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
           return createdDiff;
       });
-  }, [transactions, searchTerm, selectedTagFilters]);
+  }, [ledgerDateScoped, searchTerm, selectedTagFilters, fieldFilters, accounts]);
+
+  const ledgerSummary = useMemo(() => ({
+      count: processedTransactions.length,
+      expense: processedTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + (t.amount || 0), 0),
+      income: processedTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + (t.amount || 0), 0),
+  }), [processedTransactions]);
 
   const groupedDisplayItems = useMemo(() => {
       const groups: Record<string, Transaction[]> = {};
@@ -1169,19 +1174,21 @@ const App: React.FC = () => {
               </div>
             </div>
             <div className="px-8 py-6 border-b border-orange-50 bg-[#FFFBF5]/30 no-print">
-                 <div className="flex flex-col gap-4">
-                     <div className="flex gap-3"><div className="relative flex-1"><Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" /><input type="text" placeholder="快速查找..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-white border border-slate-100 rounded-2xl shadow-sm text-slate-700 font-bold outline-none" />{searchTerm && <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-300"><X className="w-4 h-4" /></button>}</div><button onClick={() => setIsFilterExpanded(!isFilterExpanded)} className={`px-4 py-3 rounded-2xl font-bold flex items-center gap-2 transition-all border ${isFilterExpanded ? 'bg-amber-100 text-amber-600 border-amber-200' : 'bg-white text-slate-500 border-slate-100'}`}>{isFilterExpanded ? <X className="w-5 h-5" /> : <Filter className="w-5 h-5" />}<span className="hidden sm:inline">分類篩選{selectedTagFilters.size > 0 ? `(${selectedTagFilters.size})` : ''}</span></button></div>
-                     {isFilterExpanded && (
-                       <div className="p-4 bg-white border border-amber-100 rounded-2xl animate-in slide-in-from-top-1 duration-150">
-                         <TransactionFilterPanel
-                           transactions={transactions}
-                           selected={selectedTagFilters}
-                           onToggle={toggleTagFilter}
-                           onClear={() => setSelectedTagFilters(new Set())}
-                         />
-                       </div>
-                     )}
-                 </div>
+                 <LedgerSearchBar
+                   transactions={transactions}
+                   dateScopedTransactions={ledgerDateScoped}
+                   accounts={accounts}
+                   searchTerm={searchTerm}
+                   setSearchTerm={setSearchTerm}
+                   selectedTagFilters={selectedTagFilters}
+                   toggleTagFilter={toggleTagFilter}
+                   clearTagFilters={() => setSelectedTagFilters(new Set())}
+                   fieldFilters={fieldFilters}
+                   setFieldFilters={setFieldFilters}
+                   dateFilter={ledgerDateFilter}
+                   setDateFilter={setLedgerDateFilter}
+                   summary={ledgerSummary}
+                 />
             </div>
             {/* 手機版(<lg)把表格改成卡片式垂直排列（每個<tr>變成一張卡片，<td>各自
                 從table-cell改成block疊起來），不用再橫向捲動才看得到完整一筆紀錄；
