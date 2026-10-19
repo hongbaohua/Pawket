@@ -23,7 +23,14 @@ interface Props {
   summary: { count: number; expense: number; income: number };
 }
 
-const PRESETS: DatePreset[] = ['all', 'today', 'week', 'month', 'last_month', 'last30', 'year', 'custom'];
+const PRESETS: DatePreset[] = ['all', 'today', 'week', 'month', 'last_month', 'last30', 'year', 'day', 'custom'];
+
+// 指定日期的前一天／後一天
+const shiftDay = (ymd: string, delta: number) => {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + delta);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+};
 
 const SUGGESTION_ICON: Record<Suggestion['kind'], React.ReactNode> = {
   merchant: <Store className="w-3.5 h-3.5" />,
@@ -159,12 +166,22 @@ const LedgerSearchBar: React.FC<Props> = ({
           <button
             key={p}
             type="button"
-            onClick={() => setDateFilter(p === 'custom' ? { preset: 'custom', start: dateFilter.start || range?.start, end: dateFilter.end || range?.end } : { preset: p })}
+            onClick={() => setDateFilter(
+              p === 'custom' ? { preset: 'custom', start: dateFilter.start || range?.start, end: dateFilter.end || range?.end }
+              : p === 'day' ? { preset: 'day', start: range?.end && dateFilter.preset !== 'all' ? range.end : resolveDateRange({ preset: 'today' })!.start }
+              : { preset: p })}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${dateFilter.preset === p ? 'bg-amber-400 text-white shadow-sm' : 'bg-white border border-slate-100 text-slate-500 hover:border-amber-200'}`}
           >
             {DATE_PRESET_LABELS[p]}
           </button>
         ))}
+        {dateFilter.preset === 'day' && range && (
+          <div className="flex items-center gap-1.5 w-full sm:w-auto mt-1 sm:mt-0 sm:ml-1">
+            <button type="button" onClick={() => setDateFilter({ preset: 'day', start: shiftDay(range.start, -1) })} className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-500 hover:border-amber-300" title="前一天">‹</button>
+            <input type="date" value={range.start} onChange={e => e.target.value && setDateFilter({ preset: 'day', start: e.target.value })} className="flex-1 sm:flex-none px-2 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 outline-none focus:border-amber-300" />
+            <button type="button" onClick={() => setDateFilter({ preset: 'day', start: shiftDay(range.start, 1) })} className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-500 hover:border-amber-300" title="後一天">›</button>
+          </div>
+        )}
         {dateFilter.preset === 'custom' && (
           <div className="flex items-center gap-1.5 w-full sm:w-auto mt-1 sm:mt-0 sm:ml-1">
             <input type="date" value={dateFilter.start || ''} onChange={e => setDateFilter({ ...dateFilter, start: e.target.value || undefined })} className="flex-1 sm:flex-none px-2 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 outline-none focus:border-amber-300" />
@@ -172,7 +189,7 @@ const LedgerSearchBar: React.FC<Props> = ({
             <input type="date" value={dateFilter.end || ''} onChange={e => setDateFilter({ ...dateFilter, end: e.target.value || undefined })} className="flex-1 sm:flex-none px-2 py-1.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 outline-none focus:border-amber-300" />
           </div>
         )}
-        {range && dateFilter.preset !== 'custom' && (
+        {range && dateFilter.preset !== 'custom' && dateFilter.preset !== 'day' && (
           <span className="text-[11px] text-slate-400 ml-1">{range.start} ～ {range.end}</span>
         )}
       </div>

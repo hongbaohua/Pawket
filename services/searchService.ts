@@ -17,11 +17,11 @@ export type FieldFilter =
   | { kind: 'item'; value: string }
   | { kind: 'account'; value: string; label: string };
 
-export type DatePreset = 'all' | 'today' | 'week' | 'month' | 'last_month' | 'last30' | 'year' | 'custom';
+export type DatePreset = 'all' | 'today' | 'week' | 'month' | 'last_month' | 'last30' | 'year' | 'day' | 'custom';
 
 export interface DateFilter {
   preset: DatePreset;
-  start?: string; // YYYY-MM-DD（custom 用）
+  start?: string; // YYYY-MM-DD（custom 的起日；day 的那一天）
   end?: string;
 }
 
@@ -33,7 +33,8 @@ export const DATE_PRESET_LABELS: Record<DatePreset, string> = {
   last_month: '上個月',
   last30: '近30天',
   year: '今年',
-  custom: '自訂',
+  day: '指定日期',
+  custom: '自訂區間',
 };
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -54,6 +55,10 @@ export const resolveDateRange = (f: DateFilter, today: Date = new Date()): { sta
     case 'last_month': return { start: toYmd(new Date(y, m - 1, 1)), end: toYmd(new Date(y, m, 0)) };
     case 'last30': return { start: toYmd(new Date(y, m, d - 29)), end: toYmd(today) };
     case 'year': return { start: `${y}-01-01`, end: `${y}-12-31` };
+    case 'day': {
+      const d = f.start || toYmd(today);
+      return { start: d, end: d };
+    }
     case 'custom':
       if (!f.start && !f.end) return null;
       return { start: f.start || '0000-01-01', end: f.end || '9999-12-31' };
